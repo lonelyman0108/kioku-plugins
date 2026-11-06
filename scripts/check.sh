@@ -59,12 +59,39 @@ if [ -f package.json ]; then
 fi
 # <<< 按栈的快速检查
 
+# ---- python ----
+# plugins/ 下一层带 pyproject.toml 的目录各是一个 uv 项目：按锁文件装依赖（锁文件过期时失败），
+# 跑 ruff 与 pytest。开发工具放在各项目的 dev 依赖组里，lint 只装这一组，不构建项目本身
+tracked ':(glob)plugins/*/pyproject.toml'
+py_projects=()
+if [ "${#files[@]}" -gt 0 ]; then
+  for f in "${files[@]}"; do py_projects+=("$(dirname "$f")"); done
+  need uv "brew install uv，或见 https://docs.astral.sh/uv/"
+  for p in "${py_projects[@]}"; do
+    step "Python lint 与格式：$p"
+    (cd "$p" && uv run --locked --only-group dev ruff check . &&
+      uv run --locked --only-group dev ruff format --check .)
+  done
+fi
+
 if [ "$mode" = --quick ]; then
   printf '\n快速检查通过\n'
   exit 0
 fi
 
 # >>> 按栈的完整检查：bootstrap --stack 在这里插入，也可以手写
+# ---- node ----
+if [ -n "$pm" ]; then
+  step 测试
+  "$pm" run --if-present test
+fi
+# ---- python ----
+if [ "${#py_projects[@]}" -gt 0 ]; then
+  for p in "${py_projects[@]}"; do
+    step "Python 测试：$p"
+    (cd "$p" && uv run --locked pytest)
+  done
+fi
 # <<< 按栈的完整检查
 
 printf '\n完整检查通过\n'
