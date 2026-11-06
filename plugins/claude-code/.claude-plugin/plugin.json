@@ -1,0 +1,25 @@
+{
+  "name": "kioku",
+  "displayName": "Kioku",
+  "description": "Kioku 长期记忆：会话开始时注入启动加载的内容，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具",
+  "author": { "name": "Kioku" },
+  "homepage": "https://github.com/lonelyman0108/kioku",
+  "repository": "https://github.com/lonelyman0108/kioku-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp"],
+  "userConfig": {
+    "server_url": {
+      "type": "string",
+      "title": "Kioku 服务地址",
+      "description": "例如 https://kioku.example.com，不带 /v1，末尾不要斜杠",
+      "required": true
+    },
+    "api_key": {
+      "type": "string",
+      "title": "访问密钥",
+      "description": "在 Kioku 管理界面的「应用」页为 Claude Code 应用签发的访问密钥",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}

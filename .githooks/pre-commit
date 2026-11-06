@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# 受管文件，来自 ci-workflows@v2.0.0 的 hooks/pre-commit：不在本仓直接改，见 CONTRIBUTING.md「受管文件」
+# 暂存区秒级快检：注释里的流程编号、私有信息、疑似密钥。编译、测试等耗时检查放在 scripts/check.sh。
+set -u
+root=$(git rev-parse --show-toplevel) || exit 1
+
+lint=
+for p in scripts/lint/comments.sh scripts/lint-comments.sh; do
+  if [ -x "$root/$p" ]; then lint="$root/$p"; break; fi
+done
+if [ -n "$lint" ]; then
+  "$lint" --staged || exit 1
+fi
+
+# 私有信息：维护者本机的词表（默认 ~/.config/git/private-patterns，每行一个扩展正则）列出不能进可能公开的仓库的内容，
+# 例如自建服务的域名、内网网段。词表不在仓库里，没有时跳过，外部贡献者不受影响；
+# 本身就要放私有信息的仓库（基础设施配置）用 git config hooks.allowPrivateInfo true 关掉这一道
+patterns=${PRIVATE_PATTERNS_FILE:-$HOME/.config/git/private-patterns}
+if [ -f "$patterns" ] && [ "$(git config --bool hooks.allowPrivateInfo 2>/dev/null)" != true ]; then
+  rules=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$patterns" || true)
+  if [ -n "$rules" ]; then
+    # 暂存区新增的行写成「文件:行号:内容」再匹配；行里带 private-info: allow 的豁免
+    hits=$(git diff --cached --unified=0 --no-color --no-ext-diff --diff-filter=d \
+      | awk '/^\+\+\+ / { f = substr($0, 7); next }
+             /^@@/ { split($3, a, ","); n = substr(a[1], 2) + 0; next }
+             /^\+/ { print f ":" n ":" substr($0, 2); n++ }' \
+      | grep -v 'private-info: allow' | grep -E -f <(printf '%s\n' "$rules") || true)
+    if [ -n "$hits" ]; then
+      printf '%s\n' "$hits" >&2
+      echo "以上新增内容命中私有词表 ${patterns}：仓库可能公开，换成 example.com、127.0.0.1 这类示例；确实不是私有信息时在行尾加 private-info: allow；本身就放私有信息的仓库用 git config hooks.allowPrivateInfo true 关掉这一道" >&2
+      exit 1
+    fi
+  fi
+fi
+
+# gitleaks 是可选工具：没装就跳过，CI 与发布闸门不依赖这一道
+if command -v gitleaks >/dev/null 2>&1; then
+  # 8.19 起暂存区扫描改为 gitleaks git --staged，旧的 protect 子命令已弃用；两种版本都兼容
+  if gitleaks git --help 2>/dev/null | grep -q -- '--staged'; then
+    leaks=(gitleaks git --staged --no-banner --redact --log-level warn "$root")
+  else
+    leaks=(gitleaks protect --staged --no-banner --redact --log-level warn --source "$root")
+  fi
+  if ! "${leaks[@]}"; then
+    echo "gitleaks 在暂存区发现疑似密钥。确认是误报时，在 .gitleaks.toml 的 allowlist 里登记，或在该行加 gitleaks:allow" >&2
+    exit 1
+  fi
+fi
+exit 0

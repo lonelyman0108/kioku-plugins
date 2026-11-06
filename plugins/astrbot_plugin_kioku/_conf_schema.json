@@ -1,0 +1,26 @@
+{
+  "kioku_url": {
+    "description": "Kioku 的地址",
+    "type": "string",
+    "hint": "例如 http://127.0.0.1:18920，不带 /v1",
+    "default": ""
+  },
+  "kioku_key": {
+    "description": "Kioku 的访问密钥",
+    "type": "string",
+    "hint": "在 Kioku 管理界面的「应用」页为这个机器人建一个应用（运行时选 astrbot），再签发访问密钥",
+    "default": ""
+  },
+  "boot": {
+    "description": "注入 Kioku 里的人格与基础规则",
+    "type": "bool",
+    "hint": "关掉之后只注入每轮召回的记忆；人格完全用 AstrBot 自己的设置时关掉",
+    "default": true
+  },
+  "timeout": {
+    "description": "请求 Kioku 的超时（秒）",
+    "type": "float",
+    "hint": "超时了就不注入，不影响回复",
+    "default": 4
+  }
+}

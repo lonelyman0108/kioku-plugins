@@ -1,0 +1,3 @@
+# 工单只收外部输入（使用者反馈、商店审核、运维告警）；自己的待办写进 docs/plans/ 的计划文档。
+# 文件名用 config.yml：GitHub 只认这个名字，Gitea 两种扩展名都认。
+blank_issues_enabled: false

@@ -1,0 +1,8 @@
+name: astrbot_plugin_kioku
+display_name: Kioku 记忆
+desc: 接入 Kioku 长期记忆：会话开始注入人格与基础规则，每轮注入相关的记忆与关于对方的事实，对话交给 Kioku 整理成记忆；私聊里用 /bind 绑定别的平台的账号
+version: 0.1.0
+author: Kioku
+repo: https://github.com/lonelyman0108/kioku-plugins
+# 召回作为临时的额外用户内容附上（TextPart.mark_as_temp），4.24.1 起才有
+astrbot_version: '>=4.24.1,<5'

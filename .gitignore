@@ -1,0 +1,23 @@
+# 通用段：本地配置与密钥。按栈的段落由 scripts/bootstrap.sh --stack 追加。
+# AI 工具目录与 .DS_Store 放在全局 core.excludesFile，这里不重复。
+.env
+.env.*
+!.env.example
+*.token
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+secrets/
+
+# ---- node ----
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+coverage/
+*.md
+# Python 的虚拟环境，以及从 Kioku 复制来的生成客户端
+.venv/
+plugins/astrbot_plugin_kioku/kioku_client/

@@ -1,0 +1,51 @@
+# 唯一的必需检查：GitHub 用 job id 作检查名，固定为「gate」。
+# 硬规则：job id 就叫 gate 且不写 name；不写 paths 过滤；gate 不写 job 级 if；
+# 每个 job 写 runs-on 与 timeout-minutes；判断和命令全部放在 scripts/，这里只做薄壳。
+# 失败通知用 GitHub 自带的邮件与网页通知，这里不另发。
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+# PR 按 ref 分组，新推送取消同一 PR 的旧 run；push 按 SHA 分组，每条提交都完整复核
+concurrency:
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+# run 一律用 bash（-eo pipefail），不依赖 runner 镜像的默认 shell
+defaults:
+  run:
+    shell: bash
+jobs:
+  gate:
+    runs-on: ubuntu-24.04 # bootstrap --stack 按栈替换为 GitHub 托管 runner 的 label
+    timeout-minutes: 30 # bootstrap --stack 按栈调整（iOS 为 45）
+    env:
+      # 不可信字段只经 env 传入，不直接拼进 run
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      BEFORE: ${{ github.event.before }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # 有 .node-version 时按它装 Node；托管 runner 自带的版本不一定满足
+      - uses: actions/setup-node@v4
+        if: hashFiles('.node-version') != ''
+        with:
+          node-version-file: .node-version
+      # 补齐 runner 环境里缺的门禁工具（托管镜像没有 actionlint；Go 版本按 go.mod）
+      - name: 准备工具
+        run: scripts/ci/setup-tools.sh >> "$GITHUB_PATH"
+      - name: 提交信息
+        run: scripts/ci/check-msg.sh
+      - name: 改动类型
+        id: kind
+        run: scripts/ci/changed-kind.sh >> "$GITHUB_OUTPUT"
+      - name: 快速检查
+        if: steps.kind.outputs.code != 'true'
+        run: scripts/check.sh --quick
+      - name: 完整检查
+        if: steps.kind.outputs.code == 'true'
+        run: scripts/check.sh --full

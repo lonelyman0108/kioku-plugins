@@ -1,0 +1,6 @@
+# actionlint 配置。scripts/check.sh 用 -config-file 显式传入。
+# GitHub 托管 runner 的 label（ubuntu-24.04、macos-15 等）actionlint 本身就认，这里只放模板占位。
+self-hosted-runner:
+  # __RUNS_ON__ 是模板占位，bootstrap 后不再出现
+  labels:
+    - __RUNS_ON__

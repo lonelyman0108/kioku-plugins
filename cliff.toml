@@ -1,0 +1,36 @@
+# git-cliff 配置：起草中文 CHANGELOG 草稿，gitmoji 与约定式两种方言都能解析。
+# 用法：git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md
+# 生成的是草稿：由人把措辞改写成使用者的语言后再提交。
+# 只收 feat / fix / perf 与带 ! 的不兼容改动；refactor、style、test、docs、build、ci、chore、
+# release、revert、i18n、design 等开发者向提交，以及 scope 为 ci、scripts、agents 的提交都不进。
+
+[changelog]
+header = "# 更新日志\n"
+body = """
+{% if version %}## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## [未发布]{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for c in commits %}- {{ c.message | split(pat="\n") | first | trim }}
+{% endfor %}{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+# App 仓的 buildN 不参与分节
+tag_pattern = "v[0-9].*"
+commit_preprocessors = [
+  # 去掉 gitmoji 前缀（含变体选择符），剩下的部分按约定式解析
+  { pattern = '^[^\x00-\x7F]+\s+', replace = "" },
+]
+commit_parsers = [
+  { message = '^[a-z0-9]+(\([^)]*\))?!:', group = "<!-- 0 -->不兼容变更" },
+  { body = 'BREAKING CHANGE', group = "<!-- 0 -->不兼容变更" },
+  { message = '^[a-z0-9]+\((ci|scripts|agents)\):', skip = true },
+  { message = '^feat', group = "<!-- 1 -->新功能" },
+  { message = '^fix', group = "<!-- 2 -->问题修复" },
+  { message = '^perf', group = "<!-- 3 -->性能优化" },
+  { message = '.*', skip = true },
+]

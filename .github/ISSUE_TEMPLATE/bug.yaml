@@ -1,0 +1,44 @@
+name: 问题报告
+description: 使用中遇到的错误、崩溃或与说明不符的行为
+title: '[问题] '
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请一条工单只报一个问题。附上能复现的步骤，比描述现象更有用。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 实际看到的现象，以及你原本期望的结果
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 看到……
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 版本号、构建号或提交 SHA
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 环境
+      description: 系统版本、设备型号、浏览器、部署方式等
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 贴日志前去掉密钥、令牌和个人信息
+      render: text

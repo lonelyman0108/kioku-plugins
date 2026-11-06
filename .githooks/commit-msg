@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# 受管文件，来自 ci-workflows@v2.0.0 的 hooks/commit-msg：不在本仓直接改，见 CONTRIBUTING.md「受管文件」
+# 校验提交信息：首行结构、type 与 emoji 的固定对应、首行长度，以及禁止署名与评审 trailer。
+# 本仓的方言与扩展类型写在同目录的 commit.conf；CI 用 scripts/ci/check-msg.sh 以同一脚本复核。
+# 兼容 macOS 自带的 bash 3.2 与 Linux，不依赖系统 locale。
+set -u
+msg_file=${1:?用法：commit-msg <提交信息文件>}
+DIALECT=gitmoji
+EXTRA_TYPES=
+conf="$(dirname "$0")/commit.conf"
+# shellcheck source=/dev/null
+[ -f "$conf" ] && . "$conf"
+# 约定式方言只允许通用类型，扩展类型与 release 都依赖 emoji 表达
+[ "$DIALECT" = gitmoji ] || EXTRA_TYPES=
+
+# git 的注释行和 --verbose 附带的 diff 都不属于提交信息
+body=$(sed -e '/^# ------------------------ >8 ------------------------$/,$d' -e '/^#/d' "$msg_file")
+header=$(printf '%s\n' "$body" | sed -n '/[^[:space:]]/{p;q;}')
+
+fail() {
+  printf '提交信息不符合规范：%s\n' "$1" >&2
+  printf '  当前首行：%s\n' "$header" >&2
+  if [ "$DIALECT" = gitmoji ]; then
+    printf '  期望格式：✨ feat(scope): 中文主题\n' >&2
+    printf '  可用类型：✨ feat  🐛 fix  ⚡️ perf  ♻️ refactor  💄 style  ✅ test\n' >&2
+    printf '            📝 docs  📦️ build  👷 ci  🔧 chore  ⏪️ revert  🔖 release\n' >&2
+    [ -z "$EXTRA_TYPES" ] || printf '  本仓扩展：%s（🌐 i18n、🎨 design）\n' "$EXTRA_TYPES" >&2
+  else
+    printf '  期望格式：feat(scope): 中文主题\n' >&2
+    printf '  可用类型：feat fix perf refactor style test docs build ci chore revert\n' >&2
+  fi
+  printf '  规则见本仓 CONTRIBUTING.md「提交规范」\n' >&2
+  exit 1
+}
+
+# 署名与评审 trailer 对所有提交都禁止，包括下面放行的 git 自动信息。
+# Reviewed-on、Reviewed-by 是 Gitea 网页合并时默认写进正文的，带着平台地址和评审人邮箱
+if printf '%s\n' "$body" | grep -Eiq '^[[:space:]]*(Co-authored-by|Co-committed-by|Signed-off-by|Generated-by|Assisted-by|Reviewed-on|Reviewed-by)[[:space:]]*:|Generated with \[?Claude'; then
+  fail "不允许署名或评审 trailer（Co-authored-by、Signed-off-by、Reviewed-on 等）或工具署名行，删掉这些行后重新提交"
+fi
+
+[ -n "$header" ] || fail "提交信息为空"
+
+case "$header" in
+  Merge\ *|Revert\ \"*|fixup!\ *|squash!\ *|amend!\ *) exit 0 ;;
+esac
+
+# 去掉 emoji 变体选择符 U+FE0F（⚡/⚡️ 两种写法都接受）和 squash 合并追加的 " (#N)"
+norm=$(printf '%s' "$header" | LC_ALL=C sed $'s/\xef\xb8\x8f//g' | sed -E 's/ \(#[0-9]+\)$//')
+
+# 按字符计长度：删掉 UTF-8 续字节后数字节
+len=$(printf '%s' "$norm" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
+[ "$len" -le 72 ] || fail "首行 $len 个字符，上限 72"
+
+if [ "$DIALECT" = gitmoji ]; then
+  emoji=${norm%% *}
+  rest=${norm#* }
+  [ "$emoji" != "$norm" ] || fail "缺少 emoji 前缀，或 emoji 后没有空格"
+else
+  emoji=
+  rest=$norm
+fi
+
+printf '%s' "$rest" | LC_ALL=C grep -Eq '^[a-z0-9]+(\([a-z0-9._/-]+\))?!?: [^ ]' \
+  || fail "结构应为 type(scope): 主题（scope 可省，只用小写字母、数字和 ._/-；冒号后一个空格）"
+case "$rest" in *。|*.) fail "主题末尾不加句号" ;; esac
+
+type=${rest%%[(!:]*}
+common="feat fix perf refactor style test docs build ci chore revert"
+[ "$DIALECT" = gitmoji ] && common="$common release"
+case " $common $EXTRA_TYPES " in
+  *" $type "*) ;;
+  *) fail "未知 type「${type}」，本仓可用：$common${EXTRA_TYPES:+ $EXTRA_TYPES}" ;;
+esac
+
+[ "$DIALECT" = gitmoji ] || exit 0
+# emoji 字面量不带 U+FE0F，与规范化后的首行对比；每个 type 只有这一个 emoji
+case "$type" in
+  feat) want=✨ ;; fix) want=🐛 ;; perf) want=⚡ ;; refactor) want=♻ ;;
+  style) want=💄 ;; test) want=✅ ;; docs) want=📝 ;; build) want=📦 ;;
+  ci) want=👷 ;; chore) want=🔧 ;; revert) want=⏪ ;; release) want=🔖 ;;
+  i18n) want=🌐 ;; design) want=🎨 ;;
+  *) fail "扩展类型「${type}」没有对应的 emoji：commit.conf 的 EXTRA_TYPES 只能填 i18n、design" ;;
+esac
+[ "$emoji" = "$want" ] || fail "type「${type}」应配 emoji $want"
+exit 0

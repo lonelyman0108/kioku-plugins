@@ -1,0 +1,20 @@
+# 编辑器基线：UTF-8、LF、文件末尾换行。按栈的缩进例外写在下面。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+# Markdown 用行尾两个空格表示换行
+trim_trailing_whitespace = false
+
+[{*.go,go.mod,go.sum,Makefile,*.mk}]
+indent_style = tab
+
+[*.{swift,py,java,kt}]
+indent_size = 4

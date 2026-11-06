@@ -1,0 +1,24 @@
+# 只用于在仓库里测试与检查插件；AstrBot 安装插件时只看 requirements.txt
+[project]
+name = "astrbot-plugin-kioku"
+version = "0.1.0"
+# 插件带着生成的 Python 客户端（kioku_client），它要 3.11 以上
+requires-python = ">=3.11"
+dependencies = ["attrs>=22.2.0", "httpx>=0.23.0,<1"]
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.17.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 插件按包导入（plugins/ 在路径上），AstrBot 用测试里的替身
+pythonpath = ["..", "tests/stubs"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# 生成的客户端由 scripts/sync-client.sh 从 Kioku 复制，在 Kioku 的 sdks/python 里检查
+extend-exclude = ["kioku_client"]

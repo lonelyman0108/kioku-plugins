@@ -1,0 +1,14 @@
+{
+  "name": "kioku",
+  "owner": {
+    "name": "Kioku"
+  },
+  "description": "Kioku 的 Claude Code 插件",
+  "plugins": [
+    {
+      "name": "kioku",
+      "source": "./plugins/claude-code",
+      "description": "Kioku 长期记忆：会话开始注入启动上下文，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具"
+    }
+  ]
+}
