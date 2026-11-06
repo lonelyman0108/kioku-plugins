@@ -115,7 +115,7 @@ if [ -n "$stacks" ]; then
   # 变量替换：Gitea 网页「使用此模板」时已经替换过的不会再变，本地克隆或在 GitHub 建仓时由这里补上
   if [ -f .gitea/template ]; then
     while IFS= read -r f; do
-      [ -n "$f" ] && [ -f "$f" ] || continue
+      if [ -z "$f" ] || [ ! -f "$f" ]; then continue; fi
       # shellcheck disable=SC2016  # 单引号里是模板占位的字面量
       replace_text "$f" '$REPO_NAME' "$name"
       # shellcheck disable=SC2016
