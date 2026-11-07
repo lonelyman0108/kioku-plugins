@@ -233,6 +233,39 @@ describe('kioku run', () => {
     })
   })
 
+  it('两个变量对应同一个取值项时只请求一项，两个变量都拿到值；变量名重复是参数错误', async () => {
+    const result = await kioku([
+      'run',
+      '-e',
+      'A=pg-main#password',
+      '-e',
+      'B=pg-main#password',
+      ...node(`
+        const { A, B } = process.env
+        console.log(A + ' ' + B)
+        console.log(JSON.stringify([A, B].map((v) => Buffer.from(v).toString('hex'))))
+      `),
+    ])
+    expect(result.code).toBe(0)
+    const hex = Buffer.from('pg-secret-1').toString('hex')
+    expect(result.stdout).toBe(`*** ***\n${JSON.stringify([hex, hex])}\n`)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].body).toEqual({ refs: [{ identifier: 'pg-main', field: 'password' }] })
+
+    const duplicated = await kioku([
+      'run',
+      '-e',
+      'A=pg-main#password',
+      '-e',
+      'A=pg-main#username',
+      '--',
+      'true',
+    ])
+    expect(duplicated.code).toBe(2)
+    expect(duplicated.stderr).toContain('kioku：变量 A 写了两次')
+    expect(requests).toHaveLength(1)
+  })
+
   it('退出码与命令相同，被信号结束时为 128 + 信号编号', async () => {
     const exited = await kioku(['run', '-e', 'X=pg-main#password', ...node('process.exit(3)')])
     expect(exited.code).toBe(3)
