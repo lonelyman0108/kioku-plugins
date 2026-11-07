@@ -8,9 +8,11 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.who_am_i_scopes_credentials import WhoAmIScopesCredentials
 from ..models.who_am_i_scopes_max_sensitivity import WhoAmIScopesMaxSensitivity
 from ..models.who_am_i_scopes_read_layers_item import WhoAmIScopesReadLayersItem
 from ..models.who_am_i_scopes_write_layers_item import WhoAmIScopesWriteLayersItem
+from ..types import UNSET, Unset
 from typing import cast
 
 
@@ -25,12 +27,14 @@ class WhoAmIScopes:
         write_layers (list[WhoAmIScopesWriteLayersItem]):
         max_sensitivity (WhoAmIScopesMaxSensitivity):
         admin (bool):
+        credentials (WhoAmIScopesCredentials | Unset):  Default: WhoAmIScopesCredentials.NONE.
     """
 
     read_layers: list[WhoAmIScopesReadLayersItem]
     write_layers: list[WhoAmIScopesWriteLayersItem]
     max_sensitivity: WhoAmIScopesMaxSensitivity
     admin: bool
+    credentials: WhoAmIScopesCredentials | Unset = WhoAmIScopesCredentials.NONE
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +52,10 @@ class WhoAmIScopes:
 
         admin = self.admin
 
+        credentials: str | Unset = UNSET
+        if not isinstance(self.credentials, Unset):
+            credentials = self.credentials.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +66,8 @@ class WhoAmIScopes:
                 "admin": admin,
             }
         )
+        if credentials is not UNSET:
+            field_dict["credentials"] = credentials
 
         return field_dict
 
@@ -82,11 +92,19 @@ class WhoAmIScopes:
 
         admin = d.pop("admin")
 
+        _credentials = d.pop("credentials", UNSET)
+        credentials: WhoAmIScopesCredentials | Unset
+        if isinstance(_credentials, Unset):
+            credentials = UNSET
+        else:
+            credentials = WhoAmIScopesCredentials(_credentials)
+
         who_am_i_scopes = cls(
             read_layers=read_layers,
             write_layers=write_layers,
             max_sensitivity=max_sensitivity,
             admin=admin,
+            credentials=credentials,
         )
 
         who_am_i_scopes.additional_properties = d
