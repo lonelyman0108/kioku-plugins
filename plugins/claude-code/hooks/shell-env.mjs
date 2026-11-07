@@ -11,14 +11,15 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { failureText, keyFormatError, KiokuFailure } from '../lib/http.mjs'
 
 const KEY_PREFIX = 'api-key.'
 const TEMP_PREFIX = '.api-key.'
 // 会话标识要拼进文件名，只收这些字符
 const SESSION = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
-// 超过这么久没用过的访问密钥文件，在会话开始时删掉；kioku run 每次读都会更新修改时间
-const KEY_MAX_AGE = 7 * 24 * 60 * 60 * 1000
+// 超过这么久没用过的访问密钥文件，在会话开始时删掉。kioku run 每次读都会更新修改时间，会话恢复、压缩时
+// 钩子也会重写它，所以只有一直开着、这么久都没压缩也没用过 kioku run 的会话才会碰上
+const KEY_MAX_AGE = 30 * 24 * 60 * 60 * 1000
 // 临时文件超过这么久还在，就是写到一半被打断留下的；更新的可能是同时开始的别的会话正在写
 const TEMP_MAX_AGE = 60 * 1000
 const CONTROL = /\p{Cc}/u
@@ -108,6 +109,12 @@ async function main(event) {
     // 配置清掉了：这个会话之前写下的访问密钥也不留着，别的会话的不动
     await rm(keyFile, { force: true })
     throw new KiokuFailure('插件没有配置服务地址或访问密钥')
+  }
+  // 格式不对的访问密钥发不出去，也不写进文件；这个会话之前写下的旧访问密钥同样不留着
+  const problem = keyFormatError(key)
+  if (problem) {
+    await rm(keyFile, { force: true })
+    throw new KiokuFailure(problem)
   }
   const envFile = process.env.CLAUDE_ENV_FILE
   if (!envFile) throw new KiokuFailure('没有 CLAUDE_ENV_FILE')

@@ -2,13 +2,21 @@
 // 服务端返回的输出原样写到标准输出。插件里不放提示词和格式逻辑，都由服务端决定。
 // 任何失败都以退出码 0 结束、不写标准输出：记忆服务出问题不能挡住用户的输入。
 // 服务地址与 Key 来自插件配置（启用插件时填写），Claude Code 以 CLAUDE_PLUGIN_OPTION_* 环境变量传进来。
-// 失败的原因写到标准错误，和 kioku 命令一样不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别
+// 失败的原因写到标准错误，和 kioku 命令一样不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别，
+// 也不跟着跳转走，访问密钥只发给配置的地址
 
 import { execFileSync } from 'node:child_process'
 import { open } from 'node:fs/promises'
 import { basename } from 'node:path'
 
-import { failureText, fetchFailure, keyFormatError, KiokuFailure } from '../lib/http.mjs'
+import {
+  failureText,
+  fetchFailure,
+  isRedirect,
+  keyFormatError,
+  KiokuFailure,
+  redirectError,
+} from '../lib/http.mjs'
 
 // 各事件等待服务端的上限（毫秒），要比 hooks.json 里的 timeout 短
 const TIMEOUTS = { 'session.start': 8000, 'prompt.submit': 5000, 'turn.end': 5000 }
@@ -126,7 +134,19 @@ function contextOf(hostOutput) {
   return undefined
 }
 
-// 把一个生命周期事件交给服务端；连不上、超时与非 2xx 都以 KiokuFailure 抛出
+// 配置写错了（访问密钥格式不对、服务地址返回跳转）：和没有配置一样，会话开始时给模型一段提示，
+// 让它告诉用户去改；notice 是这段提示，不带访问密钥
+class Misconfigured extends KiokuFailure {
+  constructor(message, notice) {
+    super(message)
+    this.notice = notice
+  }
+}
+
+const KEY_NOTICE =
+  'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。'
+
+// 把一个生命周期事件交给服务端；连不上、超时、跳转与非 2xx 都以 KiokuFailure 抛出
 async function post(base, key, body, timeout) {
   let res
   try {
@@ -134,10 +154,18 @@ async function post(base, key, body, timeout) {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeout),
     })
   } catch (err) {
     throw new KiokuFailure(fetchFailure(err, timeout))
+  }
+  if (isRedirect(res.status)) {
+    const text = redirectError(res.status, res.headers.get('location'), base)
+    throw new Misconfigured(
+      text,
+      `Kioku 插件的服务地址无法使用，长期记忆不可用：${text}，在 /plugin 里为 kioku 修改。`,
+    )
   }
   if (!res.ok) throw new KiokuFailure(`HTTP ${res.status}`)
   return res
@@ -166,7 +194,7 @@ async function main(event) {
     return
   }
   const problem = keyFormatError(key)
-  if (problem) throw new KiokuFailure(problem)
+  if (problem) throw new Misconfigured(problem, KEY_NOTICE)
 
   const body = { event }
   if (typeof input.session_id === 'string' && input.session_id) {
@@ -202,6 +230,7 @@ async function main(event) {
 
 const event = process.argv[2]
 main(event).catch((err) => {
+  if (event === 'session.start' && err instanceof Misconfigured) writeContext(event, err.notice)
   // 标准错误只出现在 Claude Code 的调试输出里，不进上下文；插件自己写的原因原样给出，别的只给类别
   process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
 })

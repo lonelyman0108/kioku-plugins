@@ -25,8 +25,8 @@ beforeAll(async () => {
     req.on('data', (chunk) => (raw += chunk))
     req.on('end', () => {
       requests.push({ url: req.url, headers: req.headers, body: JSON.parse(raw) })
-      const { status, body, text } = reply()
-      res.writeHead(status, { 'content-type': 'application/json' })
+      const { status, body, text, headers = {} } = reply()
+      res.writeHead(status, { 'content-type': 'application/json', ...headers })
       res.end(text ?? JSON.stringify(body))
     })
   })
@@ -173,17 +173,60 @@ describe('Claude Code 钩子转发', () => {
     expect(unreachable).toMatchObject({ code: 0, stdout: '' })
   })
 
-  it('访问密钥的格式不对时不发请求，报错只写原因、不带访问密钥', async () => {
+  it('访问密钥的格式不对时不发请求，会话开始提示模型去重新填写，报错不带访问密钥', async () => {
     for (const key of ['kioku_first_half\nkioku_second_half', 'kioku_密钥_half']) {
-      for (const event of ['session.start', 'prompt.submit']) {
-        const result = await run(event, { prompt: '你好' }, { key })
-        expect(result).toMatchObject({ code: 0, stdout: '' })
+      const start = await run('session.start', {}, { key })
+      expect(start.code).toBe(0)
+      expect(JSON.parse(start.stdout)).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext:
+            'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。',
+        },
+      })
+      const prompt = await run('prompt.submit', { prompt: '你好' }, { key })
+      expect(prompt).toMatchObject({ code: 0, stdout: '' })
+      for (const [event, result] of [
+        ['session.start', start],
+        ['prompt.submit', prompt],
+      ]) {
         expect(result.stderr).toBe(
           `Kioku ${event} 未生效：访问密钥的格式不对：只能是可见的 ASCII 字符，不能有空白\n`,
         )
+        expect(result.stdout + result.stderr).not.toContain('half')
       }
     }
     expect(requests).toHaveLength(0)
+  })
+
+  it('服务端返回跳转时不跟着走：报错说明要改地址，会话开始提示模型', async () => {
+    reply = () => ({
+      status: 301,
+      headers: { location: 'https://kioku.example.com/v1/lifecycle/event?token=abc' },
+      body: {},
+    })
+    const sentence =
+      'Kioku 返回了跳转（301），把地址改成跳转之后的地址（例如 https://kioku.example.com）'
+    const prompt = await run('prompt.submit', { prompt: '你好' })
+    expect(prompt).toMatchObject({
+      code: 0,
+      stdout: '',
+      stderr: `Kioku prompt.submit 未生效：${sentence}\n`,
+    })
+    const start = await run('session.start', {})
+    expect(start.stderr).toBe(`Kioku session.start 未生效：${sentence}\n`)
+    expect(JSON.parse(start.stdout).hookSpecificOutput.additionalContext).toBe(
+      `Kioku 插件的服务地址无法使用，长期记忆不可用：${sentence}，在 /plugin 里为 kioku 修改。`,
+    )
+    expect(prompt.stderr + start.stdout).not.toContain('token')
+
+    // 跳到同一个服务的别的路径：不举例，也没有跟着跳转再发一次
+    reply = () => ({ status: 307, headers: { location: `${base}/followed` }, body: {} })
+    const same = await run('prompt.submit', { prompt: '你好' })
+    expect(same.stderr).toBe(
+      'Kioku prompt.submit 未生效：Kioku 返回了跳转（307），把地址改成跳转之后的地址\n',
+    )
+    expect(requests.map((r) => r.url)).toEqual(Array(3).fill('/v1/lifecycle/event'))
   })
 
   it('连不上或响应不是 JSON 时只报类别', async () => {

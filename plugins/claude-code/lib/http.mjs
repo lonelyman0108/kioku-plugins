@@ -33,6 +33,24 @@ export function fetchFailure(err, timeoutMs) {
     : '无法连接 Kioku'
 }
 
+// 收到跳转（3xx）时的报错：说明要把地址改成跳转之后的地址。请求都不跟着跳转走，访问密钥只发给配置的地址；
+// 跳转目标只给协议与主机，路径与查询参数里可能带着令牌；跳到同一个主机、或者没给目标时不举例
+export function redirectError(status, location, url) {
+  let origin
+  try {
+    const target = new URL(location ?? '', `${url}/`)
+    const web = target.protocol === 'https:' || target.protocol === 'http:'
+    if (web && target.origin !== new URL(url).origin) origin = target.origin
+  } catch {
+    // 跳转目标解析不了时不举例
+  }
+  return `Kioku 返回了跳转（${status}），把地址改成跳转之后的地址${origin ? `（例如 ${origin}）` : ''}`
+}
+
+export function isRedirect(status) {
+  return status >= 300 && status < 400
+}
+
 // 要打印的失败原因：插件自己写的原样给出，别的只给类别
 export function failureText(err) {
   return err instanceof KiokuFailure ? err.message : errorKind(err)

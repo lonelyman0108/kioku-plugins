@@ -1,5 +1,14 @@
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -69,9 +78,11 @@ function kiokuEnv(env = {}, configured = true) {
   return childEnv
 }
 
-// 跑一个进程，收集输出；group 为真时它自成一个进程组，像终端里的前台任务那样，可以给整组发信号
+// 跑一个进程，收集输出；group 为真时它自成一个进程组，像终端里的前台任务那样，可以给整组发信号。
+// input 为 null 时不关标准输入，onStdout 里可以接着往里写
 function collect(command, args, { env, input = '', group = false, onStdout } = {}) {
   const child = spawn(command, args, { env, detached: group })
+  child.stdin.on('error', () => {})
   const done = new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
@@ -82,9 +93,16 @@ function collect(command, args, { env, input = '', group = false, onStdout } = {
     child.stderr.on('data', (d) => (stderr += d))
     child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }))
   })
-  child.stdin.end(input)
+  if (input !== null) child.stdin.end(input)
   return done
 }
+
+// 在伪终端里跑命令：它的标准输入、输出都是终端，往终端写 Ctrl-C 就和在终端里按下一样，发给整个前台进程组
+const PTY = 'import os, pty, sys\nsys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))'
+const hasPty =
+  spawnSync('python3', ['-c', 'import os, pty; os.waitstatus_to_exitcode'], {
+    stdio: 'ignore',
+  }).status === 0
 
 function kioku(args, { env, input, configured = true, group, onStdout } = {}) {
   return collect(process.execPath, [bin, ...args], {
@@ -295,6 +313,41 @@ describe('kioku run', () => {
     expect(missing.stderr).toContain('找不到命令 kioku-no-such-command')
   })
 
+  it('命令被会转储的信号结束时，kioku 不把它发给自己，退出码为 128 + 信号编号', async () => {
+    const quit = await kioku(['run', '-e', 'X=pg-main#password', '--', 'sh', '-c', 'kill -QUIT $$'])
+    expect(quit).toMatchObject({ code: 128 + 3, signal: null })
+    const segv = await kioku([
+      'run',
+      '-e',
+      'X=pg-main#password',
+      ...node("process.kill(process.pid, 'SIGSEGV')"),
+    ])
+    expect(segv).toMatchObject({ code: 128 + 11, signal: null })
+  })
+
+  it('入口的报错只给错误类别，取不到共用函数时只说一句固定的', async () => {
+    // 照插件的目录结构摆一份，换上一个会抛错的实现
+    const root = join(dir, 'plugin')
+    mkdirSync(join(root, 'bin'), { recursive: true })
+    mkdirSync(join(root, 'lib'))
+    copyFileSync(bin, join(root, 'bin', 'kioku'))
+    copyFileSync(
+      fileURLToPath(new URL('../http.mjs', import.meta.url)),
+      join(root, 'lib', 'http.mjs'),
+    )
+    writeFileSync(
+      join(root, 'lib', 'kioku.mjs'),
+      // 错误的 code 里带着值：直接打印 code 就带出来了
+      "export async function main() { throw Object.assign(new TypeError('值 pg-secret-1'), { code: 'pg-secret-1' }) }\n",
+    )
+    const shim = join(root, 'bin', 'kioku')
+    const failed = await collect(process.execPath, [shim, 'run'], { env: kiokuEnv() })
+    expect(failed).toMatchObject({ code: 2, stdout: '', stderr: 'kioku：内部错误（TypeError）\n' })
+    rmSync(join(root, 'lib', 'http.mjs'))
+    const bare = await collect(process.execPath, [shim, 'run'], { env: kiokuEnv() })
+    expect(bare).toMatchObject({ code: 2, stderr: 'kioku：内部错误\n' })
+  })
+
   it('取不到值时不启动命令，服务端的错误文字原样打到标准错误，退出码 2', async () => {
     reply = () => ({ status: 403, body: { error: 'pg-main#password：访问密钥没有凭据能力' } })
     const marker = join(dir, 'ran')
@@ -377,9 +430,14 @@ describe('kioku run', () => {
     expect(result.stdout.trim()).toBe(String(size))
   })
 
-  it('给整个进程组的 SIGINT（终端的 Ctrl-C）命令只收到一次，kioku 等它处理完', async () => {
-    const result = await kioku(
+  it.skipIf(!hasPty)('在终端里按 Ctrl-C：命令只收到一次 SIGINT，kioku 等它处理完', async () => {
+    const result = await collect(
+      'python3',
       [
+        '-c',
+        PTY,
+        process.execPath,
+        bin,
         'run',
         '-e',
         'X=pg-main#password',
@@ -394,25 +452,31 @@ describe('kioku run', () => {
         `),
       ],
       {
-        group: true,
+        env: kiokuEnv(),
+        input: null,
         onStdout: (stdout, child) => {
-          if (stdout === '就绪\n') process.kill(-child.pid, 'SIGINT')
+          if (stdout.includes('就绪') && !child.sentCtrlC) {
+            child.sentCtrlC = true
+            child.stdin.write('\x03')
+          }
         },
       },
     )
-    expect(result).toMatchObject({ code: 5, stdout: '就绪\n收到 SIGINT 1\n' })
+    expect(result.code).toBe(5)
+    expect(result.stdout).toContain('收到 SIGINT 1')
+    expect(result.stdout).not.toContain('收到 SIGINT 2')
   })
 
-  it('只发给 kioku 的 SIGINT 不转给命令，kioku 照样等命令结束', async () => {
+  it('没有终端时，只发给 kioku 的 SIGINT 转给命令', async () => {
     const result = await kioku(
       [
         'run',
         '-e',
         'X=pg-main#password',
         ...node(`
-          process.on('SIGINT', () => console.log('收到 SIGINT'))
+          process.on('SIGINT', () => { console.log('收到 SIGINT'); process.exit(6) })
           console.log('就绪')
-          setTimeout(() => process.exit(4), 300)
+          setInterval(() => {}, 1000)
         `),
       ],
       {
@@ -421,7 +485,7 @@ describe('kioku run', () => {
         },
       },
     )
-    expect(result).toMatchObject({ code: 4, stdout: '就绪\n' })
+    expect(result).toMatchObject({ code: 6, stdout: '就绪\n收到 SIGINT\n' })
   })
 
   it('循环里按 Ctrl-C：命令被 SIGINT 结束，kioku 也以 SIGINT 结束，外层 shell 的循环跟着停下', async () => {
@@ -463,7 +527,25 @@ describe('kioku run', () => {
     expect(result).toMatchObject({ code: 7, stdout: '就绪\n收到 SIGTERM\n' })
   })
 
-  it('命令已经结束、留下的后台进程还占着输出时，收到信号就不再等', async () => {
+  it('命令已经结束、输出还没写完时收到信号：写完再以这个信号结束，输出一字节不少', async () => {
+    // 命令写完 100KB 就退出，留下一个分开的进程在 0.3 秒后给 kioku 发 SIGTERM；
+    // 下游 1 秒之后才开始读，那时 kioku 手里还排着管道装不下的输出
+    const size = 100 * 1024
+    const child = [
+      "const { spawn } = require('node:child_process')",
+      "spawn('sh', ['-c', 'sleep 0.3; kill -TERM ' + process.ppid], { detached: true, stdio: 'ignore' }).unref()",
+      `process.stdout.write('x'.repeat(${size}), () => process.exit(0))`,
+    ].join('\n')
+    const script =
+      '"$NODE" "$KIOKU" run -e X=pg-main#password -- "$NODE" -e "$CHILD" | (sleep 1; wc -c)'
+    const result = await collect('sh', ['-c', script], {
+      env: kiokuEnv({ NODE: process.execPath, KIOKU: bin, CHILD: child }),
+    })
+    expect(result.stdout.trim()).toBe(String(size))
+  })
+
+  it('命令已经结束、留下的后台进程一直占着输出时，再收到一次信号就不再等', async () => {
+    const started = Date.now()
     const result = await kioku(
       [
         'run',
@@ -476,11 +558,16 @@ describe('kioku run', () => {
       ],
       {
         onStdout: (stdout, child) => {
-          if (stdout.endsWith('后台\n')) child.kill('SIGTERM')
+          if (!stdout.endsWith('后台\n')) return
+          // 第一次：等输出写完，可是后台进程还占着；第二次：不再等
+          child.kill('SIGTERM')
+          setTimeout(() => child.kill('SIGTERM'), 200)
         },
       },
     )
     expect(result).toMatchObject({ code: null, signal: 'SIGTERM', stdout: '就绪\n后台\n' })
+    // 没有等后台进程的 sleep 3 结束
+    expect(Date.now() - started).toBeLessThan(2000)
   })
 
   it('下游提前关闭时命令收到 SIGPIPE，不会卡住', async () => {

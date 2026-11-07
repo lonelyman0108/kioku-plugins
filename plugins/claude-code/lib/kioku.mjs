@@ -6,8 +6,16 @@
 import { spawn } from 'node:child_process'
 import { readFile, utimes } from 'node:fs/promises'
 import { constants } from 'node:os'
+import { isatty } from 'node:tty'
 
-import { errorKind, fetchFailure, keyFormatError, KiokuFailure } from './http.mjs'
+import {
+  errorKind,
+  fetchFailure,
+  isRedirect,
+  keyFormatError,
+  KiokuFailure,
+  redirectError,
+} from './http.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
 
 // 等 Kioku 取值的上限（毫秒）
@@ -21,12 +29,30 @@ const CONTROL = /\p{Cc}/u
 // 不给命令留这两个变量，免得它把访问密钥或文件的位置顺手打印出来。这不是隔离：
 // 访问密钥文件和命令属于同一个用户，命令照样读得到
 const KEY_VARIABLES = ['KIOKU_API_KEY', 'KIOKU_API_KEY_FILE']
-// 收到这些信号时转给命令，SIGINT 除外：终端的 Ctrl-C 发给整个前台进程组，命令和 kioku 在同一个组里，
-// 已经收到了，再转一次就成了两次（有的工具连按两次会跳过清理）。SIGINT 照样要接住，kioku 才能等命令处理完。
-// SIGTERM、SIGHUP 一般单独发给 kioku；发给整个进程组时命令会收到两次，这是已知的限制
+// 收到这些信号时转给命令。有终端时 SIGINT 除外：终端的 Ctrl-C 发给整个前台进程组，命令和 kioku 在同一个组里，
+// 已经收到了，再转一次就成了两次（有的工具连按两次会跳过清理）；SIGINT 照样接住，kioku 才能等命令处理完。
+// 没有终端时（例如 Claude Code 的 Bash 工具）SIGINT 是单独发给 kioku 的，照样转发。
+// 发给整个进程组的 SIGTERM、SIGHUP（没有终端时还有 SIGINT），命令会收到两次，这是已知的限制
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP']
-// 自己再发一次也结束不了进程的信号：SIGUSR1 会打开 Node 的调试端口，SIGPIPE 被 Node 忽略
-const NOT_RERAISED = new Set(['SIGUSR1', 'SIGPIPE'])
+// 标准输入、输出或错误有一个是终端，就当作在终端里运行。用 isatty 查文件描述符，不碰 process.stdin：
+// 那会建出读标准输入的流
+const FROM_TERMINAL = isatty(0) || isatty(1) || isatty(2)
+// 不发给自己的信号，退回 128 + 信号编号：SIGUSR1 会打开 Node 的调试端口，SIGPIPE 被 Node 忽略；
+// 其余的会让 Node 自己转储，崩溃报告也算到 kioku 头上
+const NOT_RERAISED = new Set([
+  'SIGUSR1',
+  'SIGPIPE',
+  'SIGSEGV',
+  'SIGABRT',
+  'SIGBUS',
+  'SIGILL',
+  'SIGFPE',
+  'SIGQUIT',
+  'SIGTRAP',
+  'SIGSYS',
+  'SIGXCPU',
+  'SIGXFSZ',
+])
 
 export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [--purpose <用途>] -- <命令> [参数…]
 
@@ -158,19 +184,6 @@ async function loadConfig(env) {
   return { url, key }
 }
 
-// 收到跳转时说明要改地址。访问密钥不跟着跳转发出去；跳转目标只给协议与主机，路径与查询参数里可能带着令牌
-function redirectError(status, location, url) {
-  let origin
-  try {
-    const target = new URL(location ?? '', `${url}/`)
-    const web = target.protocol === 'https:' || target.protocol === 'http:'
-    if (web && target.origin !== new URL(url).origin) origin = target.origin
-  } catch {
-    // 跳转目标解析不了时不举例
-  }
-  return `Kioku 返回了跳转（${status}），把地址改成跳转之后的地址${origin ? `（例如 ${origin}）` : ''}`
-}
-
 // 服务端的错误文字原样给出，只去掉控制字符；万一带着访问密钥也盖掉
 function serverError(data, status, key) {
   const text = typeof data?.error === 'string' ? data.error : ''
@@ -212,7 +225,7 @@ async function resolveValues({ url, key }, refs, purpose) {
   } catch (err) {
     throw new KiokuFailure(fetchFailure(err, TIMEOUT))
   }
-  if (res.status >= 300 && res.status < 400) {
+  if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
   }
   let data
@@ -284,15 +297,22 @@ function runCommand(command, args, env, values) {
     child.once('error', (err) => {
       failure = err
     })
+    // 命令结束之后、输出写完之前收到的信号：等输出写完，kioku 以它结束
+    let late
     const stopListening = () => {
       for (const signal of SIGNALS) process.off(signal, onSignal)
     }
     const onSignal = (signal) => {
       if (child.exitCode === null && child.signalCode === null) {
-        if (signal !== 'SIGINT') child.kill(signal)
+        if (signal !== 'SIGINT' || !FROM_TERMINAL) child.kill(signal)
         return
       }
-      // 命令已经结束，只是还在等输出（例如它留下的后台进程占着输出）：不再等，按这个信号结束
+      if (late === undefined) {
+        // 命令已经结束、输出还没写完：交给下面 close 的处理，写完再结束
+        late = signal
+        return
+      }
+      // 又收到一次：不再等（例如命令留下的后台进程一直占着输出），立刻以这个信号结束
       stopListening()
       process.kill(process.pid, signal)
     }
@@ -315,9 +335,12 @@ function runCommand(command, args, env, values) {
         resolve(notFound ? 127 : 126)
         return
       }
-      if (signal) await flushed()
+      // 正常退出也先等输出写完、再去掉信号的处理：这期间收到的信号同样等写完再结束，
+      // 否则 Node 还在往外写的时候被信号结束，排着队的输出就丢了
+      await flushed()
+      const ending = signal ?? late
       stopListening()
-      resolve(signal ? exitBySignal(signal) : (code ?? 1))
+      resolve(ending ? exitBySignal(ending) : (code ?? 1))
     })
   })
 }

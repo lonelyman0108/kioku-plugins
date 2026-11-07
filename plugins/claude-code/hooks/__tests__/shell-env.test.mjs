@@ -126,9 +126,9 @@ describe('会话开始时给 kioku 命令配好地址与访问密钥', () => {
     expect(sourced(other)[1]).toBe(join(data, 'api-key.second-session'))
   })
 
-  it('会话开始时删掉超过 7 天没用过的访问密钥文件和写到一半留下的临时文件', async () => {
-    const stale = plant('api-key.old-session', 8 * DAY)
-    const recent = plant('api-key.recent-session', 6 * DAY)
+  it('会话开始时删掉超过 30 天没用过的访问密钥文件和写到一半留下的临时文件', async () => {
+    const stale = plant('api-key.old-session', 31 * DAY)
+    const recent = plant('api-key.recent-session', 29 * DAY)
     const leftover = plant('.api-key.123.0f0e', 2 * 60 * 1000)
     // 刚建的临时文件可能是同时开始的别的会话正在写的
     const writing = plant('.api-key.456.1a2b', 0)
@@ -138,6 +138,22 @@ describe('会话开始时给 kioku 命令配好地址与访问密钥', () => {
     expect(existsSync(leftover)).toBe(false)
     for (const path of [recent, writing, unrelated]) expect(existsSync(path)).toBe(true)
     expect(existsSync(join(data, `api-key.${SESSION}`))).toBe(true)
+  })
+
+  it('访问密钥格式不对时不写密钥文件，也不追加环境变量，报错不带访问密钥', async () => {
+    const mine = plant(`api-key.${SESSION}`, 0, 'kioku_old_key')
+    const result = await hook('session.start', {
+      env: { CLAUDE_PLUGIN_OPTION_API_KEY: 'kioku_first_half\nkioku_second_half' },
+    })
+    expect(result).toEqual({
+      code: 0,
+      stdout: '',
+      stderr:
+        'Kioku kioku 命令的配置未写入：访问密钥的格式不对：只能是可见的 ASCII 字符，不能有空白\n',
+    })
+    expect(existsSync(mine)).toBe(false)
+    expect(readdirSync(data)).toEqual([])
+    expect(existsSync(envFile)).toBe(false)
   })
 
   it('会话结束时只删掉这个会话的访问密钥文件', async () => {
