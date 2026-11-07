@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { fetchFailure, parseRunArgs, UsageError } from '../kioku.mjs'
+import { parseRunArgs, UsageError } from '../kioku.mjs'
 
 const bin = fileURLToPath(new URL('../../bin/kioku', import.meta.url))
 const KEY = 'kioku_test_key'
@@ -37,8 +37,8 @@ beforeAll(async () => {
     req.on('end', () => {
       const body = JSON.parse(raw)
       requests.push({ method: req.method, url: req.url, headers: req.headers, body })
-      const { status, body: out } = reply(body)
-      res.writeHead(status, { 'content-type': 'application/json' })
+      const { status, headers = {}, body: out = {} } = reply(body)
+      res.writeHead(status, { 'content-type': 'application/json', ...headers })
       res.end(JSON.stringify(out))
     })
   })
@@ -55,8 +55,8 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-// 跑 bin/kioku。默认用 KIOKU_SERVER_URL 与 KIOKU_API_KEY 指向假的 Kioku；env 里值为 null 的变量去掉
-function kioku(args, { env = {}, input = '', configured = true, onStdout } = {}) {
+// 跑 bin/kioku 时的环境：默认用 KIOKU_SERVER_URL 与 KIOKU_API_KEY 指向假的 Kioku；env 里值为 null 的变量去掉
+function kiokuEnv(env = {}, configured = true) {
   const childEnv = { ...process.env }
   for (const name of ['KIOKU_SERVER_URL', 'KIOKU_API_KEY', 'KIOKU_API_KEY_FILE']) {
     delete childEnv[name]
@@ -66,7 +66,12 @@ function kioku(args, { env = {}, input = '', configured = true, onStdout } = {})
     if (value === null) delete childEnv[name]
     else childEnv[name] = value
   }
-  const child = spawn(process.execPath, [bin, ...args], { env: childEnv })
+  return childEnv
+}
+
+// 跑一个进程，收集输出；group 为真时它自成一个进程组，像终端里的前台任务那样，可以给整组发信号
+function collect(command, args, { env, input = '', group = false, onStdout } = {}) {
+  const child = spawn(command, args, { env, detached: group })
   const done = new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
@@ -79,6 +84,15 @@ function kioku(args, { env = {}, input = '', configured = true, onStdout } = {})
   })
   child.stdin.end(input)
   return done
+}
+
+function kioku(args, { env, input, configured = true, group, onStdout } = {}) {
+  return collect(process.execPath, [bin, ...args], {
+    env: kiokuEnv(env, configured),
+    input,
+    group,
+    onStdout,
+  })
 }
 
 // kioku run 后面跟一段 node 脚本作为要跑的命令
@@ -266,16 +280,16 @@ describe('kioku run', () => {
     expect(requests).toHaveLength(1)
   })
 
-  it('退出码与命令相同，被信号结束时为 128 + 信号编号', async () => {
+  it('退出码与命令相同，命令被信号结束时 kioku 以同一个信号结束', async () => {
     const exited = await kioku(['run', '-e', 'X=pg-main#password', ...node('process.exit(3)')])
     expect(exited.code).toBe(3)
     const killed = await kioku([
       'run',
       '-e',
       'X=pg-main#password',
-      ...node("process.kill(process.pid, 'SIGKILL')"),
+      ...node("console.log('结束之前的输出'); process.kill(process.pid, 'SIGKILL')"),
     ])
-    expect(killed.code).toBe(128 + 9)
+    expect(killed).toMatchObject({ code: null, signal: 'SIGKILL', stdout: '结束之前的输出\n' })
     const missing = await kioku(['run', '-e', 'X=pg-main#password', '--', 'kioku-no-such-command'])
     expect(missing.code).toBe(127)
     expect(missing.stderr).toContain('找不到命令 kioku-no-such-command')
@@ -352,6 +366,82 @@ describe('kioku run', () => {
     expect(result.stderr).toBe('kioku：PIN 的值太短，输出里不打码\n')
   })
 
+  it('以信号结束之前先把输出写完：下游读得慢也不丢', async () => {
+    // 下游一秒之后才开始读：管道的缓冲装不下的部分排在 kioku 的标准输出里，得等它写完再结束
+    const size = 100 * 1024
+    const write = `process.stdout.write('x'.repeat(${size}), () => process.kill(process.pid, 'SIGTERM'))`
+    const script = `"$NODE" "$KIOKU" run -e X=pg-main#password -- "$NODE" -e "${write}" | (sleep 1; wc -c)`
+    const result = await collect('sh', ['-c', script], {
+      env: kiokuEnv({ NODE: process.execPath, KIOKU: bin }),
+    })
+    expect(result.stdout.trim()).toBe(String(size))
+  })
+
+  it('给整个进程组的 SIGINT（终端的 Ctrl-C）命令只收到一次，kioku 等它处理完', async () => {
+    const result = await kioku(
+      [
+        'run',
+        '-e',
+        'X=pg-main#password',
+        ...node(`
+          let count = 0
+          process.on('SIGINT', () => {
+            console.log('收到 SIGINT ' + ++count)
+            setTimeout(() => process.exit(5), 300)
+          })
+          console.log('就绪')
+          setInterval(() => {}, 1000)
+        `),
+      ],
+      {
+        group: true,
+        onStdout: (stdout, child) => {
+          if (stdout === '就绪\n') process.kill(-child.pid, 'SIGINT')
+        },
+      },
+    )
+    expect(result).toMatchObject({ code: 5, stdout: '就绪\n收到 SIGINT 1\n' })
+  })
+
+  it('只发给 kioku 的 SIGINT 不转给命令，kioku 照样等命令结束', async () => {
+    const result = await kioku(
+      [
+        'run',
+        '-e',
+        'X=pg-main#password',
+        ...node(`
+          process.on('SIGINT', () => console.log('收到 SIGINT'))
+          console.log('就绪')
+          setTimeout(() => process.exit(4), 300)
+        `),
+      ],
+      {
+        onStdout: (stdout, child) => {
+          if (stdout === '就绪\n') child.kill('SIGINT')
+        },
+      },
+    )
+    expect(result).toMatchObject({ code: 4, stdout: '就绪\n' })
+  })
+
+  it('循环里按 Ctrl-C：命令被 SIGINT 结束，kioku 也以 SIGINT 结束，外层 shell 的循环跟着停下', async () => {
+    const loop = [
+      'for i in 1 2 3; do',
+      `  "$NODE" "$KIOKU" run -e X=pg-main#password -- "$NODE" -e "console.log('就绪'); setTimeout(() => {}, 300)"`,
+      '  echo "第 $i 次之后"',
+      'done',
+      'echo 跑完了',
+    ].join('\n')
+    const result = await collect('bash', ['-c', loop], {
+      env: kiokuEnv({ NODE: process.execPath, KIOKU: bin }),
+      group: true,
+      onStdout: (stdout, child) => {
+        if (stdout === '就绪\n') process.kill(-child.pid, 'SIGINT')
+      },
+    })
+    expect(result).toMatchObject({ signal: 'SIGINT', stdout: '就绪\n' })
+  })
+
   it('收到 SIGTERM 时转给命令', async () => {
     const result = await kioku(
       [
@@ -409,11 +499,66 @@ describe('kioku run', () => {
     expect(result.stderr).toContain('KIOKU_API_KEY')
     expect(requests).toHaveLength(0)
 
+    // 访问密钥文件读不到、也没有 KIOKU_API_KEY：报文件的位置与错误类别
+    const missing = join(dir, 'missing')
     const missingFile = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
+      env: { KIOKU_API_KEY_FILE: missing, KIOKU_API_KEY: null },
+    })
+    expect(missingFile).toMatchObject({
+      code: 2,
+      stderr: `kioku：无法读取访问密钥文件 ${missing}（ENOENT）：新开会话，或者设置 KIOKU_API_KEY\n`,
+    })
+    const empty = join(dir, 'empty')
+    writeFileSync(empty, '\n')
+    const emptyFile = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
+      env: { KIOKU_API_KEY_FILE: empty, KIOKU_API_KEY: null },
+    })
+    expect(emptyFile.code).toBe(2)
+    expect(emptyFile.stderr).toContain('文件是空的')
+    expect(requests).toHaveLength(0)
+  })
+
+  it('访问密钥文件读不到时退回 KIOKU_API_KEY；读得到时更新它的修改时间', async () => {
+    const result = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
       env: { KIOKU_API_KEY_FILE: join(dir, 'missing') },
     })
-    expect(missingFile.code).toBe(2)
-    expect(missingFile.stderr).toContain('ENOENT')
+    expect(result).toMatchObject({ code: 0, stderr: '' })
+    expect(requests[0].headers.authorization).toBe(`Bearer ${KEY}`)
+
+    const keyFile = join(dir, 'api-key')
+    writeFileSync(keyFile, 'kioku_file_key')
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+    utimesSync(keyFile, old, old)
+    await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
+      env: { KIOKU_API_KEY_FILE: keyFile },
+    })
+    expect(requests[1].headers.authorization).toBe('Bearer kioku_file_key')
+    expect(Date.now() - statSync(keyFile).mtimeMs).toBeLessThan(60_000)
+  })
+
+  it('Kioku 返回跳转时不跟着走，说明要改地址，只给跳转目标的协议与主机', async () => {
+    reply = () => ({
+      status: 301,
+      headers: { location: 'https://kioku.example.com/v1/credentials/resolve?token=abc' },
+      body: { error: '已搬走' },
+    })
+    const moved = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])
+    expect(moved).toMatchObject({
+      code: 2,
+      stderr:
+        'kioku：Kioku 返回了跳转（301），把地址改成跳转之后的地址（例如 https://kioku.example.com）\n',
+    })
+    expect(requests).toHaveLength(1)
+
+    // 跳到同一个主机的别的路径、或者没给目标时不举例
+    reply = () => ({ status: 308, headers: { location: '/kioku/v1/credentials/resolve' } })
+    expect((await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])).stderr).toBe(
+      'kioku：Kioku 返回了跳转（308），把地址改成跳转之后的地址\n',
+    )
+    reply = () => ({ status: 302 })
+    expect((await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])).stderr).toBe(
+      'kioku：Kioku 返回了跳转（302），把地址改成跳转之后的地址\n',
+    )
   })
 
   it('报错里不带访问密钥', async () => {
@@ -442,18 +587,5 @@ describe('kioku run', () => {
     reply = () => ({ status: 401, body: { error: `访问密钥 ${KEY} 无效` } })
     const echoed = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])
     expect(echoed.stderr).toBe('kioku：访问密钥 *** 无效\n')
-  })
-
-  it('fetch 的错误只取类别', () => {
-    const timeout = Object.assign(new Error('The operation was aborted due to timeout'), {
-      name: 'TimeoutError',
-    })
-    expect(fetchFailure(timeout)).toBe('连接 Kioku 超时（15 秒）')
-    const header = new TypeError(`Headers.append: "Bearer ${KEY}\nx" is an invalid header value.`)
-    expect(fetchFailure(header)).toBe('无法连接 Kioku')
-    const refused = new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } })
-    expect(fetchFailure(refused)).toBe('无法连接 Kioku（ECONNREFUSED）')
-    const odd = new TypeError('fetch failed', { cause: { code: `Bearer ${KEY}` } })
-    expect(fetchFailure(odd)).toBe('无法连接 Kioku')
   })
 })

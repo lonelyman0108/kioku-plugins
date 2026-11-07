@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// kioku 命令的入口，实现在 ../cli/kioku.mjs。插件启用期间，Claude Code 把插件的 bin/ 加进 Bash 工具的 PATH。
+// kioku 命令的入口，实现在 ../lib/kioku.mjs。插件启用期间，Claude Code 把插件的 bin/ 加进 Bash 工具的 PATH。
 // 没有扩展名的文件按 CommonJS 还是 ES 模块执行，取决于 Node 的版本与上层的 package.json，
 // 所以这里只用两边都能用的写法：动态 import，位置从 process.argv[1] 推
 Promise.all([import('node:fs'), import('node:path'), import('node:url')])
   .then(([fs, path, url]) => {
     const self = fs.realpathSync(process.argv[1])
-    const entry = path.join(path.dirname(self), '..', 'cli', 'kioku.mjs')
+    const entry = path.join(path.dirname(self), '..', 'lib', 'kioku.mjs')
     return import(url.pathToFileURL(entry).href)
   })
   .then((cli) => cli.main(process.argv.slice(2)))

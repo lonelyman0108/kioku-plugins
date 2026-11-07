@@ -1,11 +1,14 @@
 // Claude Code 钩子：把 SessionStart、UserPromptSubmit、Stop 转发给 Kioku 的生命周期端点，
 // 服务端返回的输出原样写到标准输出。插件里不放提示词和格式逻辑，都由服务端决定。
 // 任何失败都以退出码 0 结束、不写标准输出：记忆服务出问题不能挡住用户的输入。
-// 服务地址与 Key 来自插件配置（启用插件时填写），Claude Code 以 CLAUDE_PLUGIN_OPTION_* 环境变量传进来
+// 服务地址与 Key 来自插件配置（启用插件时填写），Claude Code 以 CLAUDE_PLUGIN_OPTION_* 环境变量传进来。
+// 失败的原因写到标准错误，和 kioku 命令一样不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别
 
 import { execFileSync } from 'node:child_process'
 import { open } from 'node:fs/promises'
 import { basename } from 'node:path'
+
+import { failureText, fetchFailure, keyFormatError, KiokuFailure } from '../lib/http.mjs'
 
 // 各事件等待服务端的上限（毫秒），要比 hooks.json 里的 timeout 短
 const TIMEOUTS = { 'session.start': 8000, 'prompt.submit': 5000, 'turn.end': 5000 }
@@ -123,9 +126,26 @@ function contextOf(hostOutput) {
   return undefined
 }
 
+// 把一个生命周期事件交给服务端；连不上、超时与非 2xx 都以 KiokuFailure 抛出
+async function post(base, key, body, timeout) {
+  let res
+  try {
+    res = await fetch(`${base}/v1/lifecycle/event`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout),
+    })
+  } catch (err) {
+    throw new KiokuFailure(fetchFailure(err, timeout))
+  }
+  if (!res.ok) throw new KiokuFailure(`HTTP ${res.status}`)
+  return res
+}
+
 async function main(event) {
   const timeout = TIMEOUTS[event]
-  if (!timeout) throw new Error(`未知事件 ${event}`)
+  if (!timeout) throw new KiokuFailure(`未知事件 ${event}`)
   const base = (process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
   const key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
   let input = {}
@@ -145,6 +165,8 @@ async function main(event) {
     }
     return
   }
+  const problem = keyFormatError(key)
+  if (problem) throw new KiokuFailure(problem)
 
   const body = { event }
   if (typeof input.session_id === 'string' && input.session_id) {
@@ -159,13 +181,7 @@ async function main(event) {
     if (!turn) return
     body.user = clip(turn.user, MAX_PROMPT)
     body.reply = clip(turn.reply, MAX_REPLY)
-    const res = await fetch(`${base}/v1/lifecycle/event`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeout),
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await post(base, key, body, timeout)
     return
   }
   if (event === 'session.start') {
@@ -179,19 +195,13 @@ async function main(event) {
     body.prompt = prompt.slice(0, MAX_PROMPT)
   }
 
-  const res = await fetch(`${base}/v1/lifecycle/event`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeout),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await post(base, key, body, timeout)
   const { hostOutput } = await res.json()
   writeContext(event, contextOf(hostOutput))
 }
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  // 标准错误只出现在 Claude Code 的调试输出里，不进上下文
-  process.stderr.write(`Kioku ${event ?? ''} 未生效：${err instanceof Error ? err.message : err}\n`)
+  // 标准错误只出现在 Claude Code 的调试输出里，不进上下文；插件自己写的原因原样给出，别的只给类别
+  process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
 })

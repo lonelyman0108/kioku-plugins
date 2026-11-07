@@ -13,10 +13,11 @@ const script = fileURLToPath(new URL('../forward.mjs', import.meta.url))
 let server
 let base
 let requests = []
-let reply = () => ({
+const defaultReply = () => ({
   status: 200,
   body: { hostOutput: { mode: 'none', value: null }, nodeUris: [] },
 })
+let reply = defaultReply
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -24,9 +25,9 @@ beforeAll(async () => {
     req.on('data', (chunk) => (raw += chunk))
     req.on('end', () => {
       requests.push({ url: req.url, headers: req.headers, body: JSON.parse(raw) })
-      const { status, body } = reply()
+      const { status, body, text } = reply()
       res.writeHead(status, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(body))
+      res.end(text ?? JSON.stringify(body))
     })
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -35,6 +36,7 @@ beforeAll(async () => {
 afterAll(() => new Promise((resolve) => server.close(resolve)))
 beforeEach(() => {
   requests = []
+  reply = defaultReply
 })
 
 function run(event, input, options = {}) {
@@ -43,7 +45,7 @@ function run(event, input, options = {}) {
   delete env.CLAUDE_PLUGIN_OPTION_API_KEY
   if (options.configured !== false) {
     env.CLAUDE_PLUGIN_OPTION_SERVER_URL = options.url ?? `${base}/`
-    env.CLAUDE_PLUGIN_OPTION_API_KEY = 'kioku_test_key'
+    env.CLAUDE_PLUGIN_OPTION_API_KEY = options.key ?? 'kioku_test_key'
   }
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [script, event], { env })
@@ -169,6 +171,35 @@ describe('Claude Code 钩子转发', () => {
 
     const unreachable = await run('session.start', {}, { url: 'http://127.0.0.1:9' })
     expect(unreachable).toMatchObject({ code: 0, stdout: '' })
+  })
+
+  it('访问密钥的格式不对时不发请求，报错只写原因、不带访问密钥', async () => {
+    for (const key of ['kioku_first_half\nkioku_second_half', 'kioku_密钥_half']) {
+      for (const event of ['session.start', 'prompt.submit']) {
+        const result = await run(event, { prompt: '你好' }, { key })
+        expect(result).toMatchObject({ code: 0, stdout: '' })
+        expect(result.stderr).toBe(
+          `Kioku ${event} 未生效：访问密钥的格式不对：只能是可见的 ASCII 字符，不能有空白\n`,
+        )
+      }
+    }
+    expect(requests).toHaveLength(0)
+  })
+
+  it('连不上或响应不是 JSON 时只报类别', async () => {
+    const unreachable = await run(
+      'prompt.submit',
+      { prompt: '你好' },
+      { url: 'http://127.0.0.1:9' },
+    )
+    expect(unreachable).toMatchObject({ code: 0, stdout: '' })
+    expect(unreachable.stderr).toBe('Kioku prompt.submit 未生效：无法连接 Kioku\n')
+
+    // 响应解析失败的文字会带上响应的开头，这里可能回显着请求头
+    reply = () => ({ status: 200, text: 'Bearer kioku_test_key' })
+    const garbled = await run('prompt.submit', { prompt: '你好' })
+    expect(garbled).toMatchObject({ code: 0, stdout: '' })
+    expect(garbled.stderr).toBe('Kioku prompt.submit 未生效：SyntaxError\n')
   })
 
   it('没有配置时，会话开始提示一次，每轮输入什么都不做', async () => {

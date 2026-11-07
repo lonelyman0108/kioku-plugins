@@ -4,9 +4,10 @@
 // 所以这两处只取错误类别
 
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, utimes } from 'node:fs/promises'
 import { constants } from 'node:os'
 
+import { errorKind, fetchFailure, keyFormatError, KiokuFailure } from './http.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
 
 // 等 Kioku 取值的上限（毫秒）
@@ -17,11 +18,15 @@ const MAX_PURPOSE = 200
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const CONTROL = /\p{Cc}/u
-// 访问密钥只能是可见的 ASCII 字符：别的字符放不进请求头，而 fetch 的报错会带上整个请求头
-const KEY = /^[\x21-\x7e]+$/
-// 子进程用不到访问密钥，不给它留这两个变量
+// 不给命令留这两个变量，免得它把访问密钥或文件的位置顺手打印出来。这不是隔离：
+// 访问密钥文件和命令属于同一个用户，命令照样读得到
 const KEY_VARIABLES = ['KIOKU_API_KEY', 'KIOKU_API_KEY_FILE']
+// 收到这些信号时转给命令，SIGINT 除外：终端的 Ctrl-C 发给整个前台进程组，命令和 kioku 在同一个组里，
+// 已经收到了，再转一次就成了两次（有的工具连按两次会跳过清理）。SIGINT 照样要接住，kioku 才能等命令处理完。
+// SIGTERM、SIGHUP 一般单独发给 kioku；发给整个进程组时命令会收到两次，这是已知的限制
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP']
+// 自己再发一次也结束不了进程的信号：SIGUSR1 会打开 Node 的调试端口，SIGPIPE 被 Node 忽略
+const NOT_RERAISED = new Set(['SIGUSR1', 'SIGPIPE'])
 
 export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [--purpose <用途>] -- <命令> [参数…]
 
@@ -30,16 +35,16 @@ export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [-
 打码只防值顺手出现在输出里，不是安全边界。
 
   -e 变量=<标识>#<字段>  凭据 <标识> 的 <字段> 放进这个环境变量，可以写多个
-  --purpose <用途>       这次取用的用途，记进访问记录，最多 ${MAX_PURPOSE} 个字
+  --purpose <用途>       这次取用的用途，记进访问记录，最多 ${MAX_PURPOSE} 个字；用途里有空格时要加引号
   -h, --help             显示本说明
 
 命令不经过 shell 直接执行。参数里写的 $变量 会被外层的 shell 提前展开成空值；
 要在参数里用变量，或者要用管道、重定向时，写成 sh -c '…'，整段用单引号，变量放在双引号里：
 
   kioku run -e PGPASSWORD=pg-main#password -- psql -h db.example.com -U app
-  kioku run -e TOKEN=github#token -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com'
+  kioku run -e TOKEN=github#token --purpose '查看 issue' -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com/issues'
 
-退出码与命令相同；参数不对、取值失败时为 2。
+退出码与命令相同，命令被信号结束时 kioku 也以同一个信号结束；参数不对、取值失败时为 2。
 地址与访问密钥：Claude Code 插件在会话开始时配好；在别处用时设置 KIOKU_SERVER_URL 与 KIOKU_API_KEY。
 `
 
@@ -48,8 +53,6 @@ const NOT_CONFIGURED =
 
 // 参数写错：打印说明后以 2 退出
 export class UsageError extends Error {}
-// 取值前后的失败：只打印这一句，以 2 退出
-class Failure extends Error {}
 
 // 解析 kioku run 的参数。要看说明时返回 { help: true }；否则返回 refs（要取的标识与字段，同一对只取一次）、
 // variables（[变量名, 值在 refs 里的下标]）、purpose、command 与 args
@@ -115,42 +118,57 @@ function parsePurpose(value) {
   return text || undefined
 }
 
-// 地址与访问密钥：先看插件在会话开始时配好的 KIOKU_API_KEY_FILE，没有再看 KIOKU_API_KEY
+// 地址与访问密钥。访问密钥先读插件在会话开始时配好的 KIOKU_API_KEY_FILE，读不到再用 KIOKU_API_KEY；
+// 两样都没有才报错，报错只写文件的位置与错误类别
 async function loadConfig(env) {
   const url = (env.KIOKU_SERVER_URL ?? '').trim().replace(/\/+$/, '')
-  let key = (env.KIOKU_API_KEY ?? '').trim()
-  if (env.KIOKU_API_KEY_FILE) {
+  const file = env.KIOKU_API_KEY_FILE
+  let key = ''
+  let fileProblem
+  if (file) {
     try {
-      key = (await readFile(env.KIOKU_API_KEY_FILE, 'utf8')).trim()
+      key = (await readFile(file, 'utf8')).trim()
+      if (!key) fileProblem = '文件是空的'
     } catch (err) {
-      throw new Failure(
-        `无法读取访问密钥文件 KIOKU_API_KEY_FILE（${err?.code ?? '未知错误'}），新开会话后再试`,
-      )
+      fileProblem = errorKind(err)
     }
+    // 用的时候更新修改时间：会话开始时会删掉很久没用过的访问密钥文件
+    if (key) await utimes(file, new Date(), new Date()).catch(() => {})
   }
-  if (!url || !key) throw new Failure(NOT_CONFIGURED)
+  if (!key) key = (env.KIOKU_API_KEY ?? '').trim()
+  if (!url) throw new KiokuFailure(NOT_CONFIGURED)
+  if (!key) {
+    throw new KiokuFailure(
+      fileProblem
+        ? `无法读取访问密钥文件 ${file}（${fileProblem}）：新开会话，或者设置 KIOKU_API_KEY`
+        : NOT_CONFIGURED,
+    )
+  }
   let protocol
   try {
     protocol = new URL(url).protocol
   } catch {
-    throw new Failure('KIOKU_SERVER_URL 不是有效的地址')
+    throw new KiokuFailure('KIOKU_SERVER_URL 不是有效的地址')
   }
   if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new Failure('KIOKU_SERVER_URL 要以 http:// 或 https:// 开头')
+    throw new KiokuFailure('KIOKU_SERVER_URL 要以 http:// 或 https:// 开头')
   }
-  if (!KEY.test(key)) throw new Failure('访问密钥的格式不对：只能是可见的 ASCII 字符，不能有空白')
+  const problem = keyFormatError(key)
+  if (problem) throw new KiokuFailure(problem)
   return { url, key }
 }
 
-// fetch 失败时只说类别：错误对象里可能带着请求头
-export function fetchFailure(err) {
-  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
-    return `连接 Kioku 超时（${TIMEOUT / 1000} 秒）`
+// 收到跳转时说明要改地址。访问密钥不跟着跳转发出去；跳转目标只给协议与主机，路径与查询参数里可能带着令牌
+function redirectError(status, location, url) {
+  let origin
+  try {
+    const target = new URL(location ?? '', `${url}/`)
+    const web = target.protocol === 'https:' || target.protocol === 'http:'
+    if (web && target.origin !== new URL(url).origin) origin = target.origin
+  } catch {
+    // 跳转目标解析不了时不举例
   }
-  const code = err?.cause?.code
-  return typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code)
-    ? `无法连接 Kioku（${code}）`
-    : '无法连接 Kioku'
+  return `Kioku 返回了跳转（${status}），把地址改成跳转之后的地址${origin ? `（例如 ${origin}）` : ''}`
 }
 
 // 服务端的错误文字原样给出，只去掉控制字符；万一带着访问密钥也盖掉
@@ -186,13 +204,16 @@ async function resolveValues({ url, key }, refs, purpose) {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify(purpose === undefined ? { refs } : { refs, purpose }),
-      // 跳转到别处时不跟着走：访问密钥只发给配置的地址
+      // 不跟着跳转走：访问密钥只发给配置的地址
       redirect: 'manual',
       signal: AbortSignal.timeout(TIMEOUT),
     })
     text = await res.text()
   } catch (err) {
-    throw new Failure(fetchFailure(err))
+    throw new KiokuFailure(fetchFailure(err, TIMEOUT))
+  }
+  if (res.status >= 300 && res.status < 400) {
+    throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
   }
   let data
   try {
@@ -200,9 +221,9 @@ async function resolveValues({ url, key }, refs, purpose) {
   } catch {
     // 不是 JSON 时按没有错误文字处理
   }
-  if (!res.ok) throw new Failure(serverError(data, res.status, key))
+  if (!res.ok) throw new KiokuFailure(serverError(data, res.status, key))
   const values = valuesOf(data, refs)
-  if (!values) throw new Failure('Kioku 的响应格式不对')
+  if (!values) throw new KiokuFailure('Kioku 的响应格式不对')
   return values
 }
 
@@ -226,14 +247,36 @@ function relay(source, target, values) {
   return new Promise((resolve) => redactor.once('end', resolve))
 }
 
-// 启动命令，等它结束、输出写完，返回退出码：被信号结束时为 128 + 信号编号
+// 本进程的标准输出与标准错误都写完：之前写进去的都交给系统之后才回调。自己以信号结束之前要等这一步，
+// 否则还排着队的输出就丢了
+function flushed() {
+  const flush = (stream) => new Promise((resolve) => stream.write('', () => resolve()))
+  return Promise.all([flush(process.stdout), flush(process.stderr)])
+}
+
+// 以这个信号结束本进程：外层的 shell 据此决定要不要停下。例如循环里按了 Ctrl-C，
+// kioku 按 128 + n 正常退出的话，shell 当作命令自己处理了 SIGINT，循环会接着跑。
+// 发不出、或者发了进程还在的，退回 128 + 信号编号作为退出码
+function exitBySignal(signal) {
+  if (!NOT_RERAISED.has(signal)) {
+    try {
+      process.kill(process.pid, signal)
+    } catch {
+      // 认不出的信号名
+    }
+  }
+  return 128 + (constants.signals[signal] ?? 0)
+}
+
+// 启动命令，等它结束、输出写完，返回退出码；命令被信号结束时本进程以同一个信号结束
 function runCommand(command, args, env, values) {
   return new Promise((resolve) => {
     let child
     try {
+      // 不用 detached：命令留在 kioku 的进程组里，整组被结束时它不会变成带着值的孤儿进程
       child = spawn(command, args, { env, stdio: ['inherit', 'pipe', 'pipe'] })
     } catch (err) {
-      process.stderr.write(`kioku：无法启动 ${command}（${err?.code ?? '未知错误'}）\n`)
+      process.stderr.write(`kioku：无法启动 ${command}（${errorKind(err)}）\n`)
       resolve(126)
       return
     }
@@ -241,35 +284,40 @@ function runCommand(command, args, env, values) {
     child.once('error', (err) => {
       failure = err
     })
-    const forward = (signal) => {
+    const stopListening = () => {
+      for (const signal of SIGNALS) process.off(signal, onSignal)
+    }
+    const onSignal = (signal) => {
       if (child.exitCode === null && child.signalCode === null) {
-        child.kill(signal)
+        if (signal !== 'SIGINT') child.kill(signal)
         return
       }
       // 命令已经结束，只是还在等输出（例如它留下的后台进程占着输出）：不再等，按这个信号结束
-      for (const s of SIGNALS) process.off(s, forward)
+      stopListening()
       process.kill(process.pid, signal)
     }
-    for (const signal of SIGNALS) process.on(signal, forward)
+    for (const signal of SIGNALS) process.on(signal, onSignal)
     const outputs = [
       relay(child.stdout, process.stdout, values),
       relay(child.stderr, process.stderr, values),
     ]
     child.once('close', async (code, signal) => {
       await Promise.all(outputs)
-      for (const s of SIGNALS) process.off(s, forward)
       if (child.pid === undefined) {
+        stopListening()
         // 没能启动：和 shell 一样，找不到命令为 127，别的为 126
         const notFound = failure?.code === 'ENOENT'
         process.stderr.write(
           notFound
             ? `kioku：找不到命令 ${command}\n`
-            : `kioku：无法启动 ${command}（${failure?.code ?? '未知错误'}）\n`,
+            : `kioku：无法启动 ${command}（${errorKind(failure)}）\n`,
         )
         resolve(notFound ? 127 : 126)
         return
       }
-      resolve(signal ? 128 + (constants.signals[signal] ?? 0) : (code ?? 0))
+      if (signal) await flushed()
+      stopListening()
+      resolve(signal ? exitBySignal(signal) : (code ?? 1))
     })
   })
 }
@@ -292,7 +340,7 @@ async function run(argv) {
   try {
     values = await resolveValues(await loadConfig(process.env), refs, purpose)
   } catch (err) {
-    if (!(err instanceof Failure)) throw err
+    if (!(err instanceof KiokuFailure)) throw err
     process.stderr.write(`kioku：${err.message}\n`)
     return 2
   }
