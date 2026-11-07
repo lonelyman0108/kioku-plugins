@@ -1,7 +1,7 @@
 {
   "name": "kioku",
   "displayName": "Kioku",
-  "description": "Kioku 长期记忆：会话开始时注入启动加载的内容，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具",
+  "description": "Kioku 长期记忆：会话开始时注入启动加载的内容，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具，以及把凭据经环境变量交给命令的 kioku run",
   "author": { "name": "Kioku" },
   "homepage": "https://github.com/lonelyman0108/kioku",
   "repository": "https://github.com/lonelyman0108/kioku-plugins",

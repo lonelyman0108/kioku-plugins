@@ -6,7 +6,7 @@ Kioku 的客户端插件：Claude Code 与 AstrBot（群聊机器人）
 
 [Kioku](https://github.com/lonelyman0108/kioku) 是多账号、多人格的长期记忆服务。本仓库放它的两个客户端插件：
 
-- [Claude Code 插件](plugins/claude-code/README.md)：会话开始注入启动加载，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具。
+- [Claude Code 插件](plugins/claude-code/README.md)：会话开始注入启动加载，每轮注入召回候选，每轮回复后写会话摘要，并提供读写记忆的 MCP 工具，以及把凭据经环境变量交给命令的 `kioku run`。
 - [AstrBot 插件](plugins/astrbot_plugin_kioku/README.md)：让群聊机器人用 Kioku 的人格、召回与对话抽取。
 
 插件只做转发，不含记忆逻辑与提示词；接口与规则以 Kioku 为准。
