@@ -195,6 +195,18 @@ function serverError(data, status, key) {
   return clean || `Kioku 返回 HTTP ${status}`
 }
 
+// 已到期的凭据：服务端照常给值，在 expired 里列出标识与到期时间。旧的服务端没有这一项，按没有处理；
+// 格式不对的项跳过，不因为提示让整次失败。打印之前去掉控制字符
+function expiredOf(data) {
+  if (!Array.isArray(data?.expired)) return []
+  const clean = (text) => text.replace(/\p{Cc}+/gu, ' ').trim()
+  return data.expired.flatMap((item) =>
+    typeof item?.identifier === 'string' && typeof item.expiresAt === 'string'
+      ? [{ identifier: clean(item.identifier), expiresAt: clean(item.expiresAt) }]
+      : [],
+  )
+}
+
 // 按 refs 的顺序取出响应里的值；对不上时为 null
 function valuesOf(data, refs) {
   if (!Array.isArray(data?.values) || data.values.length !== refs.length) return null
@@ -208,7 +220,7 @@ function valuesOf(data, refs) {
   return values.every((v) => v !== undefined) ? values : null
 }
 
-// 一次请求取全部值：任何一项取不到时整次失败，响应里不带值
+// 一次请求取全部值：任何一项取不到时整次失败，响应里不带值。连同已到期的凭据一起返回
 async function resolveValues({ url, key }, refs, purpose) {
   let res
   let text
@@ -237,7 +249,7 @@ async function resolveValues({ url, key }, refs, purpose) {
   if (!res.ok) throw new KiokuFailure(serverError(data, res.status, key))
   const values = valuesOf(data, refs)
   if (!values) throw new KiokuFailure('Kioku 的响应格式不对')
-  return values
+  return { values, expired: expiredOf(data) }
 }
 
 // 子进程的一路输出打过码写到本进程对应的输出，全部写出之后 resolve
@@ -361,14 +373,15 @@ async function run(argv) {
     return 0
   }
   const { refs, variables, purpose, command, args } = options
-  let values
+  let resolved
   try {
-    values = await resolveValues(await loadConfig(process.env), refs, purpose)
+    resolved = await resolveValues(await loadConfig(process.env), refs, purpose)
   } catch (err) {
     if (!(err instanceof KiokuFailure)) throw err
     process.stderr.write(`kioku：${err.message}\n`)
     return 2
   }
+  const { values, expired } = resolved
   const withNul = refs.findIndex((_, i) => values[i].includes('\0'))
   if (withNul !== -1) {
     const { identifier, field } = refs[withNul]
@@ -380,6 +393,10 @@ async function run(argv) {
   for (const [name, index] of variables) env[name] = values[index]
   const short = variables.filter(([, index]) => !redactable(values[index])).map(([name]) => name)
   if (short.length > 0) process.stderr.write(`kioku：${short.join('、')} 的值太短，输出里不打码\n`)
+  // 已到期的照常交给命令，提示一句：值可能已失效，命令失败时先想到它
+  for (const { identifier, expiresAt } of expired) {
+    process.stderr.write(`kioku：凭据 ${identifier} 已于 ${expiresAt} 到期，值可能已失效\n`)
+  }
   return runCommand(command, args, env, values)
 }
 

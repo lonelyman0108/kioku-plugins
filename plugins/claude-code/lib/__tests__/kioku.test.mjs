@@ -419,6 +419,31 @@ describe('kioku run', () => {
     expect(result.stderr).toBe('kioku：PIN 的值太短，输出里不打码\n')
   })
 
+  it('已到期的凭据照常交给命令，标准错误里逐条提示，去掉控制字符；格式不对的项跳过', async () => {
+    reply = (body) => ({
+      ...defaultReply(body),
+      body: {
+        ...defaultReply(body).body,
+        expired: [
+          { identifier: 'pg-main', expiresAt: '2026-11-01T00:00:00.000Z' },
+          { identifier: 'x\n伪造的一行', expiresAt: '2026-11-02T00:00:00.000Z' },
+          { identifier: 42 },
+        ],
+      },
+    })
+    const result = await kioku([
+      'run',
+      '-e',
+      'X=pg-main#password',
+      ...node('console.log(process.env.X === "pg-secret-1")'),
+    ])
+    expect(result).toMatchObject({ code: 0, stdout: 'true\n' })
+    expect(result.stderr).toBe(
+      'kioku：凭据 pg-main 已于 2026-11-01T00:00:00.000Z 到期，值可能已失效\n' +
+        'kioku：凭据 x 伪造的一行 已于 2026-11-02T00:00:00.000Z 到期，值可能已失效\n',
+    )
+  })
+
   it('以信号结束之前先把输出写完：下游读得慢也不丢', async () => {
     // 下游一秒之后才开始读：管道的缓冲装不下的部分排在 kioku 的标准输出里，得等它写完再结束
     const size = 100 * 1024
