@@ -32,7 +32,10 @@ from .memory_view import MemoryView
 from .memory_view_layer import MemoryViewLayer
 from .memory_view_provenance import MemoryViewProvenance
 from .memory_view_sensitivity import MemoryViewSensitivity
+from .memory_write_error import MemoryWriteError
 from .move_memory_request import MoveMemoryRequest
+from .plaintext_finding import PlaintextFinding
+from .plaintext_finding_kind import PlaintextFindingKind
 from .platform_ref import PlatformRef
 from .prompt_submit_event import PromptSubmitEvent
 from .prompt_submit_event_event import PromptSubmitEventEvent
@@ -92,7 +95,10 @@ __all__ = (
     "MemoryViewLayer",
     "MemoryViewProvenance",
     "MemoryViewSensitivity",
+    "MemoryWriteError",
     "MoveMemoryRequest",
+    "PlaintextFinding",
+    "PlaintextFindingKind",
     "PlatformRef",
     "PromptSubmitEvent",
     "PromptSubmitEventEvent",

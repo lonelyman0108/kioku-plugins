@@ -11,6 +11,7 @@ from ... import errors
 from ...models.create_memory_request import CreateMemoryRequest
 from ...models.error_response import ErrorResponse
 from ...models.memory_view import MemoryView
+from ...models.memory_write_error import MemoryWriteError
 from typing import cast
 
 
@@ -35,14 +36,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | MemoryView | None:
+) -> ErrorResponse | MemoryView | MemoryWriteError | None:
     if response.status_code == 201:
         response_201 = MemoryView.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = ErrorResponse.from_dict(response.json())
+        response_400 = MemoryWriteError.from_dict(response.json())
 
         return response_400
 
@@ -74,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | MemoryView]:
+) -> Response[ErrorResponse | MemoryView | MemoryWriteError]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,7 +88,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: CreateMemoryRequest,
-) -> Response[ErrorResponse | MemoryView]:
+) -> Response[ErrorResponse | MemoryView | MemoryWriteError]:
     """新建记忆，坐标的开头决定归属；带 validTo 时到期后不再召回、不进 boot
 
     Args:
@@ -98,7 +99,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | MemoryView]
+        Response[ErrorResponse | MemoryView | MemoryWriteError]
     """
 
     kwargs = _get_kwargs(
@@ -116,7 +117,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: CreateMemoryRequest,
-) -> ErrorResponse | MemoryView | None:
+) -> ErrorResponse | MemoryView | MemoryWriteError | None:
     """新建记忆，坐标的开头决定归属；带 validTo 时到期后不再召回、不进 boot
 
     Args:
@@ -127,7 +128,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | MemoryView
+        ErrorResponse | MemoryView | MemoryWriteError
     """
 
     return sync_detailed(
@@ -140,7 +141,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: CreateMemoryRequest,
-) -> Response[ErrorResponse | MemoryView]:
+) -> Response[ErrorResponse | MemoryView | MemoryWriteError]:
     """新建记忆，坐标的开头决定归属；带 validTo 时到期后不再召回、不进 boot
 
     Args:
@@ -151,7 +152,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | MemoryView]
+        Response[ErrorResponse | MemoryView | MemoryWriteError]
     """
 
     kwargs = _get_kwargs(
@@ -167,7 +168,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: CreateMemoryRequest,
-) -> ErrorResponse | MemoryView | None:
+) -> ErrorResponse | MemoryView | MemoryWriteError | None:
     """新建记忆，坐标的开头决定归属；带 validTo 时到期后不再召回、不进 boot
 
     Args:
@@ -178,7 +179,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | MemoryView
+        ErrorResponse | MemoryView | MemoryWriteError
     """
 
     return (
