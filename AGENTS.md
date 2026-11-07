@@ -46,6 +46,7 @@ Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest �
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
+| `plugins/claude-code/bin/kioku` | `kioku` 命令的入口：插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里；实现在同级的 `cli/` |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
 
@@ -54,4 +55,7 @@ Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest �
 ## 已知的坑
 
 - `kioku_client` 不手改：Kioku 改了应用调用的接口、重新生成 SDK 后，用 `scripts/sync-client.sh` 整个替换。原因：手改的地方下次同步会被覆盖，和服务端对不上也要到运行时才报错。
-- 插件失败时静默：Kioku 不可用、超时或拒绝时只记日志，不向 agent 或聊天里注入错误。原因：记忆服务出问题不能打断对话。
+- 插件失败时静默：Kioku 不可用、超时或拒绝时只记日志，不向 agent 或聊天里注入错误。原因：记忆服务出问题不能打断对话。`kioku run` 例外：它是 agent 主动执行的命令，失败时在标准错误里说明原因、退出码 2，不启动要跑的命令。
+- `kioku run` 的报错不带值和访问密钥：`spawn` 的参数错误会把环境变量的值写进错误文字，`fetch` 的错误会带上整个 Authorization 请求头，所以这两处只给错误类别（`err.code`），不打印 `err.message` 或整个错误对象。
+- 钩子往 `CLAUDE_ENV_FILE` 写的每一行都要是纯赋值：值用单引号括起来，值里的单引号写成 `'"'"'`，不用反斜杠，含控制字符的值不写。原因：Claude Code 把这个文件原样拼进之后每一条 Bash 命令，引号没配对会让整个会话的 Bash 命令都跑不起来；另有一处按行解析它，只认引号串拼成的纯赋值，有一行不认得就整份不用。
+- `plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。
