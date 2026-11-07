@@ -54,6 +54,7 @@ from .update_memory_request_sensitivity import UpdateMemoryRequestSensitivity
 from .void_bind_code_request import VoidBindCodeRequest
 from .who_am_i import WhoAmI
 from .who_am_i_scopes import WhoAmIScopes
+from .who_am_i_scopes_credentials import WhoAmIScopesCredentials
 from .who_am_i_scopes_max_sensitivity import WhoAmIScopesMaxSensitivity
 from .who_am_i_scopes_read_layers_item import WhoAmIScopesReadLayersItem
 from .who_am_i_scopes_write_layers_item import WhoAmIScopesWriteLayersItem
@@ -113,6 +114,7 @@ __all__ = (
     "VoidBindCodeRequest",
     "WhoAmI",
     "WhoAmIScopes",
+    "WhoAmIScopesCredentials",
     "WhoAmIScopesMaxSensitivity",
     "WhoAmIScopesReadLayersItem",
     "WhoAmIScopesWriteLayersItem",
