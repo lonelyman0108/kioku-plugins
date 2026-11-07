@@ -252,7 +252,9 @@ function relay(source, target, values) {
   source.once('error', finish)
   source.once('close', finish)
   target.on('error', () => {
-    // 下游已经关了（例如后面接着 head）：不再读这一路，子进程再写就收到 SIGPIPE，和直接接在管道上一样
+    // 下游已经关了（例如后面接着 head）：关掉给命令的这一路输出，等命令自己结束，退出码按命令的结果。
+    // 命令再写就会出错：Node 给子进程的输出是 UNIX 套接字对，macOS 上命令收到 SIGPIPE；Linux 上关的时候
+    // 还有没读完的数据，连接被重置，命令拿到的是 ECONNRESET，收不到 SIGPIPE，多半自己报错退出
     redactor.unpipe(target)
     redactor.resume()
     source.destroy()

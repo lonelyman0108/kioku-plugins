@@ -570,11 +570,40 @@ describe('kioku run', () => {
     expect(Date.now() - started).toBeLessThan(2000)
   })
 
-  it('下游提前关闭时命令收到 SIGPIPE，不会卡住', async () => {
+  it('下游提前关闭时关掉给命令的输出，等命令结束，按命令的结果退出', async () => {
+    // 命令用 Node：Node 自己忽略 SIGPIPE，写失败只会拿到错误，这里记下错误码、以 7 退出，结果在各个系统上都一样
+    const result = await kioku(
+      [
+        'run',
+        '-e',
+        'X=pg-main#password',
+        ...node(`
+          process.stdout.on('error', (err) => {
+            console.error('写失败 ' + err.code)
+            process.exit(7)
+          })
+          const write = () => process.stdout.write('y\\n'.repeat(1024), (err) => err || setImmediate(write))
+          write()
+        `),
+      ],
+      { onStdout: (_stdout, child) => child.stdout.destroy() },
+    )
+    expect(result.code).toBe(7)
+    expect(result.stderr).toMatch(/^写失败 (EPIPE|ECONNRESET)\n$/)
+  })
+
+  it('下游提前关闭时 yes 这类不停写的命令不会卡住，kioku 自己不报错', async () => {
+    // 不断言退出码：Node 给子进程的输出是 UNIX 套接字对。macOS 上 yes 收到 SIGPIPE，kioku 以 141 退出；
+    // Linux 上读端关闭时还有没读完的数据，连接被重置，yes 拿到 ECONNRESET 而不是 SIGPIPE，自己报错以 1 退出。
+    // 两种都是命令自己的结果（SIGPIPE 在命令里是默认的处理方式，Node 启动命令时就恢复了），这里只看没有卡住、
+    // kioku 没有自己出错
+    const started = Date.now()
     const result = await kioku(['run', '-e', 'X=pg-main#password', '--', 'yes'], {
       onStdout: (_stdout, child) => child.stdout.destroy(),
     })
-    expect(result.code).toBe(128 + 13)
+    expect(Date.now() - started).toBeLessThan(4000)
+    expect(result.signal).toBeNull()
+    expect(result.stderr).not.toMatch(/kioku：|Error|\n\s+at /)
   })
 
   it('没有配置时说明怎么配，退出码 2', async () => {
