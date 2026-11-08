@@ -59,3 +59,5 @@ kioku run -e TOKEN=github#token --purpose '查看 issue' -- sh -c 'curl -H "Auth
 钩子失败时不会挡住输入，也不注入任何内容。原因写在标准错误里，用 `claude --debug` 启动可以看到以「Kioku」开头的那一行。服务地址或访问密钥没有配置、访问密钥格式不对、服务地址返回跳转时，会话开始会提示一次；钩子和 `kioku run` 一样不跟着跳转走。
 
 `kioku run` 是 agent 主动执行的命令，失败时不静默：原因写在它的标准错误里。报缺少配置或者读不到访问密钥文件时，先新开一个会话；还不行，就在 `claude --debug` 的输出里找「Kioku kioku 命令的配置未写入」那一行，它写着缺的是什么（例如没有 `CLAUDE_ENV_FILE`）。
+
+macOS 15 起，地址没错却报「无法连接 Kioku（EHOSTUNREACH）」时，多半是跑命令的 App（终端，或者 Claude Code 所在的终端、编辑器）没有「本地网络」权限，连不了局域网里的地址：在「系统设置 › 隐私与安全性 › 本地网络」里打开它，再重新运行。钩子遇到同样的问题时也一样，`claude --debug` 里能看到这个错误码。
