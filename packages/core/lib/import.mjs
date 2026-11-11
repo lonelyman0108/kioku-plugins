@@ -6,38 +6,47 @@
 import { whoami } from './api.mjs'
 import { loadConfig } from './config.mjs'
 import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
-import { PLATFORMS } from './platforms.mjs'
+import { platformNames, PLATFORMS } from './platforms.mjs'
 import { readProfile } from './profile.mjs'
 import { sourceNames, SOURCES, UNSUPPORTED_SOURCES } from './sources.mjs'
 import { plain, shownUrl } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
-export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--dry-run] [--yes] [--overwrite]
+export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--dry-run] [--yes] [--overwrite]
 
 把平台自带的本地长期记忆迁进 Kioku：先列出每条会放到哪个坐标，确认之后才写。
 
   --from <来源>  ${sourceNames()}
   --path <目录>  不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
+  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（codex、pi）；不写时读环境变量
   --dry-run      只列出计划，不写
   --yes          不问，直接写（不在终端里运行时要带上）
   --overwrite    Kioku 里同一个坐标已经有、内容不一样的也覆盖（默认跳过）
 
 本地的文件不删、不改。重复运行不会重复写：已经迁过、内容没变的会跳过。
 疑似明文凭据的不写，列出是哪个文件的哪一行：先把值存成凭据，或者从文件里去掉再迁。
-访问密钥用这个来源对应的平台配好的那个；没有时读 KIOKU_SERVER_URL 与 KIOKU_API_KEY。
+地址与访问密钥读 KIOKU_SERVER_URL 与 KIOKU_API_KEY（Claude Code 的会话里已经配好），或者用 --platform 指明。
+记忆迁进这个访问密钥所属的应用。
 指令文件（AGENTS.md、CLAUDE.md）不是记忆，不迁。
 `
 
 const TIMEOUT = 15_000
 
 export function parseImportArgs(argv) {
-  const options = { from: undefined, path: undefined, dryRun: false, yes: false, overwrite: false }
+  const options = {
+    from: undefined,
+    path: undefined,
+    platform: undefined,
+    dryRun: false,
+    yes: false,
+    overwrite: false,
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dry-run') options.dryRun = true
     else if (arg === '--yes') options.yes = true
     else if (arg === '--overwrite') options.overwrite = true
-    else if (arg === '--from' || arg === '--path') {
+    else if (arg === '--from' || arg === '--path' || arg === '--platform') {
       const value = argv[++i]
       if (!value) throw new UsageError(`${arg} 后面要写值`)
       options[arg.slice(2)] = value
@@ -49,6 +58,11 @@ export function parseImportArgs(argv) {
   }
   if (!Object.hasOwn(SOURCES, options.from)) {
     throw new UsageError(`不认识的来源 ${options.from}，可以用的：${sourceNames()}`)
+  }
+  if (options.platform !== undefined && !PLATFORMS[options.platform]?.profile) {
+    throw new UsageError(
+      `--platform 只收用 kioku setup 写下配置的平台，可以用的：${platformNames()}`,
+    )
   }
   return options
 }
@@ -136,11 +150,16 @@ export async function importMemories(
 ) {
   const options = parseImportArgs(argv)
   const source = SOURCES[options.from]
-  // 访问密钥：这个来源对应的平台配过就用它的，否则读环境变量
-  const profile = PLATFORMS[options.from]?.profile
-    ? await readProfile(options.from, env).catch(() => null)
-    : null
-  const config = profile ?? (await loadConfig(env))
+  // 地址与访问密钥：指明了平台就用 kioku setup 给它写下的，否则读环境变量
+  let config
+  if (options.platform) {
+    config = await readProfile(options.platform, env)
+    if (!config) {
+      throw new KiokuFailure(
+        `还没有给 ${options.platform} 配过：先运行 kioku setup ${options.platform}`,
+      )
+    }
+  } else config = await loadConfig(env)
   const who = await whoami(config)
   out.write(
     `Kioku：${shownUrl(config.url)}，应用 ${plain(who.app.name)}（${plain(who.app.slug)}）\n`,
@@ -151,8 +170,9 @@ export async function importMemories(
     path: options.path,
     app: who.app.slug,
   })
-  if (!found) throw new KiokuFailure(`没有找到${source.name}：${root} 不是目录，用 --path 指明位置`)
-  out.write(`来源：${source.name}（${root}）\n`)
+  if (!found)
+    throw new KiokuFailure(`没有找到${source.name}：${plain(root)} 不是目录，用 --path 指明位置`)
+  out.write(`来源：${source.name}（${plain(root)}）\n`)
   if (!entries.length) {
     out.write('没有可以迁的记忆\n')
     return 0
@@ -177,9 +197,9 @@ export async function importMemories(
   out.write('\n')
   for (const item of compared) {
     const kind = item.state === 'failed' ? `读取失败（${item.reason}）` : KINDS[item.state]
-    out.write(`${kind}  ${item.uri}\n    ${plain(item.title)}\n    ← ${item.source}\n`)
+    out.write(`${kind}  ${item.uri}\n    ${plain(item.title)}\n    ← ${plain(item.source)}\n`)
   }
-  for (const item of skipped) out.write(`不迁  ${item.source}\n    ${item.skipped}\n`)
+  for (const item of skipped) out.write(`不迁  ${plain(item.source)}\n    ${item.skipped}\n`)
 
   const count = (state) => compared.filter((item) => item.state === state).length
   const todo = compared.filter(
@@ -208,14 +228,23 @@ export async function importMemories(
 
   let written = 0
   const failed = []
-  for (const item of todo) {
-    const result = await write(config, item)
+  // 连不上、超时这类不是某一条的问题：停下来，把已经写了多少、还剩多少说清楚，不让它跳出整个命令
+  let stopped = null
+  for (const [index, item] of todo.entries()) {
+    let result
+    try {
+      result = await write(config, item)
+    } catch (err) {
+      if (!(err instanceof KiokuFailure)) throw err
+      stopped = { reason: err.message, left: todo.length - index }
+      break
+    }
     if (result.ok) written++
     else failed.push({ item, ...result })
   }
   out.write(`\n写入 ${written} 条\n`)
   for (const { item, reason, plaintext } of failed) {
-    out.write(`没有写入  ${item.uri}\n    ← ${item.source}\n    ${reason}\n`)
+    out.write(`没有写入  ${item.uri}\n    ← ${plain(item.source)}\n    ${reason}\n`)
     // 只说第几行、哪一类，不带值；行号按正文算（文件头之后）
     for (const spot of plaintext ?? []) {
       out.write(`    正文第 ${Number(spot.line) || '?'} 行：${plain(spot.kind)}\n`)
@@ -224,6 +253,11 @@ export async function importMemories(
   if (failed.some((entry) => entry.plaintext)) {
     out.write('疑似明文凭据的没有写：把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次\n')
   }
+  if (stopped) {
+    out.write(
+      `${stopped.reason}：还有 ${stopped.left} 条没有写，重新运行会接着写（已经写进去的会跳过）\n`,
+    )
+  }
   out.write('本地的文件没有动。\n')
-  return failed.length || compared.some((item) => item.state === 'failed') ? 1 : 0
+  return stopped || failed.length || compared.some((item) => item.state === 'failed') ? 1 : 0
 }
