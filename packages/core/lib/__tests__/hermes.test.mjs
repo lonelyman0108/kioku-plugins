@@ -67,6 +67,8 @@ const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {
 const [group, action, key, value] = process.argv.slice(2)
 fs.appendFileSync(${JSON.stringify(join(dir, 'calls.log'))}, process.argv.slice(2).join(' ') + '\\n')
 if (group !== 'config') process.exit(3)
+if (process.env.FAKE_HERMES === 'fail') process.exit(1)
+if (process.env.FAKE_HERMES === 'managed' && action === 'set') process.exit(0)
 if (action === 'set') { data[key] = value; fs.writeFileSync(file, JSON.stringify(data)) }
 else if (action === 'get') console.log('some banner\\n' + (data[key] ?? ''))
 `,
@@ -181,6 +183,60 @@ describe('kioku setup hermes', () => {
     })
     expect(undone.text).toContain('hermes plugins remove kioku')
   })
+
+  it('--undo：之后换成了别的 provider 时不动 Hermes 的配置，只去掉 .env 里的两行', async () => {
+    await run(setup, ['hermes', '--server-url', base])
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ 'memory.provider': 'mem0', 'memory.memory_enabled': 'false' }),
+    )
+    const undone = await run(setup, ['hermes', '--undo'])
+    expect(undone.text).toContain('不是 kioku，它的配置没有动')
+    expect(settings()).toEqual({ 'memory.provider': 'mem0', 'memory.memory_enabled': 'false' })
+    expect(readFileSync(dotenv, 'utf8')).toBe('')
+  })
+
+  it('同名的行写了几处时收拾成一处，后面的旧值不留；--undo 把它们都去掉', async () => {
+    writeFileSync(
+      dotenv,
+      `KIOKU_API_KEY=first\nA=1\nKIOKU_SERVER_URL=${base}\nKIOKU_API_KEY=${KEY}\n`,
+    )
+    // 最后生效的值本来就是对的，也要收拾
+    const result = await run(setup, ['hermes'], { key: '' })
+    expect(result.text).toContain('写入')
+    expect(readFileSync(dotenv, 'utf8')).toBe(
+      `KIOKU_API_KEY=${KEY}\nA=1\nKIOKU_SERVER_URL=${base}\n`,
+    )
+    writeFileSync(dotenv, `KIOKU_API_KEY=a\nA=1\nKIOKU_API_KEY=b\nKIOKU_SERVER_URL=${base}\n`)
+    await run(setup, ['hermes', '--undo'])
+    expect(readFileSync(dotenv, 'utf8')).toBe('A=1\n')
+  })
+
+  it('.env 里没有要改的时候原样不动：不整理结尾的空行与换行符；值后面的注释不算值', async () => {
+    const untouched = 'A=1\r\nB=2\n\n\n'
+    writeFileSync(dotenv, untouched)
+    const undone = await run(setup, ['hermes', '--undo'])
+    expect(undone.text).not.toContain('去掉')
+    expect(readFileSync(dotenv, 'utf8')).toBe(untouched)
+
+    writeFileSync(dotenv, `KIOKU_SERVER_URL=${base} # 本地的\nKIOKU_API_KEY="${KEY}" # 备注\n`)
+    const checked = await run(doctor, ['hermes'])
+    expect(checked.text).toContain(`✓ 地址 ${base}（`)
+  })
+
+  it('Hermes 的命令失败、或者成功退出却没改成（托管的安装）：访问密钥照常写下，不抛错，把要做的列出来', async () => {
+    for (const mode of ['fail', 'managed']) {
+      rmSync(dotenv, { force: true })
+      env.FAKE_HERMES = mode
+      const result = await run(setup, ['hermes', '--server-url', base])
+      expect(result.code, mode).toBe(0)
+      expect(readFileSync(dotenv, 'utf8')).toContain(`KIOKU_API_KEY=${KEY}`)
+      expect(result.text).toContain('地址与访问密钥已经写下')
+      expect(result.text).toContain('Hermes 的配置没有改成')
+      expect(result.text).toContain('hermes config set memory.provider kioku')
+      expect(result.text).not.toContain('Hermes 已配好')
+    }
+  })
 })
 
 describe('kioku doctor hermes', () => {
@@ -209,6 +265,23 @@ describe('kioku doctor hermes', () => {
     expect(result.text).toContain('! Hermes 里没有装 kioku 的记忆 provider')
     expect(result.text).toContain('! Hermes 现在选的记忆 provider 不是 kioku')
     expect(result.text).toContain('! Hermes 内置的 MEMORY.md 还开着')
+  })
+
+  it('Hermes 的配置读不出来时不下结论', async () => {
+    await run(setup, ['hermes', '--server-url', base])
+    env.FAKE_HERMES = 'fail'
+    const result = await run(doctor, ['hermes'])
+    expect(result.text).toContain('Hermes 的配置没有读出来')
+    expect(result.text).not.toContain('已停用')
+    expect(result.text).not.toContain('不是 kioku')
+  })
+
+  it('环境变量里配了但不对时照原样报，不说成没配过', async () => {
+    env.KIOKU_SERVER_URL = 'not a url'
+    env.KIOKU_API_KEY = KEY
+    const result = await run(doctor, ['hermes'])
+    expect(result.text).toContain('KIOKU_SERVER_URL 不是有效的地址')
+    expect(result.text).not.toContain('还没有给 Hermes 配过')
   })
 
   it('找不到 hermes 命令时说明查不了它的配置', async () => {

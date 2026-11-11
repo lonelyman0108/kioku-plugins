@@ -79,10 +79,13 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - Hermes 的 provider（核对过 Hermes 0.19.0 与真实的 Kioku）：
   - **只用发布版里有的东西**：GitHub 主干比 PyPI 的发布版新，主干的 `agent/memory_provider.py` 里有 `is_trivial_prompt`、`spawn_context_thread`，0.19.0 没有，直接导入的话 provider 加载失败、Hermes 只说「没有装」。这类新东西一律 `try` 导入、带退路。写之前对着装出来的版本看，不对着主干的文档。
   - **工具清单要在初始化之前就拿得出来**：Hermes 在 `add_provider` 时就调 `get_tool_schemas()` 登记「哪个工具归谁」，早于 `initialize()`。那时返回空的话，模型看得到工具（之后又问了一次清单），调用时却报 `Unknown tool`。所以第一次被问到就向 Kioku 取（只取一次）；开始之后，不启用的会话里返回空的，调用时再拒绝一次。
-  - **消息网关的会话一律不启用**（`gateway_session_key` 或 `chat_id` 有值）：工具转给 Kioku 的 MCP 端点，不带会话上下文，按访问密钥的全部权限读写。要放开得先有带会话上下文的工具接口。
+  - **只在本机的入口里启用，按白名单认**（`LOCAL_PLATFORMS`：cli、tui、gui、acp、desktop），认不出的一律不启用。不能只看有没有网关的标识（`gateway_session_key`、`chat_id`）：Hermes 的 API 服务器在调用方不带会话头时两个都没有，那样远程的 HTTP 客户端就拿得到注入、用得上工具。工具转给 Kioku 的 MCP 端点，不带会话上下文，按访问密钥的全部权限读写；要放开别的入口得先有带会话上下文的工具接口。
+  - **工具清单取不到就不补取**：归属只在注册时登记一次，之后再让模型看到这些工具也调不通。取的过程拿着锁，同时来问的等它取完。
+  - **上报按顺序发**：每轮一个后台线程，等上一轮的发完再发，服务端收到的顺序才和对话一致。
+  - **不走环境变量里的代理**（`ProxyHandler({})`），不跟跳转；`urllib` 这一层除了 `OSError`、`HTTPException` 还要接 `ValueError`（地址或请求头里有编不进去的字符，文字里可能带着整个 Authorization）。访问密钥的格式用 `fullmatch`：`$` 会放过结尾的换行。
   - provider 的状态都在实例上，不放在模块里（一个网关进程会给几个 profile 各建一个实例）；后台线程用 `spawn_context_thread`（有的话），带着调用方的上下文。
   - `ruff` 不让捕获笼统的 `Exception`：网络这一层接 `OSError` 与 `http.client.HTTPException`。
-  - `kioku setup hermes` 不自己改 Hermes 的 `config.yaml`，经 `hermes config set`（用例里用 `KIOKU_HERMES_BIN` 换成假的）；访问密钥只写进 `.env`，不出现在命令的参数里；`.env` 里都是密钥，改它不留备份。
+  - `kioku setup hermes` 不自己改 Hermes 的 `config.yaml`，经 `hermes config set`（用例里用 `KIOKU_HERMES_BIN` 换成假的），改完读回来核对：托管的安装里它不生效却照样成功退出。访问密钥只写进 `.env`，不出现在命令的参数里；`.env` 里都是密钥，改它不留备份。访问密钥写下之后的步骤（改 Hermes 的配置）不成也不抛错，只把要做的列出来：抛了的话 `kioku login` 会让用户去吊销一个其实已经在用的访问密钥。`.env` 里同名的行收拾成一处（Hermes 读最后一行），没有要改的时候原样不动。`--undo` 只在现在选的还是 kioku 时才改 Hermes 的配置。
   - 本地实测 Hermes 时，自定义的模型端点要把密钥写在 `config.yaml` 的 `model.api_key`（或用具名的 `providers:` 加 `key_env`）：`OPENAI_API_KEY` 只发给 openai.com 的地址。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。

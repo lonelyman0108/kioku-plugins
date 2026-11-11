@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { inspectCodex, preflightCodex, setupCodex } from './codex.mjs'
-import { inspectHermes, readHermesConfig, setupHermes } from './hermes.mjs'
+import { inspectHermes, preflightHermes, readHermesConfig, setupHermes } from './hermes.mjs'
 import { inspectPi, setupPi } from './pi.mjs'
 import { readProfile } from './profile.mjs'
 
@@ -101,6 +101,7 @@ const hermes = {
   // 地址与访问密钥在 Hermes 自己的 .env 里
   readConfig: readHermesConfig,
   setup: setupHermes,
+  preflight: preflightHermes,
   inspect: inspectHermes,
 }
 

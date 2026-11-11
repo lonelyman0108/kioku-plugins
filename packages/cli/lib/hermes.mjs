@@ -32,14 +32,17 @@ export function hermesHome(env) {
   return env.HERMES_HOME || join(homedir(), '.hermes')
 }
 
-// .env 里的一行「名字=值」；值两边成对的引号去掉。不是这种行时为 null
+// .env 里的一行「名字=值」。值两边成对的引号去掉；没加引号的值后面的「 # 注释」不算值。不是这种行时为 null
 function envLine(line) {
   const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
   if (!match) return null
-  return { name: match[1], value: match[2].replace(/^(["'])(.*)\1$/, '$2') }
+  const quoted = /^(["'])(.*)\1(?:\s+#.*)?$/.exec(match[2])
+  const value = quoted ? quoted[2] : match[2].replace(/\s+#.*$/, '')
+  return { name: match[1], value }
 }
 
-// .env 里现在写的地址与访问密钥；没有、不完整、格式不对时为 null
+// .env 里现在写的地址与访问密钥（同名的写了几行时以最后一行为准，和 Hermes 读它的方式一致）；
+// 没有、不完整、格式不对时为 null
 export async function readHermesConfig(env) {
   const file = join(hermesHome(env), '.env')
   const text = await readText(file)
@@ -54,24 +57,36 @@ export async function readHermesConfig(env) {
   return { url, key, file }
 }
 
-// 把这两项写进 .env 的全文：原来有的那一行换掉，没有的加在最后；values 里为 null 的去掉。别的行不动
+// 把这几项写进 .env 的全文：同名的行只留一处（换成新值），没有的加在最后；values 里为 null 的全都去掉。
+// 别的行不动；没有要改的时候原样返回，不顺手整理空行与换行符
 function withEnv(text, values) {
   const eol = text?.includes('\r\n') ? '\r\n' : '\n'
-  const left = { ...values }
+  const written = new Set()
+  let touched = false
   const lines = []
   for (const line of text ? text.split(/\r?\n/) : []) {
     const pair = envLine(line)
-    if (!pair || !Object.hasOwn(left, pair.name)) {
+    if (!pair || !Object.hasOwn(values, pair.name)) {
       lines.push(line)
       continue
     }
-    if (left[pair.name] !== null) lines.push(`${pair.name}=${left[pair.name]}`)
-    delete left[pair.name]
+    const wanted = values[pair.name]
+    // 同名的第二行起、要去掉的：都不留（留着的话 Hermes 读到的是最后那一行的旧值）
+    if (wanted === null || written.has(pair.name)) {
+      touched = true
+      continue
+    }
+    written.add(pair.name)
+    const next = `${pair.name}=${wanted}`
+    if (next !== line) touched = true
+    lines.push(next)
   }
+  const missing = Object.entries(values).filter(
+    ([name, value]) => value !== null && !written.has(name),
+  )
+  if (!touched && !missing.length) return text ?? ''
   while (lines.length && lines.at(-1) === '') lines.pop()
-  for (const [name, value] of Object.entries(left)) {
-    if (value !== null) lines.push(`${name}=${value}`)
-  }
+  for (const [name, value] of missing) lines.push(`${name}=${value}`)
   return lines.length ? `${lines.join(eol)}${eol}` : ''
 }
 
@@ -87,22 +102,44 @@ function hermes(env, args) {
   })
 }
 
+// 读 Hermes 的一项配置：null 是没有 hermes 命令，undefined 是没读出来（命令失败），否则是值（没设时是空字符串）
 async function configValue(env, key) {
-  const out = await hermes(env, ['config', 'get', key]).catch(() => undefined)
-  if (out === null) return null
-  return (out ?? '').trim().split(/\r?\n/).at(-1)?.trim() ?? ''
-}
-
-// 逐项让 Hermes 改配置。找不到 hermes 命令时返回 false，由调用方把要运行的命令列给用户
-async function applySettings(env, settings) {
-  for (const [key, value] of settings) {
-    if ((await hermes(env, ['config', 'set', key, value])) === null) return false
+  let out
+  try {
+    out = await hermes(env, ['config', 'get', key])
+  } catch {
+    return undefined
   }
-  return true
+  if (out === null) return null
+  return out.trim().split(/\r?\n/).at(-1)?.trim() ?? ''
 }
 
-function manual(out, settings) {
-  out.write('没有找到 hermes 命令，这几项要自己运行：\n')
+const sameValue = (a, b) => String(a).toLowerCase() === String(b).toLowerCase()
+
+// 逐项让 Hermes 改配置，改完读回来核对（托管的安装里 config set 不生效却照样成功退出）。
+// 返回 'done'、'no-hermes'（没有这个命令）或 'failed'（命令失败或没改成）。不抛错：
+// 调用方这时多半已经把访问密钥写下了，不能让这里的失败看起来像什么都没写
+async function applySettings(env, settings) {
+  try {
+    for (const [key, value] of settings) {
+      if ((await hermes(env, ['config', 'set', key, value])) === null) return 'no-hermes'
+    }
+    for (const [key, value] of settings) {
+      const now = await configValue(env, key)
+      if (now === null || now === undefined || !sameValue(now, value)) return 'failed'
+    }
+    return 'done'
+  } catch {
+    return 'failed'
+  }
+}
+
+function manual(out, settings, state) {
+  out.write(
+    state === 'no-hermes'
+      ? '没有找到 hermes 命令，这几项要自己运行：\n'
+      : 'Hermes 的配置没有改成（它的命令失败了，或者这份安装的配置是托管的），这几项要自己处理：\n',
+  )
   for (const [key, value] of settings) out.write(`  hermes config set ${key} ${value || '""'}\n`)
 }
 
@@ -116,35 +153,58 @@ async function undo({ dryRun }, { env, out }) {
   const file = join(hermesHome(env), '.env')
   const text = await readText(file)
   const next = withEnv(text, { [URL_KEY]: null, [API_KEY]: null })
-  if (text !== null && next !== text) out.write(`${file}\n  ${URL_KEY}、${API_KEY}：去掉\n`)
-  out.write('Hermes 的配置\n')
-  for (const [key, value] of RESTORED) out.write(`  ${key} → ${value || '（内置的）'}\n`)
+  const changed = text !== null && next !== text
+  if (changed) out.write(`${file}\n  ${URL_KEY}、${API_KEY}：去掉\n`)
+  // 只在现在选的还是 kioku 时把配置改回去：之后换成了别的 provider 的话，不去动它
+  const provider = await configValue(env, 'memory.provider')
+  const ours = provider === 'kioku'
+  if (ours) {
+    out.write('Hermes 的配置\n')
+    for (const [key, value] of RESTORED) out.write(`  ${key} → ${value || '（内置的）'}\n`)
+  } else if (provider === null) {
+    out.write('没有找到 hermes 命令，Hermes 的配置没有动\n')
+  } else {
+    out.write('Hermes 现在选的记忆 provider 不是 kioku，它的配置没有动\n')
+  }
   if (dryRun) {
     out.write('没有写入（--dry-run）\n')
     return 0
   }
   // .env 里有访问密钥与别的密钥，不留备份
-  if (text !== null && next !== text) await safeWrite(file, next, text, { backup: false })
-  if (!(await applySettings(env, RESTORED))) manual(out, RESTORED)
-  out.write(`Hermes 改回用内置的记忆。provider 要另外卸载：hermes plugins remove kioku\n`)
+  if (changed) await safeWrite(file, next, text, { backup: false })
+  if (ours) {
+    const state = await applySettings(env, RESTORED)
+    if (state !== 'done') manual(out, RESTORED, state)
+    else out.write('Hermes 改回用内置的记忆（两个开关都打开了；之前自己关过的要再关一次）。\n')
+  }
+  out.write('provider 要另外卸载：hermes plugins remove kioku\n')
   return 0
 }
 
-export async function setupHermes(options, io) {
-  const { env, out } = io
-  if (options.undo) return undo(options, io)
+// kioku login 申请之前、setup 动手之前先看：Hermes 的目录在不在
+export async function preflightHermes({ env }) {
   const home = hermesHome(env)
   if (!(await stat(home).catch(() => null))?.isDirectory()) {
     throw new KiokuFailure(
       `没有找到 Hermes 的目录 ${home}：先装好并运行一次 Hermes，或者用 HERMES_HOME 指明`,
     )
   }
+}
+
+export async function setupHermes(options, io) {
+  const { env, out } = io
+  if (options.undo) return undo(options, io)
+  const home = hermesHome(env)
+  await preflightHermes({ env })
   const { url, key, saved } = await resolveTarget({ id: 'hermes', name: 'Hermes' }, options, {
     ...io,
     readSaved: () => readHermesConfig(env),
   })
   const file = join(home, '.env')
-  const same = Boolean(saved && saved.url === url && saved.key === key)
+  const text = await readText(file)
+  const next = withEnv(text, { [URL_KEY]: url, [API_KEY]: key })
+  // 同名的行写了几处时，哪怕最后生效的值是对的也要收拾成一处
+  const same = Boolean(saved && saved.url === url && saved.key === key) && next === (text ?? '')
   if (same) out.write(`${file} 不用改\n`)
   else out.write(`${file}\n  ${URL_KEY}、${API_KEY}：写入\n`)
   out.write('Hermes 的配置\n')
@@ -153,17 +213,19 @@ export async function setupHermes(options, io) {
     out.write('没有写入（--dry-run）\n')
     return 0
   }
-  if (!same) {
-    const text = await readText(file)
-    // .env 里有访问密钥与别的密钥，不留备份；新建的只给本人读写（safeWrite 的规矩）
-    await safeWrite(file, withEnv(text, { [URL_KEY]: url, [API_KEY]: key }), text, {
-      backup: false,
-    })
+  // .env 里有访问密钥与别的密钥，不留备份；新建的只给本人读写（safeWrite 的规矩）
+  if (!same) await safeWrite(file, next, text, { backup: false })
+  // 访问密钥这时已经写下了：后面改 Hermes 的配置不成也不算失败，把要做的列出来
+  const state = await applySettings(env, SETTINGS)
+  if (state === 'done') {
+    out.write('Hermes 已配好，新开会话生效。内置的 MEMORY.md、USER.md 不再读写，文件还在。\n')
+  } else {
+    out.write('地址与访问密钥已经写下。\n')
+    manual(out, SETTINGS, state)
   }
-  if (!(await applySettings(env, SETTINGS))) manual(out, SETTINGS)
-  out.write('Hermes 已配好，新开会话生效。内置的 MEMORY.md、USER.md 不再读写，文件还在。\n')
-  if (!(await installed(env)))
+  if (!(await installed(env))) {
     out.write(`接下来装上 provider：hermes plugins install ${SOURCE} --enable\n`)
+  }
   return 0
 }
 
@@ -182,15 +244,18 @@ export async function inspectHermes({ env }, { ok, warn, note }) {
     note('没有找到 hermes 命令，查不了它的配置：用 hermes memory status 看')
     return
   }
+  const flags = [
+    [await configValue(env, 'memory.memory_enabled'), 'MEMORY.md'],
+    [await configValue(env, 'memory.user_profile_enabled'), 'USER.md'],
+  ]
+  // 没读出来的不下结论
+  if (provider === undefined || flags.some(([value]) => value === undefined)) {
+    warn('Hermes 的配置没有读出来（hermes config get 失败了）：用 hermes memory status 看')
+    return
+  }
   if (provider === 'kioku') ok('Hermes 选的记忆 provider 是 kioku')
   else warn(`Hermes 现在选的记忆 provider 不是 kioku：运行 kioku setup hermes`)
-  const builtin = []
-  for (const [key, label] of [
-    ['memory.memory_enabled', 'MEMORY.md'],
-    ['memory.user_profile_enabled', 'USER.md'],
-  ]) {
-    if (/^true$/i.test((await configValue(env, key)) ?? '')) builtin.push(label)
-  }
+  const builtin = flags.filter(([value]) => /^true$/i.test(value)).map(([, label]) => label)
   if (builtin.length) {
     warn(
       `Hermes 内置的 ${builtin.join('、')} 还开着，会和 Kioku 各记一份：运行 kioku setup hermes 关掉`,

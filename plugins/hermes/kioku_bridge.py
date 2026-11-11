@@ -31,7 +31,10 @@ MAX_REPLY = 20_000
 MAX_SESSION_ID = 200
 MAX_NAME = 128
 # 访问密钥只能是可见的 ASCII 字符：别的字符放不进请求头
-_KEY = re.compile(r"^[\x21-\x7e]+$")
+_KEY = re.compile(r"[\x21-\x7e]+")
+# 本机的会话入口（Hermes 传给 provider 的 platform）。只有这几种启用，别的一律不启用：
+# 消息平台、API 服务器、定时任务这类入口背后可能是别人，也可能以后再多出新的
+LOCAL_PLATFORMS = frozenset({"cli", "tui", "gui", "acp", "desktop"})
 # 响应最多读这么多字节：服务端出了问题时不把内存读满
 _MAX_RESPONSE = 4 * 1024 * 1024
 
@@ -62,7 +65,8 @@ def server_url_problem(url: str) -> str | None:
 def key_problem(key: str) -> str | None:
     if not key:
         return "没有配置 Kioku 的访问密钥"
-    if not _KEY.match(key):
+    # 整个都要是可见的 ASCII 字符（结尾带一个换行也不行：它会进请求头）
+    if not _KEY.fullmatch(key):
         return "访问密钥的格式不对：只能是可见的 ASCII 字符，不能有空白"
     return None
 
@@ -105,7 +109,10 @@ class KiokuClient:
         self.url = url.rstrip("/")
         self._key = key
         # 不读环境里的代理设置之外的东西；跳转一律不跟
-        self._opener = opener or urllib.request.build_opener(_NoRedirect)
+        # 不走环境变量里的代理：访问密钥只发给配置的地址，不经过第三方（和各 JS 插件一致）
+        self._opener = opener or urllib.request.build_opener(
+            _NoRedirect, urllib.request.ProxyHandler({})
+        )
 
     def _post(
         self, path: str, body: dict[str, Any], timeout: float, accept: str
@@ -134,8 +141,9 @@ class KiokuClient:
             raise KiokuFailure(f"Kioku 返回 HTTP {exc.code}") from None
         except KiokuFailure:
             raise
-        # 连不上、超时、TLS、对方断开这类（URLError、TimeoutError、SSLError 都是 OSError）
-        except (OSError, http.client.HTTPException) as exc:
+        # 连不上、超时、TLS、对方断开这类（URLError、TimeoutError、SSLError 都是 OSError）；
+        # 地址或请求头里有编不进去的字符是 ValueError（UnicodeError 也是它），文字里可能带着请求头，同样只取类别
+        except (OSError, http.client.HTTPException, ValueError) as exc:
             raise KiokuFailure(f"无法连接 Kioku（{_failure_kind(exc)}）") from None
 
     def event(self, event: str, body: dict[str, Any]) -> str:
@@ -146,10 +154,10 @@ class KiokuClient:
         if event == "turn.end":
             return ""
         try:
-            output = json.loads(text).get("hostOutput") or {}
-        except (ValueError, AttributeError):
+            payload = json.loads(text)
+        except ValueError:
             raise KiokuFailure("Kioku 的响应格式不对") from None
-        return context_of(output)
+        return context_of(payload.get("hostOutput") if isinstance(payload, dict) else None)
 
     def rpc(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
         """对 Kioku 的 MCP 端点发一个 JSON-RPC 请求，返回 result。"""
@@ -172,8 +180,10 @@ class KiokuClient:
         return message["result"]
 
 
-def context_of(output: dict[str, Any]) -> str:
-    """服务端要注入的上下文文本。只取文本，输出里的其他字段一律不用。"""
+def context_of(output: Any) -> str:
+    """服务端要注入的上下文文本。只取文本，输出里的其他字段一律不用；形状不对时为空。"""
+    if not isinstance(output, dict):
+        return ""
     mode = output.get("mode")
     value = output.get("value")
     text: Any = None
@@ -182,7 +192,8 @@ def context_of(output: dict[str, Any]) -> str:
     elif mode == "stdout_text":
         text = value
     elif mode == "stdout_json" and isinstance(value, dict):
-        text = (value.get("hookSpecificOutput") or {}).get("additionalContext")
+        hook = value.get("hookSpecificOutput")
+        text = hook.get("additionalContext") if isinstance(hook, dict) else None
     return text if isinstance(text, str) else ""
 
 
@@ -273,6 +284,7 @@ class KiokuSession:
         self._pending: list[threading.Thread] = []
         self._started = False
         self._tools_loaded = False
+        self._tools_lock = threading.Lock()
         self._lock = threading.Lock()
 
     # -- 开始 ---------------------------------------------------------------
@@ -281,9 +293,16 @@ class KiokuSession:
         self._started = True
         self.session_id = (session_id or "")[:MAX_SESSION_ID]
         self.primary = (kwargs.get("agent_context") or "primary") == "primary"
-        if kwargs.get("gateway_session_key") or kwargs.get("chat_id"):
-            self.inactive_reason = "消息网关的会话里不启用 Kioku"
-            logger.info("Kioku：%s", self.inactive_reason)
+        platform = kwargs.get("platform")
+        # 只认本机的入口，认不出的一律不启用。只看有没有网关的标识不够：
+        # API 服务器这类入口在调用方不带会话头时两个标识都没有
+        if (
+            platform not in LOCAL_PLATFORMS
+            or kwargs.get("gateway_session_key")
+            or kwargs.get("chat_id")
+        ):
+            self.inactive_reason = "只在本机的会话里启用 Kioku"
+            logger.info("Kioku：%s（platform=%r）", self.inactive_reason, platform)
             return
         try:
             self._client = self._client_factory()
@@ -293,15 +312,11 @@ class KiokuSession:
             return
         self.active = True
         cwd = kwargs.get("cwd")
-        # 启动加载与工具清单（登记时没取到的话）一起取，各有时限：启动时最多等其中较长的一个
-        jobs = [
-            self._spawn(lambda: self._load_boot(cwd), "kioku-boot"),
-            self._spawn(self._ensure_tools, "kioku-tools"),
-        ]
-        for job in jobs:
-            job.start()
-        for job in jobs:
-            job.join(max(TIMEOUTS["session.start"], TOOLS_TIMEOUT) + 1.0)
+        # 启动加载在这里取，有时限。工具清单不在这里补取：登记工具的归属只在 provider 注册时做一次，
+        # 那时没取到的话，之后再给模型看这些工具也调不通
+        job = self._spawn(lambda: self._load_boot(cwd), "kioku-boot")
+        job.start()
+        job.join(TIMEOUTS["session.start"] + 1.0)
 
     def _body(self) -> dict[str, Any]:
         return {"sessionId": self.session_id} if self.session_id else {}
@@ -341,17 +356,23 @@ class KiokuSession:
             return
         body = {**self._body(), "user": clip(user, MAX_PROMPT), "reply": clip(reply, MAX_REPLY)}
 
-        def send() -> None:
-            try:
-                self._client.event("turn.end", body)  # type: ignore[union-attr]
-            except KiokuFailure as exc:
-                logger.warning("Kioku turn.end 未生效：%s", exc)
-
-        thread = self._spawn(send, "kioku-turn-end")
         with self._lock:
             self._pending = [t for t in self._pending if t.is_alive()]
+            previous = self._pending[-1] if self._pending else None
+
+            def send() -> None:
+                # 一轮一轮按顺序发：等上一轮发完（它自己有时限），服务端收到的顺序才和对话一致
+                if previous is not None:
+                    previous.join(TIMEOUTS["turn.end"] + 1.0)
+                try:
+                    self._client.event("turn.end", body)  # type: ignore[union-attr]
+                except KiokuFailure as exc:
+                    logger.warning("Kioku turn.end 未生效：%s", exc)
+
+            thread = self._spawn(send, "kioku-turn-end")
             self._pending.append(thread)
-        thread.start()
+            # 在锁里启动：下一轮拿到的「上一轮」一定已经启动了，可以 join
+            thread.start()
 
     # -- 工具 ---------------------------------------------------------------
 
@@ -368,15 +389,16 @@ class KiokuSession:
         return list(self._tools) if self.active else []
 
     def _ensure_tools(self) -> None:
-        with self._lock:
+        # 整个取的过程都拿着锁：同时来问的等它取完，不会拿到空的清单。只取这一次，没取到就是这个 agent 没有工具
+        with self._tools_lock:
             if self._tools_loaded:
                 return
             self._tools_loaded = True
-        try:
-            client = self._client or self._client_factory()
-            self._tools = tool_schemas(client.rpc("tools/list", {}, TOOLS_TIMEOUT))
-        except KiokuFailure as exc:
-            logger.warning("Kioku 的工具没有取到：%s", exc)
+            try:
+                client = self._client or self._client_factory()
+                self._tools = tool_schemas(client.rpc("tools/list", {}, TOOLS_TIMEOUT))
+            except KiokuFailure as exc:
+                logger.warning("Kioku 的工具没有取到，这次运行里没有 kioku 的工具：%s", exc)
 
     def call_tool(self, name: str, args: dict[str, Any]) -> str:
         if not self.active or name not in {tool["name"] for tool in self._tools}:
@@ -395,7 +417,7 @@ class KiokuSession:
         self.session_id = (session_id or "")[:MAX_SESSION_ID]
 
     def flush(self, timeout: float = TIMEOUTS["turn.end"] + 1.0) -> None:
-        """等还没发完的上报：进程要退出时调，否则最后一轮就丢了。"""
+        """等还没发完的上报：进程要退出时调，否则最后几轮就丢了。它们排着队发，所以一条一条等。"""
         with self._lock:
             pending = list(self._pending)
         for thread in pending:

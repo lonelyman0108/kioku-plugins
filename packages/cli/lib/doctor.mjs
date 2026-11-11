@@ -1,7 +1,7 @@
 // kioku doctor：检查地址与访问密钥能不能用、访问密钥的权限，以及平台这一边配好没有。
 // 每项一行：✓ 正常，! 要留意，✗ 有问题；有 ✗ 时退出码为 1
 
-import { loadConfig } from './config.mjs'
+import { loadConfig, NotConfigured } from './config.mjs'
 import { whoami } from './api.mjs'
 import { failureText, KiokuFailure } from './http.mjs'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.mjs'
@@ -75,9 +75,11 @@ export async function doctor(
       try {
         config = await loadConfig(env)
       } catch (err) {
-        // 这个平台有自己放配置的地方、却还没配过：说怎么配，不说别的平台的做法
-        if (platform?.readConfig)
+        // 这个平台有自己放配置的地方、却什么都没配：说怎么配，不说别的平台的做法。
+        // 环境变量里配了但不对的（地址无效、访问密钥文件读不了）照原样报
+        if (platform?.readConfig && err instanceof NotConfigured) {
           throw new KiokuFailure(`还没有给 ${platform.name} 配过：运行 kioku setup ${id}`)
+        }
         throw err
       }
     }

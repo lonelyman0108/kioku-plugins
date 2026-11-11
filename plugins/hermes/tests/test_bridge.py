@@ -84,13 +84,59 @@ def test_tools_are_listed_before_start_and_routed(kioku):
     assert events(kioku).count("tools/call") == 1
 
 
-@pytest.mark.parametrize("extra", [{"gateway_session_key": "tg:1"}, {"chat_id": "42"}])
-def test_gateway_sessions_get_nothing(kioku, extra):
+@pytest.mark.parametrize("platform", ["cli", "tui", "gui", "acp", "desktop"])
+def test_local_platforms(kioku, platform):
+    s = session(kioku)
+    s.start("s1", platform=platform)
+    assert s.active
+
+
+def test_tools_missed_at_registration_stay_missing(kioku):
+    # 登记时没取到：之后不补取，免得模型看得到却调不通
+    kioku.replies = {"tools/list": (500, {}, {})}
+    s = session(kioku)
+    assert s.tools() == []
+    kioku.replies = {}
+    s.start("s1", platform="cli")
+    assert s.active and s.tools() == []
+    assert events(kioku).count("tools/list") == 1
+    assert "error" in json.loads(s.call_tool("kioku_get", {}))
+
+
+def test_concurrent_tool_listing_fetches_once_and_all_see_the_list(kioku):
+    kioku.gate = threading.Event()
+    s = session(kioku)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(len(s.tools()))) for _ in range(4)]
+    for t in threads:
+        t.start()
+    kioku.gate.set()
+    for t in threads:
+        t.join(5)
+    assert results == [2, 2, 2, 2]
+    assert events(kioku).count("tools/list") == 1
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"platform": "telegram", "gateway_session_key": "tg:1"},
+        {"platform": "discord", "chat_id": "42"},
+        # API 服务器在调用方不带会话头时两个标识都没有：照样不启用
+        {"platform": "api_server"},
+        {"platform": "cron"},
+        {"platform": "以后新出的入口"},
+        {},
+        # 本机的入口带着网关的标识也不启用
+        {"platform": "cli", "gateway_session_key": "x"},
+    ],
+)
+def test_only_local_platforms_are_enabled(kioku, kwargs):
     s = session(kioku)
     registered = s.tools()
     assert registered
     kioku.requests.clear()
-    s.start("s1", platform="telegram", **extra)
+    s.start("s1", **kwargs)
     assert not s.active
     assert s.boot() == ""
     assert s.recall("问") == ""
@@ -205,6 +251,9 @@ def test_helpers():
     )
     assert context_of({"mode": "none", "value": None}) == ""
     assert context_of({"mode": "return_value", "value": {"context": 1}}) == ""
+    # 形状不对的不抛错
+    for odd in [None, "x", ["x"], {"mode": "stdout_json", "value": {"hookSpecificOutput": "x"}}]:
+        assert context_of(odd) == ""
 
     # 清单不是列表、里面不是对象的都跳过
     assert tool_schemas({"tools": "坏的"}) == []
@@ -228,6 +277,8 @@ def test_helpers():
         assert server_url_problem(url)
     assert key_problem("kioku_abc") is None
     assert key_problem("") and key_problem("a b") and key_problem("密钥")
+    # 结尾带换行的也不行
+    assert key_problem("kioku_abc\n")
 
     for text in ["", "  ", "/help", "ok", "好的", "谢谢！", "继续。"]:
         assert is_trivial(text)
@@ -238,3 +289,39 @@ def test_helpers():
 def test_client_rejects_bad_config_without_requests():
     with pytest.raises(KiokuFailure):
         KiokuClient("http://127.0.0.1:1", "a b")
+
+
+def test_proxies_from_the_environment_are_not_used(kioku, monkeypatch):
+    # 环境里配了连不上的代理：请求照样直接到 Kioku
+    for name in ["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]:
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    s = session(kioku)
+    s.start("s1", platform="cli")
+    assert s.boot() == "<启动加载>"
+
+
+def test_odd_responses_and_urls_never_raise(kioku, caplog):
+    kioku.replies = {
+        "session.start": (200, {"hostOutput": "不是对象"}, {}),
+        "prompt.submit": (200, ["不是对象"], {}),
+    }
+    s = session(kioku)
+    s.start("s1", platform="cli")
+    assert s.boot() == "" and s.recall("问") == ""
+    # 地址里有编不进请求的字符：不抛到外面，日志里不带访问密钥
+    odd = KiokuSession(lambda: KiokuClient(kioku.url + "/路径", KEY))
+    odd.start("s1", platform="cli")
+    assert odd.boot() == ""
+    assert KEY not in caplog.text
+
+
+def test_turns_reach_the_server_in_order(kioku):
+    s = session(kioku)
+    s.start("s1", platform="cli")
+    for index in range(8):
+        s.turn_end(f"问 {index}", "答")
+    s.flush()
+    users = [r["body"]["user"] for r in kioku.requests if r["body"].get("event") == "turn.end"]
+    assert users == [f"问 {index}" for index in range(8)]
