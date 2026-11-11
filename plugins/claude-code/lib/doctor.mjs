@@ -2,9 +2,12 @@
 // 每项一行：✓ 正常，! 要留意，✗ 有问题；有 ✗ 时退出码为 1
 
 import { loadConfig } from './config.mjs'
-import { failureText, fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
+import { whoami } from './api.mjs'
+import { failureText } from './http.mjs'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.mjs'
-import { readSettings } from './setup.mjs'
+import { readSettings } from './files.mjs'
+import { readProfile } from './profile.mjs'
+import { plain, shownUrl } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
 export const DOCTOR_USAGE = `用法：kioku doctor [平台]
@@ -16,7 +19,6 @@ export const DOCTOR_USAGE = `用法：kioku doctor [平台]
 有问题的项以 ✗ 开头，这时退出码为 1。
 `
 
-const TIMEOUT = 8000
 // 与管理界面的用词一致
 const LAYERS = {
   core: '通用',
@@ -29,21 +31,6 @@ const LAYERS = {
 const SENSITIVITIES = { public: '公开', internal: '内部', private: '私密', secret: '机密' }
 const CAPABILITIES = { none: '不可用', use: '取用', manage: '管理' }
 
-// 不由本命令写的文字（服务端给的名字、环境变量里的地址）打印之前压成一行：控制字符、行与段落分隔符、
-// 改变显示方向的格式字符都换成空格，免得伪造出一行结果；截断时不切开代理对
-function plain(value) {
-  const text = String(value ?? '')
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
-    .trim()
-  return Array.from(text).slice(0, 200).join('')
-}
-
-// 地址只打印协议、主机与路径：写在地址里的账号密码、查询参数不打印
-function shownUrl(url) {
-  const { origin, pathname } = new URL(url)
-  return plain(origin + pathname.replace(/\/+$/, ''))
-}
-
 function named(names, value) {
   return Object.hasOwn(names, value) ? names[value] : plain(value)
 }
@@ -51,35 +38,6 @@ function named(names, value) {
 function layersText(layers) {
   if (!Array.isArray(layers) || !layers.length) return '无'
   return layers.map((layer) => named(LAYERS, layer)).join('、')
-}
-
-async function whoami({ url, key }) {
-  let res
-  let data
-  try {
-    res = await fetch(`${url}/v1/whoami`, {
-      headers: { authorization: `Bearer ${key}` },
-      // 不跟着跳转走：访问密钥只发给配置的地址
-      redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT),
-    })
-    data = await res.json().catch(() => null)
-  } catch (err) {
-    throw new KiokuFailure(fetchFailure(err, TIMEOUT))
-  }
-  if (isRedirect(res.status)) {
-    throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
-  }
-  if (res.status === 401) throw new KiokuFailure('访问密钥无效或已吊销')
-  if (!res.ok) throw new KiokuFailure(`Kioku 返回 HTTP ${res.status}`)
-  if (
-    typeof data?.app?.runtimeFamily !== 'string' ||
-    data.scopes === null ||
-    typeof data.scopes !== 'object'
-  ) {
-    throw new KiokuFailure('Kioku 的响应格式不对')
-  }
-  return data
 }
 
 export function parseDoctorArgs(argv) {
@@ -111,8 +69,10 @@ export async function doctor(
 
   let who = null
   try {
-    const config = await loadConfig(env)
-    ok(`地址 ${shownUrl(config.url)}`)
+    // 平台把地址与访问密钥放在自己的文件里时先读它，没有再看环境变量
+    const profile = platform?.profile ? await readProfile(id, env) : null
+    const config = profile ?? (await loadConfig(env))
+    ok(`地址 ${shownUrl(config.url)}${profile ? `（${profile.file}）` : ''}`)
     who = await whoami(config)
   } catch (err) {
     bad(failureText(err))
@@ -135,6 +95,17 @@ export async function doctor(
 
   if (!platform) {
     out.write(`没有认出平台，只查了地址与访问密钥；要查平台的配置，写上平台：${platformNames()}\n`)
+    return failed ? 1 : 0
+  }
+  if (platform.inspect) {
+    try {
+      await platform.inspect(
+        { env, cwd },
+        { ok, warn, bad, note: (text) => out.write(`  ${text}\n`) },
+      )
+    } catch (err) {
+      bad(failureText(err))
+    }
     return failed ? 1 : 0
   }
   let settings = null

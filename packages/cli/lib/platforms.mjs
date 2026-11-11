@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { inspectCodex, setupCodex } from './codex.mjs'
+
 // 真值的环境变量写法
 const TRUTHY = /^(1|true|yes|on)$/i
 
@@ -67,7 +69,18 @@ const claudeCode = {
   pluginHint: '在 Claude Code 里用 /plugin 安装并启用 kioku',
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode }
+const codex = {
+  name: 'Codex',
+  runtimeFamily: 'codex',
+  // Codex 的会话里没有可靠的标记，要写明平台
+  detect: () => false,
+  // 地址与访问密钥放在本机的文件里（profile.mjs）
+  profile: true,
+  setup: setupCodex,
+  inspect: inspectCodex,
+}
+
+export const PLATFORMS = { 'claude-code': claudeCode, codex }
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')

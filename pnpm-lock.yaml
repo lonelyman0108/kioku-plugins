@@ -33,6 +33,8 @@ importers:
 
   plugins/claude-code: {}
 
+  plugins/codex: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':
