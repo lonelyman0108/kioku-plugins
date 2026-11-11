@@ -21,3 +21,7 @@ coverage/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+
+# 发布时复制进包目录的许可证与声明
+packages/*/LICENSE
+packages/*/NOTICE

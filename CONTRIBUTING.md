@@ -56,5 +56,16 @@
 
 ## 发布
 
-<!-- 填写：谁发起发版、release.yml 做什么、怎么部署和回滚 -->
 发版由维护者发起并决定版本号；发起后 agent 可以运行改号脚本、提交发布 PR、推送版本 tag，时机按本节的流程，不做维护者没发起的发版，不删除、不移动 tag。CHANGELOG 定稿放在发布 PR（`🔖 release: vX.Y.Z`）里。
+
+发布的是 `packages/` 下公开的 npm 包（现在是 `@kioku-memory/cli`），它们用同一个版本号，等于 tag。Claude Code 这类按仓库安装的插件不经过发版，合并进 main 就是更新。
+
+1. 维护者说要发的版本号。
+2. 从 main 开分支，`scripts/bump-version.sh X.Y.Z` 改版本号，`git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md` 起草更新日志并改写成使用者的语言，提交 `🔖 release: vX.Y.Z`，`scripts/pr.sh --release` 开发布 PR。
+3. 发布 PR 合并后，在 main 的那个提交上打 tag `vX.Y.Z` 并推送。
+4. `release.yml` 跑 `scripts/ci/publish-npm.sh`：核对每个包的版本等于 tag、副本与 `packages/core` 一致，再逐个 `npm publish`；之后建 Release 页面，正文取 CHANGELOG 的这一节。npm 用受信发布，仓库里没有 npm 令牌（设置见 `docs/SETUP.md`）。
+5. 核对：`npm view @kioku-memory/cli version` 是新版本，包页面有 Provenance 标记。
+
+发到一半失败时修好原因、重跑这个 workflow：已经在 npm 上的版本会跳过。发出去的版本有问题时发一个新的补丁版本，旧的用 `npm deprecate` 标记；不删除、不移动 tag，也不重发同一个版本号。
+
+本地核对会发出哪些文件：`scripts/ci/publish-npm.sh --dry-run vX.Y.Z`。

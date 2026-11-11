@@ -85,3 +85,30 @@ JSON
 
 | 日期 | 内容 | 结果 |
 |---|---|---|
+
+## npm
+
+| 项 | 值 |
+|---|---|
+| 组织 | `kioku-memory`（scope `@kioku-memory`），公开包 |
+| 包 | `@kioku-memory/cli`（目录 `packages/cli`） |
+| 认证 | 受信发布（OIDC），没有 npm 令牌，仓库里也没有对应的 secret |
+
+每个包在 npmjs.com 的 Settings › Trusted Publisher 里配一个 GitHub Actions 发布者：
+
+| 字段 | 值 |
+|---|---|
+| Organization or user | 本仓库的所有者 |
+| Repository | 本仓库的名字 |
+| Workflow filename | `release.yml` |
+| Environment name | 留空 |
+| Allowed actions | 勾上 `npm publish`（只留默认的 `npm stage publish` 时 workflow 发不出去） |
+
+包要先存在才能配，所以新包的第一个版本由维护者在本机发一个占位版本（仓库里新包的版本写 `0.0.0`）：
+
+```bash
+node scripts/sync-core.mjs --check
+cd packages/<包目录> && npm publish --access public
+```
+
+配好受信发布之后的版本都由 `release.yml` 发。受信发布要 npm 11.5.1、Node 22.14 以上，只认 GitHub 托管的 runner；`scripts/ci/publish-npm.sh` 在 npm 版本不够时装一个固定的版本。
