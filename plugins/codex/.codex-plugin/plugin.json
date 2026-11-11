@@ -1,0 +1,19 @@
+{
+  "name": "kioku",
+  "version": "0.1.0",
+  "description": "Kioku 长期记忆：会话开始时注入启动加载的内容，每轮注入召回候选，每轮回复后写会话摘要",
+  "author": { "name": "Kioku" },
+  "homepage": "https://github.com/lonelyman0108/kioku",
+  "repository": "https://github.com/lonelyman0108/kioku-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["memory"],
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Kioku",
+    "shortDescription": "自托管的长期记忆",
+    "longDescription": "会话开始时注入 Kioku 启动加载的内容，每轮注入召回候选，每轮回复后把这一轮交给 Kioku 写会话摘要。地址、访问密钥与读写记忆的 MCP 工具由 kioku setup codex 配好。",
+    "developerName": "Kioku",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/lonelyman0108/kioku"
+  }
+}

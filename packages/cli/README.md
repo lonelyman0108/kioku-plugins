@@ -14,11 +14,11 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 
 | 子命令 | 作用 |
 |---|---|
-| `kioku setup <平台>` | 停用平台自带的长期记忆，由 Kioku 接管 |
+| `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex 再写下服务地址与访问密钥、配好 MCP 服务 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
-每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`。
+每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`。
 
 ## setup
 
@@ -35,6 +35,14 @@ kioku setup claude-code --undo      # 改回去
 
 不停用的话，平台自带的记忆和 Kioku 会各记一份，两边的内容迟早对不上。
 
+### Codex
+
+```bash
+kioku setup codex --server-url https://kioku.example.com
+```
+
+提示输入访问密钥（不回显；也可以放在 `KIOKU_API_KEY` 里或从标准输入给），核对后写下 `~/.config/kioku/codex.json`，在 `~/.codex/config.toml` 里加上 Kioku 的 MCP 服务并关掉 Memories，再列出在 Codex 这一边要做的三步。改了什么、怎么撤销见 [Codex 插件的说明](https://github.com/lonelyman0108/kioku-plugins/tree/main/plugins/codex#setup-改了什么)。
+
 ## doctor
 
 ```bash
@@ -45,7 +53,7 @@ kioku doctor claude-code
 
 ## 地址与访问密钥
 
-`doctor` 与 `run` 从环境变量读：
+`kioku doctor codex` 读 `kioku setup codex` 写下的文件。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
 - `KIOKU_API_KEY`：在 Kioku 管理界面的「应用」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件

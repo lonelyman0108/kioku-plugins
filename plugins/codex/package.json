@@ -1,0 +1,7 @@
+{
+  "name": "@kioku-memory/plugin-codex",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  }
+}

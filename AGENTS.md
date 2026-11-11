@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest 测试）与 AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
+Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
 
 提交、PR、发版的完整规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只写 agent 需要、又无法从代码推出来的内容，每条约定都附原因。超过 300 行时拆到子目录的 AGENTS.md。
 
@@ -48,8 +48,9 @@ Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest �
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
-| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台的配置在 `platforms.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
+| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
+| `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：只有 `package.json` 与说明，`bin/`、`lib/` 同样是 `packages/core` 的副本 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
@@ -67,4 +68,9 @@ Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest �
 - 钩子往 `CLAUDE_ENV_FILE` 写的每一行都要是纯赋值：值用单引号括起来，值里的单引号写成 `'"'"'`，不用反斜杠，含控制字符的值不写。原因：Claude Code 把这个文件原样拼进之后每一条 Bash 命令，引号没配对会让整个会话的 Bash 命令都跑不起来；另有一处按行解析它，只认引号串拼成的纯赋值，有一行不认得就整份不用。
 - `kioku setup` 只改平台设置里 `platforms.mjs` 列出的那几项：读不懂的设置文件（不是 JSON 对象）不动它；符号链接改它指向的文件；先写临时文件，改名之前再读一次，和开始时读到的不一样就不写；备份只留第一份；`--undo` 只把这几项改回去，不用备份覆盖。原因：设置文件是用户的，里面还有别的工具写的内容，平台自己也随时在改它，有人用符号链接把它放在别处管理。
 - `kioku doctor` 打印不是自己写的文字（服务端给的应用名、环境变量里的地址）之前一律经 `plain`：控制字符、行与段落分隔符、改变显示方向的字符换成空格。它可能在 agent 的 Bash 工具里跑，输出会进上下文，名字里的换行能伪造一行结果。地址只打印协议、主机与路径，写在地址里的账号密码不打印。
+- 两份市场清单要都在：Codex 没有 `.agents/plugins/marketplace.json` 时会退回去读 `.claude-plugin/marketplace.json`，把 Claude Code 插件当成可装的（它的钩子读的是 Claude Code 的配置，装上只会一直提示没有配置）。
+- Codex 的 `config.toml` 只按行改（`codex.mjs`），不引 TOML 库（插件目录里的副本不能带依赖）。名叫 kioku 的 MCP 服务按段名认（`[mcp_servers.kioku]` 与它的子段），整个归 `kioku setup` 管；不要用注释当标记圈范围：Codex 自己会重写这个文件，注释会被它挪到别的段后面，圈进去的就成了别人的配置。
+- Codex 的钩子要注意三点（都在真实的 Codex 上核对过，版本 0.167.1）：Stop 不带用户的输入，要在 UserPromptSubmit 时按会话与轮次记下、结束时取走；注入的上下文默认超过约 2,500 token 就被存成文件、只给模型看头尾，`hooks.json` 里的 `additionalContextLimit` 要比服务端给 Codex 的字数上限（`HOST_CONTEXT_LIMIT`，9,500 字约 7,400 token）宽；插件带的钩子要用户在 `/hooks` 里信任过才运行，自动化的测试用 `--dangerously-bypass-hook-trust`。
+- 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
+- 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。
