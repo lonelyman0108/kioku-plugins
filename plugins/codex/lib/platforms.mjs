@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { inspectCodex, setupCodex } from './codex.mjs'
+import { inspectCodex, preflightCodex, setupCodex } from './codex.mjs'
 import { inspectPi, setupPi } from './pi.mjs'
 
 // 真值的环境变量写法
@@ -78,6 +78,8 @@ const codex = {
   // 地址与访问密钥放在本机的文件里（profile.mjs）
   profile: true,
   setup: setupCodex,
+  // kioku login 申请之前先做的检查
+  preflight: preflightCodex,
   inspect: inspectCodex,
 }
 

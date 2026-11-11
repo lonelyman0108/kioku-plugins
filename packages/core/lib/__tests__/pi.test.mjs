@@ -58,7 +58,13 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 async function run(command, args, { key = KEY } = {}) {
   let text = ''
-  const io = { env, cwd: dir, out: { write: (chunk) => (text += chunk) }, readKey: async () => key }
+  const io = {
+    env,
+    cwd: dir,
+    out: { write: (chunk) => (text += chunk) },
+    readKey: async () => key,
+    login: null,
+  }
   return { code: await command(args, io), text }
 }
 

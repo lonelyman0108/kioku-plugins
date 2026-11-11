@@ -71,9 +71,16 @@ export async function readSecret({
   env = process.env,
   stdin = process.stdin,
   out = process.stderr,
+  canLogin = false,
+  hasSaved = false,
 } = {}) {
   const fromEnv = (env.KIOKU_API_KEY ?? '').trim()
   if (fromEnv) return fromEnv
   if (!stdin.isTTY) return (await readAll(stdin)).trim()
-  return (await readHidden(stdin, out, '访问密钥（不回显）：')).trim()
+  const label = hasSaved
+    ? '访问密钥（不回显；直接回车沿用上次的）：'
+    : canLogin
+      ? '访问密钥（不回显；直接回车改用浏览器授权）：'
+      : '访问密钥（不回显）：'
+  return (await readHidden(stdin, out, label)).trim()
 }

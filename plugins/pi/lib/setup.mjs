@@ -3,6 +3,7 @@
 // 改之前显示要改什么、留一份备份；--undo 只把这几项改回去，不动设置里的其他内容（文件会按 JSON 重新排版）
 
 import { readSettings, writeSettings } from './files.mjs'
+import { deviceLogin } from './login.mjs'
 import { plain } from './text.mjs'
 import { platformNames, PLATFORMS } from './platforms.mjs'
 import { readSecret } from './secret.mjs'
@@ -20,10 +21,16 @@ export const SETUP_USAGE = `用法：kioku setup <平台> [--dry-run] [--undo] [
   --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（codex、pi 用；也可以用 KIOKU_SERVER_URL）
   --no-check           不先连一次 Kioku 核对地址与访问密钥（codex、pi 用）
 
-访问密钥不写在命令行上：从 KIOKU_API_KEY 读，或者从标准输入读（echo 之外，在终端里运行时会提示输入、不回显）。
+访问密钥不写在命令行上：从 KIOKU_API_KEY 读，或者从标准输入读；在终端里运行时会提示输入（不回显），
+直接回车就改用浏览器授权（同 kioku login）。
 只改平台设置里和 Kioku 有关的几项，第一次改之前把原来的文件备份成同目录下的 <文件名>.kioku-backup（已有备份时不覆盖）。
 改完新开会话生效。本地已有的记忆文件不会被删掉。
 `
+
+// 给各平台的 setup 用的浏览器授权：按平台的运行时申请
+function browserLogin(out) {
+  return ({ url, id }) => deviceLogin({ url, runtimeFamily: PLATFORMS[id].runtimeFamily }, { out })
+}
 
 export function parseSetupArgs(argv) {
   const options = { dryRun: false, undo: false, check: true, serverUrl: undefined }
@@ -58,13 +65,20 @@ function shown(value) {
 
 export async function setup(
   argv,
-  { env = process.env, out = process.stdout, cwd = process.cwd(), readKey = readSecret } = {},
+  {
+    env = process.env,
+    out = process.stdout,
+    cwd = process.cwd(),
+    readKey = readSecret,
+    // 在终端里运行、没给访问密钥时可以改用浏览器授权；不在终端里（管道、agent 的命令）时没有；传 null 是明说不要
+    login = process.stdin.isTTY ? browserLogin(out) : null,
+  } = {},
 ) {
   const options = parseSetupArgs(argv)
   const { platform: id, dryRun, undo } = options
   const platform = PLATFORMS[id]
   // 有自己的一套步骤的平台
-  if (platform.setup) return platform.setup(options, { env, out, cwd, readKey, plain })
+  if (platform.setup) return platform.setup(options, { env, out, cwd, readKey, plain, login })
   const { memory } = platform
   const file = platform.settingsFile(env)
   const { settings, text } = await readSettings(file)

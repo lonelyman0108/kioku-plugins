@@ -18,7 +18,7 @@ npx @kioku-memory/cli setup pi --server-url https://kioku.example.com
 pi install git:github.com/lonelyman0108/kioku-plugins
 ```
 
-第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。它先连一次 Kioku 核对，再把地址与访问密钥写进 `~/.config/kioku/pi.json`（权限 600，位置可以用 `KIOKU_CONFIG_DIR` 改）。`--dry-run` 只看要改什么，`--no-check` 不核对，`--undo` 删掉这个文件。
+第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login pi --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好空间与权限后确认，不用先在管理界面建应用、复制访问密钥。它先连一次 Kioku 核对，再把地址与访问密钥写进 `~/.config/kioku/pi.json`（权限 600，位置可以用 `KIOKU_CONFIG_DIR` 改）。`--dry-run` 只看要改什么，`--no-check` 不核对，`--undo` 删掉这个文件。
 
 装好之后新开会话，或者在 pi 里 `/reload`。用 `npx @kioku-memory/cli doctor pi` 检查：地址与访问密钥、访问密钥的权限、扩展装了没有、`mcp.json` 里有没有同名的服务。
 
