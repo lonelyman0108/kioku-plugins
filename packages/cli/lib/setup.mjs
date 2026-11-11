@@ -12,13 +12,13 @@ export { readSettings, writeSettings }
 
 export const SETUP_USAGE = `用法：kioku setup <平台> [--dry-run] [--undo] [--server-url <地址>] [--no-check]
 
-把平台交给 Kioku 接管：停用平台自带的长期记忆；没有自己的密钥存储的平台（codex）再写下服务地址与访问密钥。
+把平台交给 Kioku 接管：停用平台自带的长期记忆；没有自己的密钥存储的平台（codex、pi）再写下服务地址与访问密钥。
 
   <平台>               ${platformNames()}
   --dry-run            只显示要改什么，不写文件
   --undo               改回去：重新启用平台自带的长期记忆，删掉写下的地址与访问密钥
-  --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（codex 用；也可以用 KIOKU_SERVER_URL）
-  --no-check           不先连一次 Kioku 核对地址与访问密钥（codex 用）
+  --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（codex、pi 用；也可以用 KIOKU_SERVER_URL）
+  --no-check           不先连一次 Kioku 核对地址与访问密钥（codex、pi 用）
 
 访问密钥不写在命令行上：从 KIOKU_API_KEY 读，或者从标准输入读（echo 之外，在终端里运行时会提示输入、不回显）。
 只改平台设置里和 Kioku 有关的几项，第一次改之前把原来的文件备份成同目录下的 <文件名>.kioku-backup（已有备份时不覆盖）。

@@ -1,6 +1,14 @@
 {
   "name": "kioku-plugins",
   "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./plugins/pi/index.js"
+    ]
+  },
   "type": "module",
   "packageManager": "pnpm@11.2.2",
   "engines": {
