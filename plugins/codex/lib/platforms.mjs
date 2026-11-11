@@ -6,7 +6,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { inspectCodex, preflightCodex, setupCodex } from './codex.mjs'
+import { inspectHermes, readHermesConfig, setupHermes } from './hermes.mjs'
 import { inspectPi, setupPi } from './pi.mjs'
+import { readProfile } from './profile.mjs'
 
 // 真值的环境变量写法
 const TRUTHY = /^(1|true|yes|on)$/i
@@ -75,8 +77,8 @@ const codex = {
   runtimeFamily: 'codex',
   // Codex 的会话里没有可靠的标记，要写明平台
   detect: () => false,
-  // 地址与访问密钥放在本机的文件里（profile.mjs）
-  profile: true,
+  // 地址与访问密钥放在本机的文件里（profile.mjs）；readConfig 读出来给 doctor、login、import 用
+  readConfig: (env) => readProfile('codex', env),
   setup: setupCodex,
   // kioku login 申请之前先做的检查
   preflight: preflightCodex,
@@ -87,12 +89,22 @@ const pi = {
   name: 'pi',
   runtimeFamily: 'pi',
   detect: () => false,
-  profile: true,
+  readConfig: (env) => readProfile('pi', env),
   setup: setupPi,
   inspect: inspectPi,
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode, codex, pi }
+const hermes = {
+  name: 'Hermes',
+  runtimeFamily: 'hermes',
+  detect: () => false,
+  // 地址与访问密钥在 Hermes 自己的 .env 里
+  readConfig: readHermesConfig,
+  setup: setupHermes,
+  inspect: inspectHermes,
+}
+
+export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes }
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')

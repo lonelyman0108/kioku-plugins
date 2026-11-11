@@ -3,10 +3,9 @@
 
 import { loadConfig } from './config.mjs'
 import { whoami } from './api.mjs'
-import { failureText } from './http.mjs'
+import { failureText, KiokuFailure } from './http.mjs'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.mjs'
 import { readSettings } from './files.mjs'
-import { readProfile } from './profile.mjs'
 import { plain, shownUrl } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
@@ -70,8 +69,18 @@ export async function doctor(
   let who = null
   try {
     // 平台把地址与访问密钥放在自己的文件里时先读它，没有再看环境变量
-    const profile = platform?.profile ? await readProfile(id, env) : null
-    const config = profile ?? (await loadConfig(env))
+    const profile = platform?.readConfig ? await platform.readConfig(env) : null
+    let config = profile
+    if (!config) {
+      try {
+        config = await loadConfig(env)
+      } catch (err) {
+        // 这个平台有自己放配置的地方、却还没配过：说怎么配，不说别的平台的做法
+        if (platform?.readConfig)
+          throw new KiokuFailure(`还没有给 ${platform.name} 配过：运行 kioku setup ${id}`)
+        throw err
+      }
+    }
     ok(`地址 ${shownUrl(config.url)}${profile ? `（${profile.file}）` : ''}`)
     who = await whoami(config)
   } catch (err) {

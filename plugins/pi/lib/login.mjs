@@ -8,7 +8,6 @@ import { hostname } from 'node:os'
 
 import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
 import { platformNames, PLATFORMS } from './platforms.mjs'
-import { readProfile } from './profile.mjs'
 import { resolveServerUrl } from './target.mjs'
 import { plain } from './text.mjs'
 import { UsageError } from './usage.mjs'
@@ -234,7 +233,7 @@ export async function login(
 ) {
   const options = parseLoginArgs(argv)
   const platform = PLATFORMS[options.platform]
-  const saved = await readProfile(options.platform, env).catch(() => null)
+  const saved = await Promise.resolve(platform.readConfig?.(env)).catch(() => null)
   const url = resolveServerUrl(options, env, saved)
   // 申请之前先看这个平台的配置写不写得进去：访问密钥只在签发时给一次
   await platform.preflight?.({ env, cwd })

@@ -23,9 +23,10 @@ export function resolveServerUrl(options, env, saved) {
 export async function resolveTarget(
   { id, name },
   options,
-  { env, out, readKey, plain, login, beforeLogin },
+  { env, out, readKey, plain, login, beforeLogin, readSaved },
 ) {
-  const saved = await readProfile(id, env).catch(() => null)
+  // 上次写下的：平台有自己放的地方时由它读（readSaved），否则读 kioku setup 写的那个文件
+  const saved = readSaved ? await readSaved() : await readProfile(id, env).catch(() => null)
   const url = resolveServerUrl(options, env, saved)
   // 已经有上次写下的访问密钥时，提示里直接回车是沿用它；没有时直接回车才是改用浏览器授权
   const hasSaved = Boolean(saved?.key)
