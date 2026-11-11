@@ -35,6 +35,8 @@ importers:
 
   plugins/codex: {}
 
+  plugins/pi: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':

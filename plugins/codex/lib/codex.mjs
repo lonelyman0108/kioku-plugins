@@ -9,19 +9,11 @@ import { readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { whoami } from './api.mjs'
 import { readText, safeWrite } from './files.mjs'
-import { keyFormatError, KiokuFailure } from './http.mjs'
-import {
-  profileDir,
-  profileFile,
-  readProfile,
-  removeProfile,
-  serverUrlProblem,
-  writeProfile,
-} from './profile.mjs'
+import { KiokuFailure } from './http.mjs'
+import { profileDir, profileFile, readProfile, removeProfile, writeProfile } from './profile.mjs'
+import { resolveTarget } from './target.mjs'
 import { plain as plainText, shownUrl } from './text.mjs'
-import { UsageError } from './usage.mjs'
 
 const SERVER = 'mcp_servers.kioku'
 const MARKETPLACE = 'lonelyman0108/kioku-plugins'
@@ -217,45 +209,18 @@ async function undo({ dryRun }, { env, out }) {
 }
 
 export async function setupCodex(options, io) {
-  const { env, out, readKey, plain } = io
+  const { env, out } = io
   if (options.undo) return undo(options, io)
   const file = join(codexHome(env), 'config.toml')
   const text = await readText(file)
   const found = scanConfig(text)
 
-  // 地址与访问密钥：这次给的优先，没给的沿用上次写下的
-  const saved = await readProfile('codex', env).catch(() => null)
-  const url = (options.serverUrl ?? env.KIOKU_SERVER_URL ?? saved?.url ?? '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!url) throw new UsageError('要给服务地址：--server-url https://kioku.example.com')
-  const urlProblem = serverUrlProblem(url)
-  if (urlProblem) throw new KiokuFailure(urlProblem)
   if (found.unsupported) {
     throw new KiokuFailure(
       `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务，没有改动它：删掉那个定义后重新运行`,
     )
   }
-  // 预览时不提示输入：没在环境变量里给访问密钥就沿用上次的，都没有就不核对
-  const given = options.dryRun && !env.KIOKU_API_KEY ? '' : await readKey({ env })
-  const key = given || saved?.key || ''
-  // 写文件、发请求之前先看格式：带着换行这类字符的访问密钥写进 config.toml 会让整份配置读不了
-  const keyProblem = key ? keyFormatError(key) : null
-  if (keyProblem) throw new KiokuFailure(keyProblem)
-  if (!key && !options.dryRun) {
-    throw new KiokuFailure('没有给访问密钥：设置 KIOKU_API_KEY，或者从标准输入给')
-  }
-
-  if (key && options.check) {
-    const who = await whoami({ url, key })
-    const family = who.app.runtimeFamily
-    out.write(`✓ 访问密钥可用：应用 ${plain(who.app.name)}，运行时 ${plain(family)}\n`)
-    if (family !== 'codex') {
-      out.write(
-        '! 这个应用的运行时不是 codex，注入的内容不按 Codex 的格式：在管理界面为 Codex 另建一个应用\n',
-      )
-    }
-  }
+  const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, io)
 
   const before = blockValues(found)
   const sameBlock = Boolean(before && key && before.url === url && before.key === key)

@@ -6,6 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { inspectCodex, setupCodex } from './codex.mjs'
+import { inspectPi, setupPi } from './pi.mjs'
 
 // 真值的环境变量写法
 const TRUTHY = /^(1|true|yes|on)$/i
@@ -80,7 +81,16 @@ const codex = {
   inspect: inspectCodex,
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode, codex }
+const pi = {
+  name: 'pi',
+  runtimeFamily: 'pi',
+  detect: () => false,
+  profile: true,
+  setup: setupPi,
+  inspect: inspectPi,
+}
+
+export const PLATFORMS = { 'claude-code': claudeCode, codex, pi }
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')

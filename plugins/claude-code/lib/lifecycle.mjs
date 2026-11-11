@@ -68,6 +68,8 @@ export function contextOf(hostOutput) {
   if (hostOutput?.mode === 'stdout_json')
     return hostOutput.value?.hookSpecificOutput?.additionalContext
   if (hostOutput?.mode === 'stdout_text') return hostOutput.value
+  // 没有专门输出格式的运行时：服务端直接给文本
+  if (hostOutput?.mode === 'return_value') return hostOutput.value?.context
   return undefined
 }
 
