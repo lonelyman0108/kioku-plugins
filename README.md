@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code、Codex、pi、Hermes、OpenClaw 与 AstrBot（群聊机器人），以及 `kioku` 命令
+Kioku 的客户端插件：Claude Code、Codex、pi、Hermes、OpenClaw、DeepSeek Harness 与 AstrBot（群聊机器人），以及 `kioku` 命令
 
 ## 做什么
 
@@ -11,6 +11,7 @@ Kioku 的客户端插件：Claude Code、Codex、pi、Hermes、OpenClaw 与 Astr
 - [pi 扩展](plugins/pi/README.md)：第一次输入前注入启动加载，每次输入注入召回候选，每轮结束后写会话摘要，并注册读写记忆的 MCP 服务。
 - [Hermes 记忆 provider](plugins/hermes/README.md)：替换 Hermes 内置的记忆，启动加载进系统提示，每轮注入召回候选，每轮结束后写会话摘要，并提供读写记忆的工具；只在本机的会话里生效。
 - [OpenClaw 插件](plugins/openclaw/README.md)（npm 包 `@kioku-memory/openclaw`）：占用 OpenClaw 的记忆槽位，每一轮注入启动加载与召回候选，每轮结束后写会话摘要，并提供读写记忆的工具；只在本机入口的对话里生效。
+- [DeepSeek Harness 插件](plugins/dsh/README.md)：第一次输入注入启动加载，每次输入注入召回候选，每轮结束后写会话摘要，并挂上读写记忆的 MCP 客户端。
 - [`kioku` 命令](packages/cli/README.md)（npm 包 `@kioku-memory/cli`）：`kioku setup` 停用平台自带的长期记忆、写下配置，`kioku doctor` 检查配置，`kioku run` 把凭据交给命令。
 - [AstrBot 插件](plugins/astrbot_plugin_kioku/README.md)：让群聊机器人用 Kioku 的人格、召回与对话抽取。
 
@@ -32,6 +33,7 @@ scripts/check.sh          # 门禁：与 CI 完全一致
 - pi：`npx @kioku-memory/cli setup pi --server-url <地址>`，再 `pi install git:github.com/lonelyman0108/kioku-plugins`。
 - Hermes：`npx @kioku-memory/cli setup hermes --server-url <地址>`，再 `hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable`。
 - OpenClaw：`npx @kioku-memory/cli setup openclaw --server-url <地址>`，再 `openclaw plugins install npm:@kioku-memory/openclaw`，重启网关。
+- DeepSeek Harness：`npx @kioku-memory/cli setup dsh --server-url <地址>`，再 `dsh plugin --profile <profile> add github:lonelyman0108/kioku-plugins`，重启 dsh。
 - AstrBot：`cp -R plugins/astrbot_plugin_kioku <AstrBot 的数据目录>/plugins/`，在管理面板里重载插件。
 
 各插件的配置见各自的 README。AstrBot 插件带着从 Kioku 复制来的 Python 客户端，Kioku 的接口变了要同步，见 [AstrBot 插件 · 同步客户端](plugins/astrbot_plugin_kioku/README.md#同步客户端)。

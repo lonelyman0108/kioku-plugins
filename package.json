@@ -9,6 +9,11 @@
       "./plugins/pi/index.js"
     ]
   },
+  "dsh": {
+    "bundle": {
+      "patch": "./plugins/dsh/cordis.patch.yml"
+    }
+  },
   "type": "module",
   "packageManager": "pnpm@11.2.2",
   "engines": {

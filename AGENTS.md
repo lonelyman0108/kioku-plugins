@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、OpenClaw 的记忆插件（在网关进程里跑的 JS，发 npm）、Hermes 的记忆 provider（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
+Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、OpenClaw 的记忆插件（在网关进程里跑的 JS，发 npm）、DeepSeek Harness 的插件（Cordis 插件，按仓库装）、Hermes 的记忆 provider（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
 
 提交、PR、发版的完整规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只写 agent 需要、又无法从代码推出来的内容，每条约定都附原因。超过 300 行时拆到子目录的 AGENTS.md。
 
@@ -48,12 +48,13 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
-| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，OpenClaw 的在 `openclaw.mjs`，向 Kioku 的 MCP 端点取工具清单、调用工具与本机留的那份清单在 `mcp.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
+| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，OpenClaw 的在 `openclaw.mjs`，DeepSeek Harness 的在 `dsh.mjs`，向 Kioku 的 MCP 端点取工具清单、调用工具与本机留的那份清单在 `mcp.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
 | `plugins/hermes` | Hermes 的记忆 provider：`kioku_bridge.py` 是不依赖 Hermes 的那一层（请求、会话状态），`__init__.py` 把 Hermes 的回调接过去；`plugin.yaml` 里的 `name` 就是装好之后的目录名与 `memory.provider` 的值。不收核心的副本（Python） |
 | `plugins/openclaw` | OpenClaw 的记忆插件，发到 npm 的 `@kioku-memory/openclaw`：清单 `openclaw.plugin.json`（`kind: "memory"`，工具名要在 `contracts.tools` 里声明），入口 `index.js` 只把状态挂到进程上，`kioku.js` 的 `createKioku` 是可以单测的那一层；`lib/` 同样是副本 |
+| `plugins/dsh` | DeepSeek Harness 的插件：`cordis.patch.yml` 是补丁（装上插件、挂 MCP 客户端），根 `package.json` 的 `dsh` 键把本仓库登记成它的 bundle；入口 `index.js`，`kioku.js` 的 `createKioku` 是可以单测的那一层；`lib/` 同样是副本 |
 | `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：只有 `package.json` 与说明，`bin/`、`lib/` 同样是 `packages/core` 的副本 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
@@ -100,6 +101,17 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **一次性的运行里上报要等发完**：`openclaw agent --local` 跑完进程就退出，`agent_end` 里不等的话 `turn.end` 发不出去。
   - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。`openclaw plugins inspect` 失败、输出读不懂是「没查出来」（`pluginState` 返回 undefined），和「没装」（它明说 Plugin not found）分开：当成没装的话 `--undo` 会删了配置却留着槽位。
   - 本地实测要把 `HOME` 也换掉：只设 `OPENCLAW_STATE_DIR` 时它照样在真实的 `~/.openclaw` 下建工作区。`OPENCLAW_HOME` 换的是主目录（工作区在它下面的 `.openclaw/workspace`），不是 `.openclaw` 本身。要 Node 24.16 以上。停实验用的网关按端口找进程（进程名只是 `openclaw`），没停掉的旧网关会接着用旧的插件注册表应答。
+- DeepSeek Harness 的插件（核对过 dsh 0.2.2-rc.1 与真实的 Kioku；它还在预览阶段，升级时复查）：
+  - **不用它兼容 Codex、Claude Code 钩子的那两个桥**：桥的 Stop 不带助手的回复、SessionStart 不等结果就开始第一轮。直接写 Cordis 插件：`agent/created`（记下要注入启动加载）、`agent/pre-step`（把启动加载与召回接在这一步的消息后面）、`agent/turn-stopping`（上报）。
+  - **钩子里抛出去的错会让这一轮整个失败**（实测：处理函数里一个 TypeError，dsh 以 `UNKNOWN` 退出）：三个入口都自己接住。`agent/pre-step` 是瀑布式的，一定要把 `next()` 的结果交回去，自己的请求出什么错都不能影响它。
+  - **消息的来源不能叫 `plugin`**：会话格式不收（报错里说 message requires a producer-owned source kind），用自己的名字（`kioku`），附带的字段（`part`）会原样留在会话里，靠它认出会话里有没有注入过启动加载。消息对象自己拼（`role`、`id`、`content`、`source`），不引 `@deepseek-ai/dsh-llm`：按仓库装的包引用不到 dsh 自己的依赖。
+  - **会话记录用 `session.snapshotEvents()` 读**（`session.events` 在这个版本里不能遍历）。一轮的范围是 `turn/start` 到下一个 `turn/start`；用户说的是 `user/message` 里来源为 `user` 的，运行时的说明、别的插件加的消息来源不同。
+  - **接着之前的会话（`resume`）时不重复注入启动加载**：注入的消息存在会话里，每次恢复都注入会越攒越多。只看最后一次压缩（`compaction/end`）之后有没有。取到了启动加载、这一步却被别的插件拒绝时不算注入过（`booted` 在消息真的接上去之后才清）。
+  - **子 agent 按会话头的 `origin`、`delegationDepth` 认**，不看 `parentSession`：用户分出来的会话也可能带着它。
+  - 上报不听这一轮的取消信号（被打断的一轮也要记），和输入前的请求各有各的退避。
+  - **MCP 的地址与访问密钥在补丁的表达式里读本机的文件**（`!!js`，用 `process.getBuiltinModule` 取 `node:fs`）：表达式引用不到插件的代码，找文件的规则在补丁里又写了一遍，`plugins/dsh/__tests__/patch.test.mjs` 拿 `profile.mjs` 写出来的文件核对。改 `profileDir` 的规则要同步改补丁；地址与访问密钥的规整（去空白、去结尾的斜杠、只收可见的 ASCII）也照着 `readProfile` 写了一遍，手改的文件两边读出来要一样。正则里用 `[/]` 不用反斜杠（YAML 的双引号里反斜杠要转义）。表达式里只用单引号（用例按双引号截取）。
+  - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
+  - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。

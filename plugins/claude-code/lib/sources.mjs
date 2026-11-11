@@ -325,6 +325,7 @@ export const UNSUPPORTED_SOURCES = {
   codex:
     'Codex 自带的 Memories 存在它自己的数据库里，格式没有公开，迁不了；它在本地默认是关着的，多半没有内容',
   pi: 'pi 没有自带的长期记忆',
+  dsh: 'DeepSeek Harness 没有自带的长期记忆',
 }
 
 export function sourceNames() {

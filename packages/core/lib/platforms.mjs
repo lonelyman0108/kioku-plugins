@@ -6,6 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { inspectCodex, preflightCodex, setupCodex } from './codex.mjs'
+import { inspectDsh, setupDsh } from './dsh.mjs'
 import { inspectHermes, preflightHermes, readHermesConfig, setupHermes } from './hermes.mjs'
 import { inspectOpenclaw, setupOpenclaw } from './openclaw.mjs'
 import { inspectPi, setupPi } from './pi.mjs'
@@ -115,7 +116,16 @@ const openclaw = {
   inspect: inspectOpenclaw,
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes, openclaw }
+const dsh = {
+  name: 'DeepSeek Harness',
+  runtimeFamily: 'dsh',
+  detect: () => false,
+  readConfig: (env) => readProfile('dsh', env),
+  setup: setupDsh,
+  inspect: inspectDsh,
+}
+
+export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes, openclaw, dsh }
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')

@@ -1,0 +1,17 @@
+# DeepSeek Harness 的补丁：装上 Kioku 的插件（生命周期转发），并挂一个连 Kioku 的 MCP 客户端（读写记忆的工具）。
+# 服务地址与访问密钥在 kioku setup dsh 写下的文件里（<配置目录>/kioku/dsh.json），不写进 profile。
+# 补丁里的表达式引用不到插件的代码，所以下面三处各读一次这个文件，写法要和 lib/profile.mjs 找文件的规则一致
+# （__tests__/patch.test.mjs 核对）；没有这个文件、内容不全或不成样子时 MCP 这一行不启用（地址与访问密钥照 profile.mjs 去掉首尾空白与结尾的斜杠，
+# 带空白、控制字符的不收：放进请求头会出错）。改了文件要重启 dsh 才生效
+- insert:
+    - id: kioku
+      name: ./index.js
+    - id: kioku-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js "((f, p, o) => { try { const j = JSON.parse(f.readFileSync(p.join(process.env.KIOKU_CONFIG_DIR || p.join(process.env.XDG_CONFIG_HOME || p.join(o.homedir(), '.config'), 'kioku'), 'dsh.json'), 'utf8')); const u = String(j.serverUrl ?? '').trim().replace(/[/]+$/, ''), k = String(j.apiKey ?? '').trim(); return /^https?:[/][/][!-~]+$/.test(u) && /^[!-~]+$/.test(k) ? false : true } catch { return true } })(process.getBuiltinModule('node:fs'), process.getBuiltinModule('node:path'), process.getBuiltinModule('node:os'))"
+      config:
+        serverName: kioku
+        transport: streamable-http
+        url: !!js "((f, p, o) => { try { const j = JSON.parse(f.readFileSync(p.join(process.env.KIOKU_CONFIG_DIR || p.join(process.env.XDG_CONFIG_HOME || p.join(o.homedir(), '.config'), 'kioku'), 'dsh.json'), 'utf8')); const u = String(j.serverUrl ?? '').trim().replace(/[/]+$/, ''), k = String(j.apiKey ?? '').trim(); return /^https?:[/][/][!-~]+$/.test(u) && /^[!-~]+$/.test(k) ? u + '/v1/mcp' : '' } catch { return '' } })(process.getBuiltinModule('node:fs'), process.getBuiltinModule('node:path'), process.getBuiltinModule('node:os'))"
+        headers:
+          Authorization: !!js "((f, p, o) => { try { const j = JSON.parse(f.readFileSync(p.join(process.env.KIOKU_CONFIG_DIR || p.join(process.env.XDG_CONFIG_HOME || p.join(o.homedir(), '.config'), 'kioku'), 'dsh.json'), 'utf8')); const u = String(j.serverUrl ?? '').trim().replace(/[/]+$/, ''), k = String(j.apiKey ?? '').trim(); return /^https?:[/][/][!-~]+$/.test(u) && /^[!-~]+$/.test(k) ? 'Bearer ' + k : '' } catch { return '' } })(process.getBuiltinModule('node:fs'), process.getBuiltinModule('node:path'), process.getBuiltinModule('node:os'))"

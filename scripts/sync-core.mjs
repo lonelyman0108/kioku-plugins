@@ -23,6 +23,7 @@ export const TARGETS = [
   'plugins/codex',
   'plugins/pi',
   'plugins/openclaw',
+  'plugins/dsh',
   'packages/cli',
 ]
 
