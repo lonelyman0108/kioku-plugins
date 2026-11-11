@@ -35,6 +35,7 @@ Kioku 的客户端插件：Claude Code 插件（Node 的钩子脚本，vitest �
 - 开 PR：`scripts/pr.sh`（`--no-merge` 只开不合并）
 - 测试：`pnpm test`（Claude Code 插件）；`cd plugins/astrbot_plugin_kioku && uv run pytest`
 - 同步客户端：`scripts/sync-client.sh <Kioku 仓库的路径>`
+- 改版本号：`scripts/bump-version.sh <X.Y.Z>`（发版时用，流程见 CONTRIBUTING.md「发布」）；核对会发出哪些文件：`scripts/ci/publish-npm.sh --dry-run v<X.Y.Z>`
 - 同步共用实现：`node scripts/sync-core.mjs`（`--check` 只比对）
 
 ## 目录与约定

@@ -1,0 +1,39 @@
+# 推送版本 tag（vX.Y.Z）时发布：把 packages/ 下公开的包发到 npm，再建 Release 页面。
+# npm 用受信发布（OIDC）：仓库里不放 npm 令牌，发出的包自带来源证明；npm 那边的设置见 docs/SETUP.md。
+# 判断和命令全部放在 scripts/，这里只做薄壳。
+name: Release
+on:
+  push:
+    tags: ['v*']
+# 同一个 tag 不并发发布；发布到一半不取消
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  release:
+    # 受信发布只认 GitHub 托管的 runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Release 页面
+      contents: write
+      # 向 npm 换一次性的发布凭证
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # 不用依赖缓存：发布的构建不从缓存里取东西
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          registry-url: https://registry.npmjs.org
+      - name: 发布 npm 包
+        run: scripts/ci/publish-npm.sh "$GITHUB_REF_NAME"
+      - name: Release 页面
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/release-page.sh "$GITHUB_REF_NAME"
