@@ -54,3 +54,20 @@ jobs:
       - name: 完整检查
         if: steps.kind.outputs.code == 'true'
         run: scripts/check.sh --full
+
+  # Windows 上只跑 JS 的用例：平台有关的行为（起 .cmd 命令、路径、权限）要在真的 Windows 上核对；
+  # 门禁的其余部分和系统无关，在上面那个 job 里跑过了
+  test-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 测试
+        run: pnpm test

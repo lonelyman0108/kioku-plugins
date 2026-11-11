@@ -4,6 +4,7 @@
 
 import { execFile } from 'node:child_process'
 
+import { findCommand, invocation } from './command.mjs'
 import { KiokuFailure } from './http.mjs'
 import { listTools, removeToolCache, writeToolCache } from './mcp.mjs'
 import { profileFile, readProfile, removeProfile, writeProfile } from './profile.mjs'
@@ -27,12 +28,15 @@ class CommandFailed extends KiokuFailure {
 
 // 调 openclaw 命令。找不到这个命令时返回 null；失败时抛 CommandFailed
 function openclaw(env, args) {
-  const bin = env.KIOKU_OPENCLAW_BIN || 'openclaw'
+  // 自己在 PATH 里找：Windows 上 openclaw 是 npm 装的 .cmd，要经 cmd.exe 起
+  const found = findCommand(env.KIOKU_OPENCLAW_BIN || 'openclaw', env)
+  if (!found) return Promise.resolve(null)
+  const run = invocation(found, args, env)
   return new Promise((resolve, reject) => {
     execFile(
-      bin,
-      args,
-      { env, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+      run.file,
+      run.args,
+      { env, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, ...run.options },
       (err, stdout, stderr) => {
         if (err?.code === 'ENOENT') resolve(null)
         else if (err) reject(new CommandFailed(args, `${stdout ?? ''}\n${stderr ?? ''}`))

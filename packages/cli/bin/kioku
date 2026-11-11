@@ -10,6 +10,16 @@ const load = (name) =>
     },
   )
 
+// 输出被读的一方提前关掉（kioku doctor | head）：安静地结束，不抛一段堆栈。
+// run 不在此列：它要等命令结束、按命令的结果退出，自己处理这种情况
+if (process.argv[2] !== 'run') {
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', (err) => {
+      if (err && err.code === 'EPIPE') process.exit(0)
+    })
+  }
+}
+
 load('kioku.mjs')
   .then((cli) => cli.main(process.argv.slice(2)))
   .then((code) => {

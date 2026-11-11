@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -15,6 +14,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { doctor } from '../doctor.mjs'
+import { fakeCommand } from './fakeCommand.mjs'
 import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
 
@@ -57,11 +57,10 @@ beforeEach(() => {
   mkdirSync(home)
   dotenv = join(home, '.env')
   // 假的 hermes 命令：config set 把值记进一个 JSON 文件，config get 读它
-  const bin = join(dir, 'hermes-bin')
-  writeFileSync(
-    bin,
-    `#!/usr/bin/env node
-const fs = require('node:fs')
+  const bin = fakeCommand(
+    dir,
+    'hermes-bin',
+    `const fs = require('node:fs')
 const file = ${JSON.stringify(join(dir, 'config.json'))}
 const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
 const [group, action, key, value] = process.argv.slice(2)
@@ -73,7 +72,6 @@ if (action === 'set') { data[key] = value; fs.writeFileSync(file, JSON.stringify
 else if (action === 'get') console.log('some banner\\n' + (data[key] ?? ''))
 `,
   )
-  chmodSync(bin, 0o755)
   env = { HERMES_HOME: home, KIOKU_HERMES_BIN: bin, PATH: process.env.PATH }
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))

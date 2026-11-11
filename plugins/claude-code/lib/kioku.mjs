@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
+import { findCommand, invocation } from './command.mjs'
 import { loadConfig } from './config.mjs'
 import { IMPORT_USAGE, importMemories } from './import.mjs'
 import { login, LOGIN_USAGE } from './login.mjs'
@@ -255,7 +256,13 @@ function runCommand(command, args, env, values) {
     let child
     try {
       // 不用 detached：命令留在 kioku 的进程组里，整组被结束时它不会变成带着值的孤儿进程
-      child = spawn(command, args, { env, stdio: ['inherit', 'pipe', 'pipe'] })
+      // Windows 上 npm、pnpm 这类命令是 .cmd，要经 cmd.exe 起；找不到时原样交给系统去报
+      const run = invocation(findCommand(command, env) ?? command, args, env)
+      child = spawn(run.file, run.args, {
+        env,
+        stdio: ['inherit', 'pipe', 'pipe'],
+        ...run.options,
+      })
     } catch (err) {
       process.stderr.write(`kioku：无法启动 ${command}（${errorKind(err)}）\n`)
       resolve(126)

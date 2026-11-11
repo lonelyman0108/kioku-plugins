@@ -8,6 +8,7 @@ import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { findCommand, invocation } from './command.mjs'
 import { readText, safeWrite } from './files.mjs'
 import { keyFormatError, KiokuFailure } from './http.mjs'
 import { serverUrlProblem } from './profile.mjs'
@@ -92,9 +93,11 @@ function withEnv(text, values) {
 
 // 调 hermes 命令。找不到这个命令时返回 null；失败时抛 KiokuFailure（不带输出：里面可能有别的配置）
 function hermes(env, args) {
-  const bin = env.KIOKU_HERMES_BIN || 'hermes'
+  const found = findCommand(env.KIOKU_HERMES_BIN || 'hermes', env)
+  if (!found) return Promise.resolve(null)
+  const run = invocation(found, args, env)
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { env, timeout: 30_000 }, (err, stdout) => {
+    execFile(run.file, run.args, { env, timeout: 30_000, ...run.options }, (err, stdout) => {
       if (err?.code === 'ENOENT') resolve(null)
       else if (err) reject(new KiokuFailure(`hermes ${args.slice(0, 3).join(' ')} 没有成功`))
       else resolve(stdout)
