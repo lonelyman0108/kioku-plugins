@@ -19,6 +19,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { parseRunArgs, UsageError } from '../kioku.mjs'
 
+// 只在 POSIX 上有意义的用例：信号、直接执行带 shebang 的脚本
+const posixOnly = it.skipIf(process.platform === 'win32')
+
 const bin = fileURLToPath(new URL('../../bin/kioku', import.meta.url))
 const KEY = 'kioku_test_key'
 const VALUES = {
@@ -236,7 +239,7 @@ describe('kioku run 的参数', () => {
     }
   })
 
-  it('bin/kioku 可以直接执行', async () => {
+  posixOnly('bin/kioku 可以直接执行', async () => {
     expect(statSync(bin).mode & 0o111).toBe(0o111)
     const result = await new Promise((resolve) => {
       const child = spawn(bin, ['--help'])
@@ -321,7 +324,7 @@ describe('kioku run', () => {
     expect(requests).toHaveLength(1)
   })
 
-  it('退出码与命令相同，命令被信号结束时 kioku 以同一个信号结束', async () => {
+  posixOnly('退出码与命令相同，命令被信号结束时 kioku 以同一个信号结束', async () => {
     const exited = await kioku(['run', '-e', 'X=pg-main#password', ...node('process.exit(3)')])
     expect(exited.code).toBe(3)
     const killed = await kioku([
@@ -336,7 +339,7 @@ describe('kioku run', () => {
     expect(missing.stderr).toContain('找不到命令 kioku-no-such-command')
   })
 
-  it('命令被会转储的信号结束时，kioku 不把它发给自己，退出码为 128 + 信号编号', async () => {
+  posixOnly('命令被会转储的信号结束时，kioku 不把它发给自己，退出码为 128 + 信号编号', async () => {
     const quit = await kioku(['run', '-e', 'X=pg-main#password', '--', 'sh', '-c', 'kill -QUIT $$'])
     expect(quit).toMatchObject({ code: 128 + 3, signal: null })
     const segv = await kioku([
@@ -515,7 +518,7 @@ describe('kioku run', () => {
     expect(result.stdout).not.toContain('收到 SIGINT 2')
   })
 
-  it('没有终端时，只发给 kioku 的 SIGINT 转给命令', async () => {
+  posixOnly('没有终端时，只发给 kioku 的 SIGINT 转给命令', async () => {
     const result = await kioku(
       [
         'run',
@@ -536,25 +539,28 @@ describe('kioku run', () => {
     expect(result).toMatchObject({ code: 6, stdout: '就绪\n收到 SIGINT\n' })
   })
 
-  it('循环里按 Ctrl-C：命令被 SIGINT 结束，kioku 也以 SIGINT 结束，外层 shell 的循环跟着停下', async () => {
-    const loop = [
-      'for i in 1 2 3; do',
-      `  "$NODE" "$KIOKU" run -e X=pg-main#password -- "$NODE" -e "console.log('就绪'); setTimeout(() => {}, 300)"`,
-      '  echo "第 $i 次之后"',
-      'done',
-      'echo 跑完了',
-    ].join('\n')
-    const result = await collect('bash', ['-c', loop], {
-      env: kiokuEnv({ NODE: process.execPath, KIOKU: bin }),
-      group: true,
-      onStdout: (stdout, child) => {
-        if (stdout === '就绪\n') process.kill(-child.pid, 'SIGINT')
-      },
-    })
-    expect(result).toMatchObject({ signal: 'SIGINT', stdout: '就绪\n' })
-  })
+  posixOnly(
+    '循环里按 Ctrl-C：命令被 SIGINT 结束，kioku 也以 SIGINT 结束，外层 shell 的循环跟着停下',
+    async () => {
+      const loop = [
+        'for i in 1 2 3; do',
+        `  "$NODE" "$KIOKU" run -e X=pg-main#password -- "$NODE" -e "console.log('就绪'); setTimeout(() => {}, 300)"`,
+        '  echo "第 $i 次之后"',
+        'done',
+        'echo 跑完了',
+      ].join('\n')
+      const result = await collect('bash', ['-c', loop], {
+        env: kiokuEnv({ NODE: process.execPath, KIOKU: bin }),
+        group: true,
+        onStdout: (stdout, child) => {
+          if (stdout === '就绪\n') process.kill(-child.pid, 'SIGINT')
+        },
+      })
+      expect(result).toMatchObject({ signal: 'SIGINT', stdout: '就绪\n' })
+    },
+  )
 
-  it('收到 SIGTERM 时转给命令', async () => {
+  posixOnly('收到 SIGTERM 时转给命令', async () => {
     const result = await kioku(
       [
         'run',

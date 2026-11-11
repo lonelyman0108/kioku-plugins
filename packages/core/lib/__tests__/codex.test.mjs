@@ -18,6 +18,9 @@ import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
 import { UsageError } from '../usage.mjs'
 
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+
 const KEY = 'kioku_test_key'
 const WHO = {
   app: { id: 'a', slug: 'codex', name: 'Codex', runtimeFamily: 'codex' },
@@ -96,11 +99,11 @@ describe('kioku setup codex', () => {
     expect(result.text).toContain('codex plugin add kioku@kioku')
     expect(result.text).not.toContain(KEY)
     expect(readFileSync(toml, 'utf8')).toBe(`${original}\n${block(base)}`)
-    expect(statSync(toml).mode & 0o777).toBe(0o640)
+    expect(statSync(toml).mode & 0o777).toBe(mode(0o640))
     expect(readFileSync(`${toml}.kioku-backup`, 'utf8')).toBe(original)
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
-    expect(statSync(join(dir, 'kioku')).mode & 0o777).toBe(0o700)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
+    expect(statSync(join(dir, 'kioku')).mode & 0o777).toBe(mode(0o700))
   })
 
   it('没有 config.toml 时新建；再运行一次什么都不改', async () => {

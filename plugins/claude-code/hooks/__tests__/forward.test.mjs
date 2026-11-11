@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -92,7 +92,7 @@ describe('Claude Code 钩子转发', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kioku-hook-'))
     try {
       await run('session.start', { cwd: dir })
-      expect(requests[0].body.project).toEqual({ dirName: dir.split('/').pop() })
+      expect(requests[0].body.project).toEqual({ dirName: basename(dir) })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

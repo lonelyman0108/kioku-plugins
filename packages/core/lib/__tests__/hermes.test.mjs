@@ -18,6 +18,9 @@ import { fakeCommand } from './fakeCommand.mjs'
 import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
 
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+
 const KEY = 'kioku_test_key'
 const WHO = {
   app: { id: 'a', slug: 'hermes', name: 'Hermes', runtimeFamily: 'hermes' },
@@ -99,7 +102,7 @@ describe('kioku setup hermes', () => {
     expect(readFileSync(dotenv, 'utf8')).toBe(
       `# 别的密钥\nOPENROUTER_API_KEY=sk-other\nKIOKU_SERVER_URL=${base}\nKIOKU_API_KEY=${KEY}\n`,
     )
-    expect(statSync(dotenv).mode & 0o777).toBe(0o600)
+    expect(statSync(dotenv).mode & 0o777).toBe(mode(0o600))
     // .env 里都是密钥，不留备份
     expect(readdirSync(home)).toEqual(['.env'])
     expect(settings()).toEqual({
@@ -117,7 +120,7 @@ describe('kioku setup hermes', () => {
 
   it('没有 .env 时新建，只给本人读写；换访问密钥时换掉原来的那一行；再运行一次不用改', async () => {
     await run(setup, ['hermes', '--server-url', base])
-    expect(statSync(dotenv).mode & 0o777).toBe(0o600)
+    expect(statSync(dotenv).mode & 0o777).toBe(mode(0o600))
     writeFileSync(dotenv, `export KIOKU_API_KEY="old_key"\nA=1\nKIOKU_SERVER_URL='${base}'\n`)
     await run(setup, ['hermes'], { key: 'new_key' })
     expect(readFileSync(dotenv, 'utf8')).toBe(

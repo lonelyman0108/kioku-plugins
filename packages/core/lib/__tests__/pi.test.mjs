@@ -16,6 +16,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { doctor } from '../doctor.mjs'
 import { setup } from '../setup.mjs'
 
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+
 const KEY = 'kioku_test_key'
 const WHO = {
   app: { id: 'a', slug: 'pi', name: 'pi', runtimeFamily: 'pi' },
@@ -77,7 +80,7 @@ describe('kioku setup pi', () => {
     expect(result.text).toContain('pi install git:github.com/lonelyman0108/kioku-plugins')
     expect(result.text).not.toContain(KEY)
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
     expect(readdirSync(join(dir, 'pi'))).toEqual([])
     // 再运行一次：不用改；已经装了扩展时不再提示
     writeFileSync(

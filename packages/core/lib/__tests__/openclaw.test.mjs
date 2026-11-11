@@ -9,6 +9,9 @@ import { doctor } from '../doctor.mjs'
 import { fakeCommand } from './fakeCommand.mjs'
 import { setup } from '../setup.mjs'
 
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+
 const KEY = 'kioku_test_key'
 const WHO = {
   app: { id: 'a', slug: 'openclaw', name: 'OpenClaw', runtimeFamily: 'openclaw' },
@@ -116,7 +119,7 @@ describe('kioku setup openclaw', () => {
     expect(result.code).toBe(0)
     expect(requests).toEqual(['/v1/whoami', '/v1/mcp'])
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
     expect(JSON.parse(readFileSync(cache(), 'utf8'))).toMatchObject({ url: base, tools: TOOLS })
     expect(settings()).toEqual({ [ACCESS]: true, [SLOT]: 'kioku' })
     expect(result.text).toContain('OpenClaw 已配好，重启网关')

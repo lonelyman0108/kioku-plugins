@@ -11,6 +11,9 @@ import { importMemories } from '../import.mjs'
 import { claudeProjectName, frontmatter, sections, segment, titleOf } from '../sources.mjs'
 import { UsageError } from '../usage.mjs'
 
+// 只在 POSIX 上能做的用例：Windows 的文件名里放不了控制字符
+const posixOnly = it.skipIf(process.platform === 'win32')
+
 const KEY = 'kioku_test_key'
 
 // 假的 Kioku：whoami 与按坐标读、新建、修改记忆。store 是库里现有的记忆，rejects 是写入时要拒绝的坐标
@@ -443,7 +446,7 @@ describe('kioku import：读文件与写入的边界', () => {
     }
   })
 
-  it('路径里的控制字符不原样打印', async () => {
+  posixOnly('路径里的控制字符不原样打印', async () => {
     file(
       'claude/projects/-x-code-kioku/memory/a\n新建  伪造的一行.md',
       '---\nname: weird\nmetadata:\n  type: user\n---\n正文',

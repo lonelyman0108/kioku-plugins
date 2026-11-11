@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -124,7 +124,7 @@ describe('pi 扩展', () => {
     expect(bodyOf('session.start')).toEqual({
       event: 'session.start',
       sessionId: 's1',
-      project: { dirName: dir.split('/').pop() },
+      project: { dirName: basename(dir) },
     })
     expect(bodyOf('prompt.submit')).toEqual({
       event: 'prompt.submit',

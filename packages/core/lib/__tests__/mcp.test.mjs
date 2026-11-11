@@ -17,6 +17,9 @@ import {
   writeToolCache,
 } from '../mcp.mjs'
 
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+
 const KEY = 'kioku_test_key'
 let server
 let base
@@ -160,7 +163,7 @@ describe('本机留的工具清单', () => {
     expect(await writeToolCache('openclaw', { url: base, tools, at: 123 }, env)).toBe(true)
     const file = toolCacheFile('openclaw', env)
     expect(file).toBe(join(dir, 'kioku', 'openclaw-tools.json'))
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(statSync(file).mode & 0o777).toBe(mode(0o600))
     expect(readToolCacheSync('openclaw', env)).toEqual({ url: base, at: 123, tools })
     await removeToolCache('openclaw', env)
     expect(readToolCacheSync('openclaw', env)).toBeNull()
