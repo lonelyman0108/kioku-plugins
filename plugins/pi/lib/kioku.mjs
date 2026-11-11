@@ -8,6 +8,7 @@ import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
 import { loadConfig } from './config.mjs'
+import { IMPORT_USAGE, importMemories } from './import.mjs'
 import { login, LOGIN_USAGE } from './login.mjs'
 import { doctor, DOCTOR_USAGE } from './doctor.mjs'
 import { errorKind, fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
@@ -360,6 +361,7 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
   login   用浏览器授权签发访问密钥并配好这个平台
   setup   停用平台自带的长期记忆，由 Kioku 接管
   doctor  检查地址、访问密钥与平台的配置
+  import  把平台自带的本地长期记忆迁进 Kioku
 
 各子命令的说明：kioku <子命令> --help
 `
@@ -395,6 +397,7 @@ export async function main(argv) {
   if (sub === 'login') return guarded('login', LOGIN_USAGE, login, rest)
   if (sub === 'setup') return guarded('setup', SETUP_USAGE, setup, rest)
   if (sub === 'doctor') return guarded('doctor', DOCTOR_USAGE, doctor, rest)
+  if (sub === 'import') return guarded('import', IMPORT_USAGE, importMemories, rest)
   process.stderr.write(sub === undefined ? OVERVIEW : `kioku：不认识的子命令 ${sub}\n\n${OVERVIEW}`)
   return 2
 }

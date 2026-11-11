@@ -17,6 +17,7 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 | `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、pi 再写下服务地址与访问密钥，Codex 还配好 MCP 服务 |
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好这个平台，不用手动复制 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
+| `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
 每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`、`pi`。
@@ -76,6 +77,32 @@ kioku doctor claude-code
 ```
 
 每项一行：`✓` 正常，`!` 要留意，`✗` 有问题（这时退出码为 1）。查的是：地址连不连得上、访问密钥是否有效、它属于哪个应用、能读写哪些归属、最高敏感级与凭据能力，以及平台这一边插件是否启用、自带的长期记忆是否已停用。不写平台时按当前所在的会话认。
+
+## import
+
+```bash
+kioku import --from claude-code --dry-run   # 只看计划
+kioku import --from claude-code             # 列出计划，确认后写入
+```
+
+先读本地的记忆文件，列出每条会放到哪个坐标、Kioku 里有没有，确认之后才写。本地的文件不删、不改。
+
+| 来源 | 读什么 | 放到哪 |
+|---|---|---|
+| `claude-code` | `~/.claude/projects/*/memory/*.md`（`MEMORY.md` 是索引，不读） | 按文件头里的类型：`user` → `user://about/<名字>`；`project` → `user://projects/<项目>/<名字>`；`reference` → `user://reference/<项目>/<名字>`；`feedback` → `app://<应用>/feedback/<项目>/<名字>` |
+| `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` → `app://<应用>/notes/…`；`USER.md` → `user://about/hermes/…` |
+| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记 | 同上，按日期的笔记 → `app://<应用>/journal/<日期>` |
+
+- `<应用>` 是访问密钥所属的应用的标识。偏「这个 agent 该怎么干活」的放在应用下，别的 agent 用不上；关于用户本人和项目的放在本人下，各个 agent 都读得到。
+- Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。这两个来源的格式还没有在真实的安装上核对过。
+- 标题与触发场景取文件头里的说明。写进去的记忆优先级是默认的，不进启动加载；要进的在管理界面里改。
+- **重复运行不重复写**：坐标由来源决定，已经有、内容一样的跳过；已经有、内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才覆盖。
+- **疑似明文凭据的不写**：列出是哪个文件、正文第几行、哪一类，不带值。先把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次。
+- 正文超过 2 万字的、没有内容的、名字规整之后和别的一条撞了的不迁，列出原因。
+- 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
+- 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
+
+迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
 
 ## 地址与访问密钥
 
