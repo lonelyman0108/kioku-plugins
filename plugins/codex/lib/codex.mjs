@@ -215,12 +215,13 @@ export async function setupCodex(options, io) {
   const text = await readText(file)
   const found = scanConfig(text)
 
+  const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, io)
+  // 地址与访问密钥都定下来之后、写文件之前再看这个
   if (found.unsupported) {
     throw new KiokuFailure(
       `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务，没有改动它：删掉那个定义后重新运行`,
     )
   }
-  const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, io)
 
   const before = blockValues(found)
   const sameBlock = Boolean(before && key && before.url === url && before.key === key)

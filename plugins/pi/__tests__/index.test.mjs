@@ -49,6 +49,7 @@ beforeEach(() => {
   requests = []
   reply = contexts
   logs = []
+  clock = 1_000_000
   dir = mkdtempSync(join(tmpdir(), 'kioku-pi-'))
   mkdirSync(join(dir, 'kioku'))
   env = { KIOKU_CONFIG_DIR: join(dir, 'kioku') }
@@ -64,7 +65,8 @@ function profile(value) {
 }
 
 // 假的 pi：记下注册的处理函数与 MCP 服务，emit 像 pi 那样调它们
-async function start({ hasUI = true, sessionId = 's1' } = {}) {
+let clock
+async function start({ hasUI = true, sessionId = 's1', signal } = {}) {
   const handlers = {}
   const pi = {
     servers: {},
@@ -76,15 +78,17 @@ async function start({ hasUI = true, sessionId = 's1' } = {}) {
     hasUI,
     cwd: dir,
     ui: { notify: (text, level) => notices.push([level, text]) },
+    signal,
     sessionManager: { getSessionId: () => sessionId },
   }
-  await createKioku(pi, { env, log: (text) => logs.push(text) }).load()
+  await createKioku(pi, { env, stderr: (text) => logs.push(text), now: () => clock }).load()
   const emit = (name, event = {}) => handlers[name]?.(event, ctx)
   return { pi, emit, notices }
 }
 const user = (prompt) => ({ messageType: 'user', prompt })
 const assistant = (...texts) => ({
   role: 'assistant',
+  stopReason: 'stop',
   content: [
     { type: 'thinking', thinking: '想' },
     ...texts.map((text) => ({ type: 'text', text })),
@@ -196,20 +200,119 @@ describe('pi 扩展', () => {
     expect(events()).toEqual(['session.start'])
   })
 
-  it('启动加载没取到时下一次输入再试；召回失败不影响这一轮结束时上报', async () => {
-    const { emit } = await start()
+  it('请求失败：有界面时只提示一次、不写标准错误，一分钟内的输入不再等；之后再试，启动加载补上', async () => {
+    const { emit, notices } = await start()
     await emit('session_start')
     reply = (event) => (event === 'turn.end' ? contexts(event) : { status: 500 })
     expect(await emit('before_agent_start', user('问'))).toBeUndefined()
-    expect(logs.join('\n')).toContain('HTTP 500')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toEqual(['info', expect.stringContaining('HTTP 500')])
+    expect(logs).toEqual([])
+    // 召回失败不影响这一轮结束时上报
     await emit('agent_end', { messages: [assistant('答')] })
     await emit('agent_settled', {})
     await emit('session_shutdown', {})
     expect(bodyOf('turn.end')).toMatchObject({ user: '问', reply: '答' })
+
+    // 一分钟内：不发请求，直接放行
     reply = contexts
     requests = []
-    const retried = await emit('before_agent_start', user('再问'))
+    clock += 59_000
+    expect(await emit('before_agent_start', user('再问'))).toBeUndefined()
+    expect(requests).toHaveLength(0)
+    // 这一轮照样上报
+    await emit('agent_end', { messages: [assistant('再答')] })
+    await emit('agent_settled', {})
+    await emit('session_shutdown', {})
+    expect(events()).toEqual(['turn.end'])
+
+    // 过了一分钟：再试，启动加载补上
+    requests = []
+    clock += 2_000
+    const retried = await emit('before_agent_start', user('三问'))
     expect(retried.message.content).toBe('<session.start>\n\n<prompt.submit>')
+    // 同一个原因不提示第二遍
+    reply = () => ({ status: 500 })
+    await emit('before_agent_start', user('四问'))
+    expect(notices).toHaveLength(1)
+  })
+
+  it('没有界面时失败原因写到标准错误', async () => {
+    const { emit } = await start({ hasUI: false })
+    await emit('session_start')
+    reply = () => ({ status: 500 })
+    await emit('before_agent_start', user('问'))
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain('HTTP 500')
+  })
+
+  it('用户取消这次输入时请求跟着取消，不算失败、不提示、不进入等待期', async () => {
+    const controller = new AbortController()
+    const { emit, notices } = await start({ signal: controller.signal })
+    await emit('session_start')
+    let release
+    reply = (event) => ({ ...contexts(event), wait: new Promise((resolve) => (release = resolve)) })
+    const waiting = emit('before_agent_start', user('问'))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    controller.abort()
+    expect(await waiting).toBeUndefined()
+    release()
+    expect(notices).toEqual([])
+    // 下一次输入照常发请求
+    reply = contexts
+    requests = []
+    const fresh = await start()
+    await fresh.emit('session_start')
+    expect((await fresh.emit('before_agent_start', user('问'))).message.content).toContain(
+      '<prompt.submit>',
+    )
+  })
+
+  it('运行中排进来的输入一起上报：用户消息从各段运行里取', async () => {
+    const { emit } = await start()
+    await emit('session_start')
+    await emit('before_agent_start', user('第一问'))
+    await emit('agent_end', {
+      messages: [{ role: 'user', content: '第一问' }, assistant('答一')],
+    })
+    await emit('agent_end', {
+      messages: [{ role: 'user', content: [{ type: 'text', text: '第二问' }] }, assistant('答二')],
+    })
+    await emit('agent_settled', {})
+    await emit('session_shutdown', {})
+    expect(bodyOf('turn.end')).toMatchObject({ user: '第一问\n第二问', reply: '答一\n答二' })
+  })
+
+  it('被中止的、没有回复的一轮不上报；出错、被中止的那段文字不算回复', async () => {
+    const { emit } = await start()
+    await emit('session_start')
+    await emit('before_agent_start', user('问'))
+    await emit('agent_end', { messages: [assistant('半截')] })
+    await emit('agent_settled', { aborted: true })
+    await emit('before_agent_start', user('问'))
+    await emit('agent_settled', {})
+    await emit('before_agent_start', user('问'))
+    await emit('agent_end', { messages: [{ ...assistant('出错前的半句'), stopReason: 'error' }] })
+    await emit('agent_end', {
+      messages: [{ ...assistant('被打断'), stopReason: 'aborted' }, assistant('完整的回答')],
+    })
+    await emit('agent_settled', {})
+    await emit('session_shutdown', {})
+    expect(requests.filter((r) => r.body.event === 'turn.end').map((r) => r.body.reply)).toEqual([
+      '完整的回答',
+    ])
+  })
+
+  it('上一轮没等到结束时，扩展发起的运行不接到它头上', async () => {
+    const { emit } = await start()
+    await emit('session_start')
+    await emit('before_agent_start', user('旧的输入'))
+    // 没有 agent_settled，接着是别的扩展发起的运行
+    await emit('before_agent_start', { messageType: 'custom', message: {} })
+    await emit('agent_end', { messages: [assistant('给扩展的回答')] })
+    await emit('agent_settled', {})
+    await emit('session_shutdown', {})
+    expect(bodyOf('turn.end')).toBeUndefined()
   })
 
   it('服务端没有要注入的内容时不加消息', async () => {
@@ -236,13 +339,14 @@ describe('pi 扩展', () => {
     expect(requests).toHaveLength(0)
   })
 
-  it('配置写错（文件读不懂、访问密钥格式不对）：提示里不带访问密钥；没有界面时写到日志', async () => {
+  it('配置写错（文件读不懂、访问密钥格式不对）：提示里不带访问密钥；没有界面时写到标准错误', async () => {
     profile({ serverUrl: base, apiKey: 'bad key' })
     const ui = await start()
     await ui.emit('session_start')
     expect(ui.notices[0][1]).toContain('格式不对')
     expect(ui.notices[0][1]).not.toContain('bad key')
     expect(ui.pi.servers).toEqual({})
+    expect(logs).toEqual([])
 
     profile('{ 坏的')
     const headless = await start({ hasUI: false })
@@ -252,15 +356,40 @@ describe('pi 扩展', () => {
     expect(requests).toHaveLength(0)
   })
 
-  it('服务地址返回跳转：不跟着走，下一次会话开始时提示改地址，不带访问密钥', async () => {
+  it('服务地址返回跳转：不跟着走，当场提示改地址，不带访问密钥', async () => {
     const { emit, notices } = await start()
     await emit('session_start')
     expect(notices).toEqual([])
     reply = () => ({ status: 302, headers: { location: 'https://kioku.example.com/v1/x' } })
     expect(await emit('before_agent_start', user('问'))).toBeUndefined()
-    await emit('session_start', { reason: 'new' })
+    expect(notices).toHaveLength(1)
+    expect(notices[0][0]).toBe('warning')
     expect(notices[0][1]).toContain('https://kioku.example.com')
+    expect(notices[0][1]).toContain('kioku setup pi')
     expect(notices[0][1] + logs.join('\n')).not.toContain(KEY)
+  })
+
+  it('MCP 服务注册不上时照常召回与上报，会话开始时提示', async () => {
+    const handlers = {}
+    const pi = {
+      on: (name, handler) => (handlers[name] = handler),
+      registerMcpServer: () => {
+        throw new Error(`名字被占用 ${KEY}`)
+      },
+    }
+    const notices = []
+    const ctx = {
+      hasUI: true,
+      cwd: dir,
+      ui: { notify: (text) => notices.push(text) },
+      sessionManager: { getSessionId: () => 's1' },
+    }
+    await createKioku(pi, { env, now: () => clock }).load()
+    await handlers.session_start({}, ctx)
+    expect(notices.join('')).toContain('MCP 服务没有注册上')
+    expect(notices.join('')).not.toContain(KEY)
+    const first = await handlers.before_agent_start(user('问'), ctx)
+    expect(first.message.content).toContain('<prompt.submit>')
   })
 
   it('过长的输入与回复按上限截断；没有会话标识时不上报', async () => {

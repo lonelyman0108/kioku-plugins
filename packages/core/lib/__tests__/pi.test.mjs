@@ -123,6 +123,23 @@ describe('kioku doctor pi', () => {
     expect(result.text).not.toMatch(/^[!✗]/m)
   })
 
+  it('只装在项目里的扩展认得出；项目的 mcp.json 里有同名的服务也提醒', async () => {
+    await run(setup, ['pi', '--server-url', base])
+    mkdirSync(join(dir, '.pi'))
+    writeFileSync(
+      join(dir, '.pi', 'settings.json'),
+      JSON.stringify({ packages: ['git:github.com/lonelyman0108/kioku-plugins'] }),
+    )
+    const clean = await run(doctor, ['pi'])
+    expect(clean.text).toContain('✓ pi 里装了 kioku 的扩展')
+    expect(clean.text).toContain('✓ MCP 服务由扩展在会话开始时注册')
+    writeFileSync(join(dir, '.pi', 'mcp.json'), JSON.stringify({ mcpServers: { kioku: {} } }))
+    const shadowed = await run(doctor, ['pi'])
+    expect(shadowed.text).toContain(
+      `! ${join(dir, '.pi', 'mcp.json')} 里有一个叫 kioku 的 MCP 服务`,
+    )
+  })
+
   it('没配、没装、mcp.json 里有同名的服务时分别提醒', async () => {
     writeFileSync(
       join(dir, 'pi', 'mcp.json'),

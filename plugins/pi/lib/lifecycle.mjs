@@ -3,7 +3,7 @@
 // 报错和 kioku 命令一样不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别，
 // 也不跟着跳转走，访问密钥只发给配置的地址
 
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { basename } from 'node:path'
 
 import { fetchFailure, isRedirect, keyFormatError, KiokuFailure, redirectError } from './http.mjs'
@@ -62,6 +62,25 @@ export function projectOf(cwd) {
   return project
 }
 
+// 同上，不堵住事件循环：给在宿主进程里跑的扩展用（同步的那个会让宿主的界面停住）
+export function projectOfAsync(cwd) {
+  const project = {}
+  const dirName = basename(cwd)
+  if (dirName) project.dirName = dirName.slice(0, MAX_NAME)
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', cwd, 'remote', 'get-url', 'origin'],
+      { encoding: 'utf8', timeout: 1500 },
+      (err, stdout) => {
+        const repoName = err ? undefined : /([^/:]+?)(?:\.git)?$/.exec(stdout.trim())?.[1]
+        if (repoName) project.repoName = repoName.slice(0, MAX_NAME)
+        resolve(project)
+      },
+    )
+  })
+}
+
 // 服务端要注入的上下文文本；没有时为 undefined。只取文本，输出里的其他字段一律不用：
 // 记忆服务能决定注入什么内容，但不能挡住用户的输入或改变会话
 export function contextOf(hostOutput) {
@@ -73,8 +92,8 @@ export function contextOf(hostOutput) {
   return undefined
 }
 
-// 把一个生命周期事件交给服务端；连不上、超时、跳转与非 2xx 都以 KiokuFailure 抛出
-export async function postEvent(base, key, body, timeout) {
+// 把一个生命周期事件交给服务端；连不上、超时、取消、跳转与非 2xx 都以 KiokuFailure 抛出
+export async function postEvent(base, key, body, timeout, signal) {
   let res
   try {
     res = await fetch(`${base}/v1/lifecycle/event`, {
@@ -82,9 +101,13 @@ export async function postEvent(base, key, body, timeout) {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeout),
+      // 宿主给了中止信号时（用户取消了这次输入）一起听
+      signal: signal
+        ? AbortSignal.any([AbortSignal.timeout(timeout), signal])
+        : AbortSignal.timeout(timeout),
     })
   } catch (err) {
+    if (signal?.aborted) throw new KiokuFailure('已取消')
     throw new KiokuFailure(fetchFailure(err, timeout))
   }
   if (isRedirect(res.status)) {
