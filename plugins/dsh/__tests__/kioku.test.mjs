@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -260,7 +260,7 @@ describe('DeepSeek Harness 插件：输入前', () => {
     const agent = agentOf({ cwd: dir })
     kioku.created({ agent, source: 'startup' })
     await kioku.preStep(step(agent, [userMessage('甲')]), enter([]))
-    expect(bodyOf('session.start').project).toMatchObject({ dirName: dir.split('/').at(-1) })
+    expect(bodyOf('session.start').project).toMatchObject({ dirName: basename(dir) })
   })
 
   it('服务端出错：输入照常过去，日志里说一次，一分钟之内不再发请求；启动加载留到之后再取', async () => {

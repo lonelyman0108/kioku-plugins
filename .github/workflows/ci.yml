@@ -69,5 +69,6 @@ jobs:
           cache: pnpm
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
+      # 一个包挂了也把别的包跑完：一次看全在 Windows 上不对的地方
       - name: 测试
-        run: pnpm test
+        run: pnpm -r --no-bail test
