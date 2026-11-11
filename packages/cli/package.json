@@ -1,0 +1,30 @@
+{
+  "name": "@kioku-memory/cli",
+  "version": "0.1.0",
+  "description": "Kioku 的命令行：把凭据交给命令（kioku run）、停用各平台自带的长期记忆（kioku setup）、检查配置（kioku doctor）",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/lonelyman0108/kioku-plugins/tree/main/packages/cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lonelyman0108/kioku-plugins.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "kioku",
+    "memory",
+    "agent"
+  ],
+  "bin": {
+    "kioku": "bin/kioku"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -4,18 +4,14 @@
 // 所以这两处只取错误类别
 
 import { spawn } from 'node:child_process'
-import { readFile, utimes } from 'node:fs/promises'
 import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
-import {
-  errorKind,
-  fetchFailure,
-  isRedirect,
-  keyFormatError,
-  KiokuFailure,
-  redirectError,
-} from './http.mjs'
+import { loadConfig } from './config.mjs'
+import { doctor, DOCTOR_USAGE } from './doctor.mjs'
+import { errorKind, fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
+import { setup, SETUP_USAGE } from './setup.mjs'
+import { UsageError } from './usage.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
 
 // 等 Kioku 取值的上限（毫秒）
@@ -74,11 +70,7 @@ export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [-
 地址与访问密钥：Claude Code 插件在会话开始时配好；在别处用时设置 KIOKU_SERVER_URL 与 KIOKU_API_KEY。
 `
 
-const NOT_CONFIGURED =
-  '缺少 Kioku 的地址或访问密钥：在 Claude Code 里启用 kioku 插件、填好配置后新开会话，或者设置 KIOKU_SERVER_URL 与 KIOKU_API_KEY'
-
-// 参数写错：打印说明后以 2 退出
-export class UsageError extends Error {}
+export { UsageError }
 
 // 解析 kioku run 的参数。要看说明时返回 { help: true }；否则返回 refs（要取的标识与字段，同一对只取一次）、
 // variables（[变量名, 值在 refs 里的下标]）、purpose、command 与 args
@@ -142,46 +134,6 @@ function parsePurpose(value) {
   if (text.length > MAX_PURPOSE) throw new UsageError(`--purpose 最多 ${MAX_PURPOSE} 个字`)
   if (CONTROL.test(text)) throw new UsageError('--purpose 不能有换行等控制字符')
   return text || undefined
-}
-
-// 地址与访问密钥。访问密钥先读插件在会话开始时配好的 KIOKU_API_KEY_FILE，读不到再用 KIOKU_API_KEY；
-// 两样都没有才报错，报错只写文件的位置与错误类别
-async function loadConfig(env) {
-  const url = (env.KIOKU_SERVER_URL ?? '').trim().replace(/\/+$/, '')
-  const file = env.KIOKU_API_KEY_FILE
-  let key = ''
-  let fileProblem
-  if (file) {
-    try {
-      key = (await readFile(file, 'utf8')).trim()
-      if (!key) fileProblem = '文件是空的'
-    } catch (err) {
-      fileProblem = errorKind(err)
-    }
-    // 用的时候更新修改时间：会话开始时会删掉很久没用过的访问密钥文件
-    if (key) await utimes(file, new Date(), new Date()).catch(() => {})
-  }
-  if (!key) key = (env.KIOKU_API_KEY ?? '').trim()
-  if (!url) throw new KiokuFailure(NOT_CONFIGURED)
-  if (!key) {
-    throw new KiokuFailure(
-      fileProblem
-        ? `无法读取访问密钥文件 ${file}（${fileProblem}）：新开会话，或者设置 KIOKU_API_KEY`
-        : NOT_CONFIGURED,
-    )
-  }
-  let protocol
-  try {
-    protocol = new URL(url).protocol
-  } catch {
-    throw new KiokuFailure('KIOKU_SERVER_URL 不是有效的地址')
-  }
-  if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new KiokuFailure('KIOKU_SERVER_URL 要以 http:// 或 https:// 开头')
-  }
-  const problem = keyFormatError(key)
-  if (problem) throw new KiokuFailure(problem)
-  return { url, key }
 }
 
 // 服务端的错误文字原样给出，只去掉控制字符；万一带着访问密钥也盖掉
@@ -401,13 +353,45 @@ async function run(argv) {
 }
 
 // 入口：返回退出码
+const OVERVIEW = `用法：kioku <子命令> [参数…]
+
+  run     向 Kioku 取凭据的值，放进环境变量交给命令
+  setup   停用平台自带的长期记忆，由 Kioku 接管
+  doctor  检查地址、访问密钥与平台的配置
+
+各子命令的说明：kioku <子命令> --help
+`
+
+// 说明类的子命令：参数写错时打印原因与说明，以 2 退出；别的失败原因写到标准错误
+async function guarded(name, usage, fn, argv) {
+  if (argv.includes('-h') || argv.includes('--help')) {
+    process.stdout.write(usage)
+    return 0
+  }
+  try {
+    return await fn(argv)
+  } catch (err) {
+    if (err instanceof UsageError) {
+      process.stderr.write(`kioku ${name}：${err.message}\n\n${usage}`)
+      return 2
+    }
+    if (err instanceof KiokuFailure) {
+      process.stderr.write(`kioku ${name}：${err.message}\n`)
+      return 2
+    }
+    throw err
+  }
+}
+
 export async function main(argv) {
   const [sub, ...rest] = argv
   if (sub === '-h' || sub === '--help') {
-    process.stdout.write(USAGE)
+    process.stdout.write(OVERVIEW)
     return 0
   }
   if (sub === 'run') return run(rest)
-  process.stderr.write(sub === undefined ? USAGE : `kioku：不认识的子命令 ${sub}\n\n${USAGE}`)
+  if (sub === 'setup') return guarded('setup', SETUP_USAGE, setup, rest)
+  if (sub === 'doctor') return guarded('doctor', DOCTOR_USAGE, doctor, rest)
+  process.stderr.write(sub === undefined ? OVERVIEW : `kioku：不认识的子命令 ${sub}\n\n${OVERVIEW}`)
   return 2
 }
