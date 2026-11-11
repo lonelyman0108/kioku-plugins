@@ -18,9 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { parseRunArgs, UsageError } from '../kioku.mjs'
-
-// 只在 POSIX 上有意义的用例：信号、直接执行带 shebang 的脚本
-const posixOnly = it.skipIf(process.platform === 'win32')
+import { posixOnly } from './fakeCommand.mjs'
 
 const bin = fileURLToPath(new URL('../../bin/kioku', import.meta.url))
 const KEY = 'kioku_test_key'

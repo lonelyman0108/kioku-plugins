@@ -113,10 +113,15 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
 - 跨系统（CI 里 `test-windows` 在真的 Windows 上跑 JS 的用例；五个平台在 Linux 容器里各实测过一遍）：
-  - **起外部命令一律经 `command.mjs`**（`findCommand` 找、`invocation` 算怎么起）：Windows 上 npm 装的命令是 `.cmd`，直接 `execFile`、`spawn` 起不来，经 `cmd.exe` 时参数要转义（规则改写自 cross-spawn，登记在 `NOTICE`）。「没有这个命令」靠自己在 PATH 里找不到来判断，不靠 `ENOENT`：经 `cmd.exe` 起的时候找不到只是退出码 1。
-  - 用例里的假命令用 `__tests__/fakeCommand.mjs` 造（Windows 上是 `.cmd` 加一个 `.js`），不手写 shebang 加 `chmod`。
-  - 用例不按 `/` 切路径（用 `basename`、`join`、`sep`）；权限位的断言经 `mode(0o600)`（Windows 上文件一律是 666）；只在 POSIX 上有意义的（信号、直接执行带 shebang 的脚本、文件名里的控制字符、靠目录权限让写入失败）用 `posixOnly`，在 Windows 上跳过。
-  - `bin/kioku` 在输出被提前关掉（`| head`）时安静地结束；`run` 除外，它自己等命令结束、按命令的结果退出。
+  - **起 npm 装的那类命令（`openclaw`、`hermes`、`kioku run` 要跑的命令）经 `command.mjs`**（`launch` 算怎么起，`capture` 跑到结束并收输出，`killTree` 结束）：Windows 上它们是 `.cmd`，直接 `execFile`、`spawn` 起不来，经 `cmd.exe` 时参数要转义（规则改写自 cross-spawn，登记在 `NOTICE`）。`git`、`rundll32` 这类本来就是 `.exe` 的照旧直接起。要守住的几条：
+    - 只在 Windows 上介入，别的系统原样交给系统（自己在 PATH 里找的话，会选中前面目录里不能执行的同名文件）。
+    - 名字没写扩展名时不找原样的名字：npm 在 `.cmd` 旁边放着一个同名、没有扩展名的 sh 脚本。
+    - 隔着 `cmd.exe` 时结束命令要连它下面的进程一起（`taskkill /T`）：只结束 `cmd.exe` 的话真正的命令还活着、还占着输出的管道，`kioku run` 会留下带着值的进程，`kioku setup` 会一直等。
+    - 参数里有换行就不起（`cmd.exe` 把换行之后的悄悄丢掉）。环境变量名不分大小写，同名的取排序后的第一个，和 Node 交给子进程的一致。
+    - Windows 上「没有这个命令」靠自己在 PATH 里找不到来判断，不靠 `ENOENT`。
+  - 用例里的假命令用 `__tests__/fakeCommand.mjs` 的 `fakeCommand` 造（Windows 上照 npm 放 `.cmd`、脚本与一个无扩展名的 sh 脚本），不手写 shebang 加 `chmod`。
+  - 用例不按 `/` 切路径（用 `basename`、`join`、`sep`）；权限位的断言经 `mode(0o600)`（Windows 上文件一律是 666）；只在 POSIX 上有意义的（信号、直接执行带 shebang 的脚本、文件名里的控制字符、靠目录权限让写入失败）用 `posixOnly`，在 Windows 上跳过。这两个也从 `fakeCommand.mjs` 导出；插件目录里的用例引用不到，各留了一份 `mode`。
+  - `bin/kioku` 在输出被提前关掉（`| head`）时不抛堆栈，但不提前退出：手上的事做完、按它的结果退出（中途以 0 退出的话，写了一半的导入会被当成成功）。`run` 自己处理这种情况。
   - 本机起 Linux 容器实测：非交互的会话里 docker 会去找钥匙串，换 `DOCKER_CONFIG` 还不够，要把 `docker-credential-osxkeychain` 所在的目录也从 PATH 里去掉；容器里用普通用户跑，经 `host.docker.internal` 连本机的 Kioku（转发要听 `0.0.0.0`）。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。

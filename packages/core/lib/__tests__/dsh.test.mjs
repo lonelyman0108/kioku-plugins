@@ -15,9 +15,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { doctor } from '../doctor.mjs'
 import { setup } from '../setup.mjs'
-
-// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
-const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+import { mode } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {

@@ -2,9 +2,7 @@
 // 插件读本机文件里的服务地址与访问密钥（不放进 OpenClaw 的配置：那份配置会被 openclaw config get 打印出来）；
 // OpenClaw 自己的两项（记忆槽位、允许插件读对话）交给它的 openclaw config set 去改，不自己动它的配置文件
 
-import { execFile } from 'node:child_process'
-
-import { findCommand, invocation } from './command.mjs'
+import { capture } from './command.mjs'
 import { KiokuFailure } from './http.mjs'
 import { listTools, removeToolCache, writeToolCache } from './mcp.mjs'
 import { profileFile, readProfile, removeProfile, writeProfile } from './profile.mjs'
@@ -26,24 +24,14 @@ class CommandFailed extends KiokuFailure {
   }
 }
 
-// 调 openclaw 命令。找不到这个命令时返回 null；失败时抛 CommandFailed
-function openclaw(env, args) {
-  // 自己在 PATH 里找：Windows 上 openclaw 是 npm 装的 .cmd，要经 cmd.exe 起
-  const found = findCommand(env.KIOKU_OPENCLAW_BIN || 'openclaw', env)
-  if (!found) return Promise.resolve(null)
-  const run = invocation(found, args, env)
-  return new Promise((resolve, reject) => {
-    execFile(
-      run.file,
-      run.args,
-      { env, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, ...run.options },
-      (err, stdout, stderr) => {
-        if (err?.code === 'ENOENT') resolve(null)
-        else if (err) reject(new CommandFailed(args, `${stdout ?? ''}\n${stderr ?? ''}`))
-        else resolve(stdout)
-      },
-    )
+// 调 openclaw 命令。找不到这个命令时返回 null；失败（含超时）时抛 CommandFailed
+async function openclaw(env, args) {
+  const result = await capture(env.KIOKU_OPENCLAW_BIN || 'openclaw', args, env, {
+    timeout: 60_000,
   })
+  if (!result.found) return null
+  if (!result.ok) throw new CommandFailed(args, result.output)
+  return result.stdout
 }
 
 // 读 OpenClaw 的一项配置：null 是没有 openclaw 命令，undefined 是没读出来，否则是值（没设时是空字符串）

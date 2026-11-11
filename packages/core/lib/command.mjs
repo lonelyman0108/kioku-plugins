@@ -1,10 +1,14 @@
-// 找一个命令、算出该怎么起它。Windows 上 npm 装的命令是 .cmd 文件，不经 cmd.exe 起不来
-// （直接起会报找不到，或者被 Node 拒绝），而经 cmd.exe 时参数要按它的规则转义，否则参数里的 & | % 这类字符
-// 会被当成命令。别的系统上原样交给系统。
+// 起 npm 装的那类外部命令（openclaw、hermes，以及 kioku run 要跑的命令）。
+// Windows 上这类命令是 .cmd 文件，不经 cmd.exe 起不来（直接起会报找不到，或者被 Node 拒绝），
+// 而经 cmd.exe 时参数要按它的规则转义，否则参数里的 & | % 这类字符会被当成命令。
+// 别的系统上什么都不做，原样交给系统：找命令、判断能不能执行都是系统的事。
 // 转义的规则照 cross-spawn 的做法写（MIT，来源登记在 NOTICE）
 
+import { execFile, spawn } from 'node:child_process'
 import { statSync } from 'node:fs'
-import { posix, win32 } from 'node:path'
+import { win32 } from 'node:path'
+
+import { KiokuFailure } from './http.mjs'
 
 const isFile = (file) => {
   try {
@@ -14,26 +18,32 @@ const isFile = (file) => {
   }
 }
 
-// 命令的完整路径；找不到为 null。名字里带目录时只看这个位置，否则在 PATH 里逐个目录找。
-// Windows 上名字没写扩展名时按 PATHEXT 逐个补上试，环境变量的名字不分大小写
-export function findCommand(name, env, { platform = process.platform, exists = isFile } = {}) {
+// Windows 的环境变量名不分大小写。同一个名字写了几种大小写时（Path 与 PATH），
+// 取排序后的第一个：Node 把环境交给子进程时也是这样取的，两边看到的要是同一个
+export function envValue(env, name) {
+  const key = Object.keys(env)
+    .filter((item) => item.toLowerCase() === name.toLowerCase())
+    .sort()[0]
+  return key === undefined ? undefined : env[key]
+}
+
+// Windows 上一个命令的完整路径；找不到为 null。名字里带目录时只看这个位置，否则在 PATH 里逐个目录找。
+// 名字没写扩展名时只按 PATHEXT 补上扩展名找，不找原样的名字：npm 在 .cmd 旁边还放着一个同名、
+// 没有扩展名的脚本（给 sh 用的），Windows 起不了它
+export function findCommand(name, env, { exists = isFile } = {}) {
   if (typeof name !== 'string' || !name) return null
-  const windows = platform === 'win32'
-  const path = windows ? win32 : posix
-  const read = (key) => {
-    if (!windows) return env[key]
-    const found = Object.keys(env).find((item) => item.toLowerCase() === key.toLowerCase())
-    return found === undefined ? undefined : env[found]
-  }
-  const suffixes = windows
-    ? ['', ...(read('PATHEXT') || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
-    : ['']
-  // 已经写了扩展名的（kioku.cmd）补不补都试，原样的排在前面
-  const candidates = (base) => suffixes.map((suffix) => base + suffix)
-  const direct = /[\\/]/.test(name) && (windows || name.includes('/'))
-  const dirs = direct ? [''] : (read('PATH') ?? '').split(path.delimiter).filter(Boolean)
+  const extensions = (envValue(env, 'PATHEXT') || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+  const suffixes = win32.extname(name) ? ['', ...extensions] : extensions
+  const dirs = /[\\/]/.test(name)
+    ? ['']
+    : (envValue(env, 'PATH') ?? '')
+        .split(win32.delimiter)
+        // 带空格的目录有人会加上引号
+        .map((dir) => dir.replace(/^"(.*)"$/, '$1'))
+        .filter(Boolean)
   for (const dir of dirs) {
-    for (const file of candidates(dir ? path.join(dir, name) : name)) {
+    for (const suffix of suffixes) {
+      const file = (dir ? win32.join(dir, name) : name) + suffix
       if (exists(file)) return file
     }
   }
@@ -53,18 +63,73 @@ function escapeArgument(value, twice) {
   return twice ? arg.replace(META, '^$1') : arg
 }
 
-// 起这个命令要交给 spawn、execFile 的 { file, args, options }。file 是 findCommand 找到的完整路径
-export function invocation(file, args, env, { platform = process.platform } = {}) {
-  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(file)) return { file, args, options: {} }
-  const comspec =
-    env[Object.keys(env).find((key) => key.toLowerCase() === 'comspec') ?? ''] || 'cmd.exe'
+// 怎么起这个命令：{ file, args, options, shell }，交给 spawn、execFile；Windows 上找不到这个命令时为 null。
+// shell 为真表示中间隔着一层 cmd.exe，结束它要用 killTree。别的系统上原样返回，找不到由系统报 ENOENT
+export function launch(name, args, env, { platform = process.platform, exists } = {}) {
+  if (platform !== 'win32') return { file: name, args, options: {}, shell: false }
+  const file = findCommand(name, env, { exists })
+  if (!file) return null
+  if (!/\.(cmd|bat)$/i.test(file)) return { file, args, options: {}, shell: false }
+  // cmd.exe 把换行当成一行命令的结尾，后面的参数会悄悄丢掉：不起
+  if ([file, ...args].some((item) => /[\r\n]/.test(String(item)))) {
+    throw new KiokuFailure('参数里有换行，经 cmd.exe 起的命令收不到完整的参数')
+  }
   const twice = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file)
   const line = [file.replace(META, '^$1'), ...args.map((arg) => escapeArgument(arg, twice))]
   return {
-    file: comspec,
+    file: envValue(env, 'ComSpec') || 'cmd.exe',
     // /d 不跑注册表里的自动命令，/s 加外层引号让整行原样交给 /c
     args: ['/d', '/s', '/c', `"${line.join(' ')}"`],
     // 这一行已经按 cmd.exe 的规则写好了，不让 Node 再加一层引号
     options: { windowsVerbatimArguments: true },
+    shell: true,
   }
+}
+
+// 结束一个起好的命令。隔着 cmd.exe 时只结束它的话，真正的命令还活着、还占着输出的管道，
+// 所以连它下面的进程一起结束（Windows 上没有信号可转，只能强行结束）
+export function killTree(child, signal, { shell, platform = process.platform } = {}) {
+  if (platform !== 'win32' || !shell || child.pid === undefined) return child.kill(signal)
+  try {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on(
+      'error',
+      () => child.kill(),
+    )
+    return true
+  } catch {
+    return child.kill()
+  }
+}
+
+// 跑一个命令到结束，收下它的输出：{ found: false }（没有这个命令），
+// 或者 { found: true, ok, stdout, output }（output 是两路输出合在一起，只用来认是哪种失败）。
+// 超过时限就结束它（连同它下面的进程），算失败。不抛错
+export function capture(name, args, env, { timeout, maxBuffer = 8 * 1024 * 1024 } = {}) {
+  let run
+  try {
+    run = launch(name, args, env)
+  } catch {
+    return Promise.resolve({ found: true, ok: false, stdout: '', output: '' })
+  }
+  if (!run) return Promise.resolve({ found: false })
+  return new Promise((resolve) => {
+    let timer
+    const child = execFile(
+      run.file,
+      run.args,
+      { env, maxBuffer, ...run.options },
+      (err, stdout, stderr) => {
+        clearTimeout(timer)
+        if (err?.code === 'ENOENT') resolve({ found: false })
+        else {
+          const out = String(stdout ?? '')
+          resolve({ found: true, ok: !err, stdout: out, output: `${out}\n${stderr ?? ''}` })
+        }
+      },
+    )
+    if (timeout) {
+      timer = setTimeout(() => killTree(child, 'SIGTERM', { shell: run.shell }), timeout)
+      timer.unref?.()
+    }
+  })
 }

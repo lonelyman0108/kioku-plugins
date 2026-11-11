@@ -18,12 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { KiokuFailure } from '../http.mjs'
 import { setup, writeSettings } from '../setup.mjs'
 import { UsageError } from '../usage.mjs'
-
-// 只在 POSIX 上能做的用例：靠去掉目录的写权限让写入失败
-const posixOnly = it.skipIf(process.platform === 'win32')
-
-// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
-const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
+import { mode, posixOnly } from './fakeCommand.mjs'
 
 let dir
 let file

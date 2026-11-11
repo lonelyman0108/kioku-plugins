@@ -7,12 +7,19 @@ import { spawn } from 'node:child_process'
 import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
-import { findCommand, invocation } from './command.mjs'
+import { killTree, launch } from './command.mjs'
 import { loadConfig } from './config.mjs'
 import { IMPORT_USAGE, importMemories } from './import.mjs'
 import { login, LOGIN_USAGE } from './login.mjs'
 import { doctor, DOCTOR_USAGE } from './doctor.mjs'
-import { errorKind, fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
+import {
+  errorKind,
+  failureText,
+  fetchFailure,
+  isRedirect,
+  KiokuFailure,
+  redirectError,
+} from './http.mjs'
 import { setup, SETUP_USAGE } from './setup.mjs'
 import { UsageError } from './usage.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
@@ -254,17 +261,23 @@ function exitBySignal(signal) {
 function runCommand(command, args, env, values) {
   return new Promise((resolve) => {
     let child
+    let run
     try {
+      // Windows 上 npm、pnpm 这类命令是 .cmd，要经 cmd.exe 起（launch 算好怎么起）
+      run = launch(command, args, env)
+      if (!run) {
+        process.stderr.write(`kioku：找不到命令 ${command}\n`)
+        resolve(127)
+        return
+      }
       // 不用 detached：命令留在 kioku 的进程组里，整组被结束时它不会变成带着值的孤儿进程
-      // Windows 上 npm、pnpm 这类命令是 .cmd，要经 cmd.exe 起；找不到时原样交给系统去报
-      const run = invocation(findCommand(command, env) ?? command, args, env)
       child = spawn(run.file, run.args, {
         env,
         stdio: ['inherit', 'pipe', 'pipe'],
         ...run.options,
       })
     } catch (err) {
-      process.stderr.write(`kioku：无法启动 ${command}（${errorKind(err)}）\n`)
+      process.stderr.write(`kioku：无法启动 ${command}（${failureText(err)}）\n`)
       resolve(126)
       return
     }
@@ -279,7 +292,8 @@ function runCommand(command, args, env, values) {
     }
     const onSignal = (signal) => {
       if (child.exitCode === null && child.signalCode === null) {
-        if (signal !== 'SIGINT' || !FROM_TERMINAL) child.kill(signal)
+        // 隔着 cmd.exe 时连它下面真正的命令一起结束，不留一个带着值的进程
+        if (signal !== 'SIGINT' || !FROM_TERMINAL) killTree(child, signal, { shell: run.shell })
         return
       }
       if (late === undefined) {

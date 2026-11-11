@@ -10,9 +10,7 @@ import { KiokuFailure } from '../http.mjs'
 import { importMemories } from '../import.mjs'
 import { claudeProjectName, frontmatter, sections, segment, titleOf } from '../sources.mjs'
 import { UsageError } from '../usage.mjs'
-
-// 只在 POSIX 上能做的用例：Windows 的文件名里放不了控制字符
-const posixOnly = it.skipIf(process.platform === 'win32')
+import { posixOnly } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 

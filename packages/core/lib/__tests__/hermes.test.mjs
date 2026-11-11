@@ -14,12 +14,9 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { doctor } from '../doctor.mjs'
-import { fakeCommand } from './fakeCommand.mjs'
+import { fakeCommand, mode } from './fakeCommand.mjs'
 import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
-
-// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
-const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
 
 const KEY = 'kioku_test_key'
 const WHO = {

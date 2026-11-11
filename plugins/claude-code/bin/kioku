@@ -10,12 +10,13 @@ const load = (name) =>
     },
   )
 
-// 输出被读的一方提前关掉（kioku doctor | head）：安静地结束，不抛一段堆栈。
-// run 不在此列：它要等命令结束、按命令的结果退出，自己处理这种情况
+// 输出被读的一方提前关掉（kioku doctor | head）：之后的输出写不出去就算了，不抛一段堆栈；
+// 手上的事照常做完、按它的结果退出（中途停下的话，写了一半的导入、配置会被当成成功）。别的写入错误照旧抛。
+// run 不在此列：它转发命令的输出，自己处理这种情况
 if (process.argv[2] !== 'run') {
   for (const stream of [process.stdout, process.stderr]) {
     stream.on('error', (err) => {
-      if (err && err.code === 'EPIPE') process.exit(0)
+      if (!err || err.code !== 'EPIPE') throw err
     })
   }
 }

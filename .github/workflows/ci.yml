@@ -55,8 +55,7 @@ jobs:
         if: steps.kind.outputs.code == 'true'
         run: scripts/check.sh --full
 
-  # Windows 上只跑 JS 的用例：平台有关的行为（起 .cmd 命令、路径、权限）要在真的 Windows 上核对；
-  # 门禁的其余部分和系统无关，在上面那个 job 里跑过了
+  # Windows 上跑 JS 的用例。不是必需检查（必需的只有 gate）：红了不挡合并，但合并前要看一眼
   test-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -67,8 +66,5 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
-      # 一个包挂了也把别的包跑完：一次看全在 Windows 上不对的地方
       - name: 测试
-        run: pnpm -r --no-bail test
+        run: scripts/ci/test-windows.sh
