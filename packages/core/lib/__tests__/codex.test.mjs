@@ -239,6 +239,8 @@ describe('kioku setup codex', () => {
         run(setup, ['codex', '--server-url', base], { key: KEY }),
         original,
       ).rejects.toThrow('没有改动它')
+      // 地址没给时先报用法错误，不先报这个
+      await expect(run(setup, ['codex']), original).rejects.toThrow(UsageError)
       expect(readFileSync(toml, 'utf8')).toBe(original)
       const checked = await run(doctor, ['codex'])
       expect(checked.text).toContain('用了行内表或带点的键')
