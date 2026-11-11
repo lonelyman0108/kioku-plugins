@@ -17,15 +17,28 @@ const SLOT = 'plugins.slots.memory'
 // OpenClaw 自带的记忆插件，还原时选回它
 const BUILTIN = 'memory-core'
 
-// 调 openclaw 命令。找不到这个命令时返回 null；失败时抛 KiokuFailure（不带输出：里面可能有别的配置）
+// 命令以失败退出：output 是它打印的内容，只用来认是哪种失败，不打印（里面可能有别的配置）
+class CommandFailed extends KiokuFailure {
+  constructor(args, output) {
+    super(`openclaw ${args.slice(0, 3).join(' ')} 没有成功`)
+    this.output = output
+  }
+}
+
+// 调 openclaw 命令。找不到这个命令时返回 null；失败时抛 CommandFailed
 function openclaw(env, args) {
   const bin = env.KIOKU_OPENCLAW_BIN || 'openclaw'
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { env, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
-      if (err?.code === 'ENOENT') resolve(null)
-      else if (err) reject(new KiokuFailure(`openclaw ${args.slice(0, 3).join(' ')} 没有成功`))
-      else resolve(stdout)
-    })
+    execFile(
+      bin,
+      args,
+      { env, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err?.code === 'ENOENT') resolve(null)
+        else if (err) reject(new CommandFailed(args, `${stdout ?? ''}\n${stderr ?? ''}`))
+        else resolve(stdout)
+      },
+    )
   })
 }
 
@@ -34,9 +47,9 @@ async function configValue(env, key) {
   let out
   try {
     out = await openclaw(env, ['config', 'get', key, '--json'])
-  } catch {
-    // 没设过的项它以失败退出
-    return ''
+  } catch (err) {
+    // 没设过的项它以失败退出，并说没有这个路径；别的失败（超时这类）不当成没设
+    return /not found/i.test(err?.output ?? '') ? '' : undefined
   }
   if (out === null) return null
   const last = out.trim().split(/\r?\n/).at(-1)?.trim() ?? ''
@@ -44,28 +57,45 @@ async function configValue(env, key) {
     const value = JSON.parse(last)
     return typeof value === 'string' || typeof value === 'boolean' ? String(value) : undefined
   } catch {
-    // 没设过的项它也可能打印一句说明
-    return ''
+    return undefined
   }
 }
 
-// 插件在 OpenClaw 里的状态：null 是没有 openclaw 命令，false 是没装，否则是 { enabled, loaded, slot }
+// 输出里的那个 JSON 对象：前面可能有几行提示，其中也可能带花括号，所以从每一个行首的花括号试
+function jsonIn(out) {
+  for (const match of out.matchAll(/^\{/gm)) {
+    try {
+      return JSON.parse(out.slice(match.index))
+    } catch {
+      // 不是从这里开始的
+    }
+  }
+  return undefined
+}
+
+// 插件在 OpenClaw 里的状态：null 是没有 openclaw 命令，false 是没装，undefined 是没查出来
+// （命令失败、输出读不懂），否则是 { enabled, loaded, slot }。没查出来不当成没装：照着没装去做会留下半截的配置
 async function pluginState(env) {
   let out
   try {
     out = await openclaw(env, ['plugins', 'inspect', PLUGIN, '--json'])
-  } catch {
-    return false
+  } catch (err) {
+    return /plugin not found/i.test(err?.output ?? '') ? false : undefined
   }
   if (out === null) return null
+  const plugin = jsonIn(out)?.plugin
+  if (plugin?.id !== PLUGIN) return undefined
+  return {
+    enabled: plugin.enabled === true,
+    loaded: plugin.status === 'loaded',
+    slot: plugin.memorySlotSelected === true,
+  }
+}
+
+// 让 OpenClaw 去掉一项配置；去不掉不算失败
+async function removeSetting(env, key) {
   try {
-    const { plugin } = JSON.parse(out.slice(out.indexOf('{')))
-    if (plugin?.id !== PLUGIN) return false
-    return {
-      enabled: plugin.enabled === true,
-      loaded: plugin.status === 'loaded',
-      slot: plugin.memorySlotSelected === true,
-    }
+    return (await openclaw(env, ['config', 'unset', key])) !== null
   } catch {
     return false
   }
@@ -97,9 +127,13 @@ async function undo({ dryRun }, { env, out }) {
   // 只在记忆槽位现在选的是 kioku 时改回去：之后换成了别的插件的话，不去动它
   const ours = Boolean(state && state.slot)
   out.write(`${profile}：删掉\n`)
-  if (ours) out.write(`OpenClaw 的配置\n  ${SLOT} → ${BUILTIN}\n`)
-  else if (state === null) out.write('没有找到 openclaw 命令，OpenClaw 的配置没有动\n')
-  else out.write('OpenClaw 的记忆槽位现在选的不是 kioku，它的配置没有动\n')
+  if (state === null) out.write('没有找到 openclaw 命令，OpenClaw 的配置没有动\n')
+  else {
+    out.write(`OpenClaw 的配置\n  ${ACCESS}：去掉\n`)
+    if (ours) out.write(`  ${SLOT} → ${BUILTIN}\n`)
+    else if (state === undefined) out.write(`  ${SLOT}：没有查出来现在选的是什么\n`)
+    else out.write(`  ${SLOT}：现在选的不是 kioku，不动\n`)
+  }
   if (dryRun) {
     out.write('没有写入（--dry-run）\n')
     return 0
@@ -107,10 +141,23 @@ async function undo({ dryRun }, { env, out }) {
   if (await removeProfile('openclaw', env)) out.write(`已删掉 ${profile}\n`)
   else out.write(`${profile} 本来就没有\n`)
   await removeToolCache('openclaw', env)
+  if (state !== null) {
+    // 不再允许插件读对话：插件还装着的话，留着这一项它照样拿得到每轮的输入与回复
+    const access = await configValue(env, ACCESS)
+    if (access !== '' && !(await removeSetting(env, ACCESS))) {
+      out.write(
+        `OpenClaw 里允许插件读对话的那一项没有去掉，要自己运行：\n  openclaw config unset ${ACCESS}\n`,
+      )
+    }
+  }
   if (ours) {
     const result = await applySetting(env, SLOT, BUILTIN)
     if (result === 'done') out.write('OpenClaw 改回用自带的记忆，重启网关生效。\n')
     else manual(out, [[SLOT, BUILTIN]], result)
+  } else if (state === undefined) {
+    out.write(
+      `OpenClaw 的记忆槽位没有查出来（openclaw plugins inspect 失败了）：用 openclaw config get ${SLOT} 看，还是 kioku 的话运行\n  openclaw config set ${SLOT} ${BUILTIN}\n`,
+    )
   }
   out.write(`插件要另外卸载：openclaw plugins uninstall ${PLUGIN}\n`)
   return 0
@@ -133,7 +180,9 @@ export async function setupOpenclaw(options, io) {
   // 工具清单先取一份留在本机：插件第一次登记工具时就有得用。取不到不算失败，插件自己会再取
   if (options.check) {
     try {
-      await writeToolCache('openclaw', { url, tools: await listTools({ url, key }) }, env)
+      const tools = await listTools({ url, key })
+      // 一个工具都没有的回答不留：留下的话插件会当成新取到的清单用上一小时
+      if (tools.length) await writeToolCache('openclaw', { url, tools }, env)
     } catch {
       // 留给插件
     }
@@ -156,7 +205,14 @@ export async function setupOpenclaw(options, io) {
   } else {
     out.write('地址与访问密钥已经写下。\n')
   }
-  if (!state) out.write(`接下来装上插件：openclaw plugins install ${SOURCE}\n`)
+  if (state === undefined) {
+    out.write(
+      '插件装了没有、记忆槽位选的是什么没有查出来（openclaw plugins inspect 失败了）：用 kioku doctor openclaw 再看一次\n',
+    )
+  } else if (!state) {
+    out.write(`接下来装上插件：openclaw plugins install ${SOURCE}\n`)
+    if (todo.length) out.write('装好之后再运行一次 kioku setup openclaw。\n')
+  }
   out.write(
     '只在本机入口的对话里生效；外部渠道来的消息里没有长期记忆（自带的记忆工具也随槽位停用）。\n',
   )
@@ -173,6 +229,12 @@ export async function inspectOpenclaw({ env }, { ok, warn, note }) {
     note('没有找到 openclaw 命令，查不了它的配置：用 openclaw plugins inspect kioku 看')
     return
   }
+  if (state === undefined) {
+    warn(
+      'OpenClaw 里的插件状态没有查出来（openclaw plugins inspect 失败了）：用 openclaw plugins inspect kioku 看',
+    )
+    return
+  }
   if (!state) {
     warn(`OpenClaw 里没有装 kioku 的插件：openclaw plugins install ${SOURCE}`)
     return
@@ -184,6 +246,8 @@ export async function inspectOpenclaw({ env }, { ok, warn, note }) {
   else warn('OpenClaw 的记忆槽位选的不是 kioku：运行 kioku setup openclaw')
   const access = await configValue(env, ACCESS)
   if (access === 'true') ok('OpenClaw 允许 kioku 读对话（召回与会话摘要要用）')
+  else if (access === undefined)
+    warn('OpenClaw 允不允许 kioku 读对话没有查出来（openclaw config get 失败了）')
   else warn('OpenClaw 没有允许 kioku 读对话，召回与会话摘要不会生效：运行 kioku setup openclaw')
   note('只在本机入口的对话里生效；外部渠道来的消息里不注入、不上报、不给工具')
   note(

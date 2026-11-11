@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { createKioku, localRun, localTools, replyOf, TOOL_NAMES } from '../kioku.js'
+import { createKioku, localRun, localTools, TOOL_NAMES, turnOf } from '../kioku.js'
 
 const KEY = 'kioku_test_key'
 const here = dirname(fileURLToPath(import.meta.url))
@@ -33,10 +33,11 @@ beforeAll(async () => {
       const {
         status = 200,
         body: out,
+        headers = {},
         wait,
       } = req.url === '/v1/mcp' ? mcp(body) : lifecycle(body.event)
       if (wait) await wait
-      res.writeHead(status, { 'content-type': 'application/json' })
+      res.writeHead(status, { 'content-type': 'application/json', ...headers })
       res.end(JSON.stringify(out ?? {}))
     })
   })
@@ -45,20 +46,22 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise((resolve) => server.close(resolve)))
 
+const contexts = (event) => ({
+  body: {
+    hostOutput:
+      event === 'turn.end'
+        ? { mode: 'none', value: null }
+        : { mode: 'return_value', value: { context: `<${event}>` } },
+  },
+})
+
 let dir
 let env
 let clock
 beforeEach(() => {
   requests = []
   clock = 1_000_000
-  lifecycle = (event) => ({
-    body: {
-      hostOutput:
-        event === 'turn.end'
-          ? { mode: 'none', value: null }
-          : { mode: 'return_value', value: { context: `<${event}>` } },
-    },
-  })
+  lifecycle = contexts
   mcp = (body) =>
     body.method === 'tools/list'
       ? { body: { jsonrpc: '2.0', id: 1, result: { tools: TOOLS } } }
@@ -99,8 +102,10 @@ function start() {
   kioku.register(api)
   return { api, kioku, warnings, emit: (name, event, ctx) => handlers[name](event, ctx) }
 }
-// 取工具清单不挡着别的：用例里等它落定
+// 取工具清单不挡着别的、也不在登记时取：问一次工具把它带起来，等它落定
+const MAIN = { sessionKey: 'agent:main:main' }
 async function settled(kioku) {
+  kioku.toolsFor(MAIN)
   await kioku.ready()
   await new Promise((resolve) => setTimeout(resolve, 50))
 }
@@ -157,6 +162,7 @@ describe('只认本机入口', () => {
       expect(localRun(gateway({ [field]: 'telegram' }))).toBe(false)
     }
     expect(localRun(gateway({ senderId: '7' }))).toBe(false)
+    expect(localRun(gateway({ senderId: '' }))).toBe(true)
     expect(localRun(cli({ trigger: 'heartbeat' }))).toBe(false)
     expect(localRun(cli({ trigger: undefined }))).toBe(false)
     expect(localRun(cli({ sessionKey: 'agent:main:subagent:x' }))).toBe(false)
@@ -174,6 +180,7 @@ describe('只认本机入口', () => {
     expect(localTools({ ...ctx, messageChannel: 'telegram' })).toBe(false)
     expect(localTools({ ...ctx, deliveryContext: { channel: 'telegram', to: '42' } })).toBe(false)
     expect(localTools({ ...ctx, requesterSenderId: '7' })).toBe(false)
+    expect(localTools({ ...ctx, requesterSenderId: '' })).toBe(true)
     expect(localTools({ sessionKey: 'agent:main:subagent:x' })).toBe(false)
     expect(localTools({})).toBe(false)
     expect(localTools(undefined)).toBe(false)
@@ -181,8 +188,10 @@ describe('只认本机入口', () => {
 })
 
 describe('OpenClaw 插件：注入与上报', () => {
-  it('登记记忆能力、两个钩子与工具工厂；工具名和清单文件里声明的一致', () => {
+  it('登记记忆能力、两个钩子与工具工厂，登记时不读文件、不发请求；工具名和清单文件里声明的一致', async () => {
     const { api } = start()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(requests).toEqual([])
     expect(api.registered.memory).toBe(1)
     expect(api.registered.options).toEqual({ names: TOOL_NAMES })
     const manifest = JSON.parse(readFileSync(join(here, '..', 'openclaw.plugin.json'), 'utf8'))
@@ -256,6 +265,49 @@ describe('OpenClaw 插件：注入与上报', () => {
     requests = []
     await emit('agent_end', { success: true, messages }, gateway())
     expect(requests).toEqual([])
+  })
+
+  it('运行中排进来的用户消息与它之前的回复都算这一轮的', async () => {
+    const { emit } = start()
+    const history = [user('上一轮'), assistant('上一轮的回复')]
+    await emit('before_prompt_build', { prompt: '甲', messages: history }, cli())
+    const messages = [...history, user('甲'), assistant('答甲'), user('乙'), assistant('答乙')]
+    await emit('agent_end', { success: true, messages }, cli())
+    expect(bodyOf('turn.end')).toMatchObject({ user: '甲\n乙', reply: '答甲\n答乙' })
+  })
+
+  it('上报失败不拦之后的召回', async () => {
+    const { emit } = start()
+    await emit('before_prompt_build', { prompt: '甲' }, cli())
+    lifecycle = (event) => (event === 'turn.end' ? { status: 500 } : contexts(event))
+    await emit('agent_end', { success: true, messages: [user('甲'), assistant('好')] }, cli())
+    requests = []
+    expect(await emit('before_prompt_build', { prompt: '乙' }, cli({ runId: 'r2' }))).toMatchObject(
+      { prependContext: '<prompt.submit>' },
+    )
+  })
+
+  it('服务地址返回跳转：说明怎么改，过一分钟照样再试，不是从此停用', async () => {
+    const { emit, warnings } = start()
+    lifecycle = () => ({ status: 302, headers: { location: 'https://other.example.com/login' } })
+    expect(await emit('before_prompt_build', { prompt: '甲' }, cli())).toBeUndefined()
+    expect(warnings.join('\n')).toContain('跳转')
+    lifecycle = contexts
+    clock += 61_000
+    expect(await emit('before_prompt_build', { prompt: '乙' }, cli({ runId: 'r2' }))).toMatchObject(
+      { prependSystemContext: '<session.start>', prependContext: '<prompt.submit>' },
+    )
+  })
+
+  it('网关开着时换了访问密钥：过一分钟用上新的，启动加载重新取', async () => {
+    const { emit } = start()
+    await emit('before_prompt_build', { prompt: '甲' }, cli())
+    profile({ serverUrl: base, apiKey: 'kioku_new_key' })
+    clock += 61_000
+    requests = []
+    await emit('before_prompt_build', { prompt: '乙' }, cli({ runId: 'r2' }))
+    expect(events()).toEqual(['prompt.submit', 'session.start'])
+    expect(requests.every((r) => r.headers.authorization === 'Bearer kioku_new_key')).toBe(true)
   })
 
   it('没成功的、没有回复的、没经过输入钩子的运行不上报', async () => {
@@ -370,9 +422,10 @@ describe('OpenClaw 插件：工具', () => {
   })
 
   it('调用转给 Kioku 的 MCP 端点，结果的文字原样给模型；失败时给原因，不带访问密钥', async () => {
-    const { api, kioku } = start()
+    const { api, kioku, emit } = start()
     await settled(kioku)
     const [search] = api.registered.factory({ sessionKey: 'agent:main:main' })
+    await emit('before_prompt_build', { prompt: '甲' }, cli())
     requests = []
     expect(await search.execute('call-1', { query: '部署' })).toEqual({
       content: [{ type: 'text', text: '结果 kioku_search' }],
@@ -392,6 +445,36 @@ describe('OpenClaw 插件：工具', () => {
     expect((await search.execute('call-3', {})).content[0].text).toContain('参数 不对')
   })
 
+  it('工具只在用户从本机入口发起的一轮里调得动：之前、结束之后、同一个会话接着跑心跳时都不调', async () => {
+    const { api, kioku, emit } = start()
+    await settled(kioku)
+    const [search] = api.registered.factory(MAIN)
+    const refused = { content: [{ type: 'text', text: '这次运行里不能用 Kioku 的工具' }] }
+    const calls = () => requests.filter((r) => r.body.method === 'tools/call').length
+    expect(await search.execute('c0', {})).toEqual(refused)
+    await emit('before_prompt_build', { prompt: '甲' }, cli())
+    expect((await search.execute('c1', {})).content[0].text).toBe('结果 kioku_search')
+    await emit('agent_end', { success: true, messages: [user('甲'), assistant('好')] }, cli())
+    expect(await search.execute('c2', {})).toEqual(refused)
+    await emit('before_prompt_build', { prompt: '乙' }, cli({ runId: 'r2' }))
+    await emit(
+      'before_prompt_build',
+      { prompt: '心跳' },
+      cli({ runId: 'r3', trigger: 'heartbeat' }),
+    )
+    expect(await search.execute('c3', {})).toEqual(refused)
+    expect(calls()).toBe(1)
+  })
+
+  it('Kioku 回了一份空的清单：手上的接着用，本机那份不换', async () => {
+    writeFileSync(cacheFile(), JSON.stringify({ url: base, tools: TOOLS.slice(0, 1) }))
+    mcp = () => ({ body: { jsonrpc: '2.0', id: 1, result: {} } })
+    const { api, kioku } = start()
+    await settled(kioku)
+    expect(api.registered.factory(MAIN)).toHaveLength(1)
+    expect(JSON.parse(readFileSync(cacheFile(), 'utf8')).tools).toHaveLength(1)
+  })
+
   it('没有配置时没有工具，哪怕本机留着一份清单', async () => {
     rmSync(join(dir, 'kioku', 'openclaw.json'))
     writeFileSync(cacheFile(), JSON.stringify({ url: base, tools: TOOLS }))
@@ -402,12 +485,16 @@ describe('OpenClaw 插件：工具', () => {
   })
 })
 
-describe('replyOf', () => {
-  it('没有用户消息时取全部助手文字；不是数组时为空', () => {
-    expect(replyOf([assistant('甲'), assistant('乙')])).toBe('甲\n乙')
-    expect(replyOf([user('问'), { role: 'assistant', content: '直接是字符串' }])).toBe(
+describe('turnOf', () => {
+  it('不知道这一轮从哪开始时，取最后一条用户消息之后的回复', () => {
+    expect(
+      turnOf([user('旧'), assistant('旧答'), user('问'), assistant('甲'), assistant('乙')]),
+    ).toEqual({ users: [], reply: '甲\n乙' })
+    expect(turnOf([user('问'), { role: 'assistant', content: '直接是字符串' }]).reply).toBe(
       '直接是字符串',
     )
-    expect(replyOf(null)).toBe('')
+    // 记下的起点比现在的消息还多（中途压缩过）：一样退回去
+    expect(turnOf([user('问'), assistant('答')], 9).reply).toBe('答')
+    expect(turnOf(null)).toEqual({ users: [], reply: '' })
   })
 })

@@ -337,13 +337,19 @@ describe('kioku import --from hermes / openclaw', () => {
     file('openclaw/.openclaw/workspace/MEMORY.md', '只有一段')
     file('openclaw/.openclaw/workspace/memory/2026-11-10.md', '## 上午\n做了甲\n## 下午\n做了乙')
     file('openclaw/.openclaw/workspace/memory/2026-11-10-Deploy.md', '下午的部署记录')
+    file(`openclaw/.openclaw/workspace/memory/2026-11-12-a--${'x'.repeat(80)}.md`, '名字很长的')
     file('openclaw/.openclaw/workspace/memory/notes.md', '不是按日期的，不读')
     const result = await run(['--from', 'openclaw', '--dry-run'])
     expect(result.text).toContain('新建  app://cc/openclaw/notes/m-')
     expect(result.text).toContain('新建  app://cc/openclaw/journal/2026-11-10\n')
     expect(result.text).toContain('新建  app://cc/openclaw/journal/2026-11-10-deploy\n')
-    expect(result.text).toContain('2026-11-10 的笔记')
-    expect(result.text).toContain('新建 3 条')
+    expect(result.text).toContain('2026-11-10 的笔记\n')
+    expect(result.text).toContain('2026-11-10 的笔记（Deploy）')
+    // 坐标里的一段和别的来源一样规整：连着的连字符并成一个，不超过 64 个字符
+    expect(result.text).toContain(
+      `新建  app://cc/openclaw/journal/2026-11-12-a-${'x'.repeat(51)}\n`,
+    )
+    expect(result.text).toContain('新建 4 条')
   })
 
   it('Hermes：文件里插一条、删一条之后，别的条的坐标不变，再运行只写新的那条', async () => {

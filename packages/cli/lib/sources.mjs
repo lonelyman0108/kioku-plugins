@@ -295,12 +295,18 @@ async function openclaw({ env, path, app }) {
     // 一天可以有几个：2026-11-10.md，或者带后缀的 2026-11-10-<名字>.md
     .filter((name) => /^\d{4}-\d{2}-\d{2}(-[A-Za-z0-9][A-Za-z0-9-]*)?\.md$/.test(name))
     .slice(0, MAX_FILES)
-    .map((name) => ({
-      file: join('memory', name),
-      prefix: `app://${app}/openclaw/journal/${name.slice(0, -3).toLowerCase()}`,
-      title: `${name.slice(0, 10)} 的笔记`,
-      single: true,
-    }))
+    .map((name) => {
+      const stem = name.slice(0, -3)
+      const suffix = stem.slice(11)
+      return {
+        file: join('memory', name),
+        // 和别的来源一样规整成坐标里的一段（长度、连着的连字符）；只差大小写的两个文件会落到同一个坐标，
+        // 后一个在计划里按撞名列出来
+        prefix: `app://${app}/openclaw/journal/${segment(stem)}`,
+        title: suffix ? `${stem.slice(0, 10)} 的笔记（${suffix}）` : `${stem} 的笔记`,
+        single: true,
+      }
+    })
   return fromFiles(root, [
     { file: 'MEMORY.md', prefix: `app://${app}/openclaw/notes`, title: 'OpenClaw 的记忆' },
     { file: 'USER.md', prefix: 'user://about/openclaw', title: 'OpenClaw 记下的用户画像' },

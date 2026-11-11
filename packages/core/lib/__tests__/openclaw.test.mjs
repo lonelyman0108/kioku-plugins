@@ -32,6 +32,7 @@ let server
 let base
 let requests = []
 let toolsStatus
+let emptyTools
 beforeAll(async () => {
   server = createServer((req, res) => {
     requests.push(req.url)
@@ -39,7 +40,8 @@ beforeAll(async () => {
     req.on('end', () => {
       const mcp = req.url === '/v1/mcp'
       res.writeHead(mcp ? toolsStatus : 200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(mcp ? { jsonrpc: '2.0', id: 1, result: { tools: TOOLS } } : WHO))
+      const tools = emptyTools ? [] : TOOLS
+      res.end(JSON.stringify(mcp ? { jsonrpc: '2.0', id: 1, result: { tools } } : WHO))
     })
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -53,6 +55,7 @@ let profile
 beforeEach(() => {
   requests = []
   toolsStatus = 200
+  emptyTools = false
   dir = mkdtempSync(join(tmpdir(), 'kioku-openclaw-'))
   profile = join(dir, 'kioku', 'openclaw.json')
   // 假的 openclaw 命令，照实测到的样子：config set 记进一个 JSON 文件（槽位选没装的插件时失败），
@@ -75,12 +78,16 @@ if (args[0] === 'config' && args[1] === 'set') {
   data[args[2]] = args[3] === 'true' ? true : args[3]
   fs.writeFileSync(file, JSON.stringify(data))
   console.log('Updated ' + args[2] + '. Restart the gateway to apply.')
+} else if (args[0] === 'config' && args[1] === 'unset') {
+  delete data[args[2]]
+  fs.writeFileSync(file, JSON.stringify(data))
 } else if (args[0] === 'config' && args[1] === 'get') {
   if (!(args[2] in data)) { console.log('Config path not found: ' + args[2]); process.exit(1) }
   console.log(JSON.stringify(data[args[2]]))
 } else if (args[0] === 'plugins' && args[1] === 'inspect') {
   if (!installed) { console.log('Plugin not found: kioku.'); process.exit(1) }
-  console.log('Config warnings:\\n- something')
+  if (mode === 'garbled') { console.log('{ not json'); process.exit(0) }
+  console.log('Config warnings:\\n- { stale entry }')
   console.log(JSON.stringify({ plugin: { id: 'kioku', enabled: mode !== 'disabled', status: mode === 'disabled' ? 'disabled' : 'loaded', memorySlotSelected: data['plugins.slots.memory'] === 'kioku' } }))
 } else process.exit(3)
 `,
@@ -198,20 +205,48 @@ describe('kioku setup openclaw', () => {
     }
   })
 
+  it('插件的状态没查出来（命令失败、输出读不懂）：不当成没装，不叫人再装一遍', async () => {
+    for (const mode of ['fail', 'garbled']) {
+      env.FAKE_OPENCLAW = mode
+      const result = await run(setup, ['openclaw', '--server-url', base])
+      expect(result.code).toBe(0)
+      expect(result.text).toContain('没有查出来')
+      expect(result.text).not.toContain('接下来装上插件')
+    }
+  })
+
+  it('Kioku 回了一份空的工具清单：不留在本机', async () => {
+    emptyTools = true
+    const result = await run(setup, ['openclaw', '--server-url', base])
+    expect(result.code).toBe(0)
+    expect(existsSync(cache())).toBe(false)
+  })
+
   it('--undo：删掉文件与工具清单，槽位选的是 kioku 时改回自带的；换成了别的就不动', async () => {
     await run(setup, ['openclaw', '--server-url', base])
     const result = await run(setup, ['openclaw', '--undo'])
     expect(result.code).toBe(0)
     expect(existsSync(profile)).toBe(false)
     expect(existsSync(cache())).toBe(false)
-    expect(settings()[SLOT]).toBe('memory-core')
+    // 读对话的许可一起去掉：插件还装着
+    expect(settings()).toEqual({ [SLOT]: 'memory-core' })
     expect(result.text).toContain('openclaw plugins uninstall kioku')
 
     configure({ [SLOT]: 'memory-lancedb' })
     const other = await run(setup, ['openclaw', '--undo'])
-    expect(other.text).toContain('现在选的不是 kioku')
+    expect(other.text).toContain('现在选的不是 kioku，不动')
     expect(other.text).toContain('本来就没有')
     expect(settings()[SLOT]).toBe('memory-lancedb')
+  })
+
+  it('--undo 时槽位没查出来：文件照删，说明要自己看一眼，不说成「选的不是 kioku」', async () => {
+    await run(setup, ['openclaw', '--server-url', base])
+    env.FAKE_OPENCLAW = 'garbled'
+    const result = await run(setup, ['openclaw', '--undo'])
+    expect(existsSync(profile)).toBe(false)
+    expect(result.text).toContain('没有查出来')
+    expect(result.text).toContain(`openclaw config set ${SLOT} memory-core`)
+    expect(result.text).not.toContain('现在选的不是 kioku')
   })
 
   it('--undo --dry-run 不删不改', async () => {
@@ -219,7 +254,7 @@ describe('kioku setup openclaw', () => {
     const result = await run(setup, ['openclaw', '--undo', '--dry-run'])
     expect(result.text).toContain(`${SLOT} → memory-core`)
     expect(existsSync(profile)).toBe(true)
-    expect(settings()[SLOT]).toBe('kioku')
+    expect(settings()).toEqual({ [ACCESS]: true, [SLOT]: 'kioku' })
   })
 })
 
@@ -248,6 +283,10 @@ describe('kioku doctor openclaw', () => {
     expect(result.text).toContain('! OpenClaw 没有允许 kioku 读对话')
     env.FAKE_OPENCLAW = 'disabled'
     expect((await run(doctor, ['openclaw'])).text).toContain('没有启用或没有加载成功')
+    env.FAKE_OPENCLAW = 'garbled'
+    const unknown = (await run(doctor, ['openclaw'])).text
+    expect(unknown).toContain('! OpenClaw 里的插件状态没有查出来')
+    expect(unknown).not.toContain('没有装 kioku 的插件')
   })
 
   it('没配过：说运行 kioku setup openclaw；没有 openclaw 命令时说明查不了', async () => {

@@ -92,10 +92,13 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **只在本机入口里启用，按白名单认**（`kioku.js` 的 `localRun`、`localTools`）：钩子上下文里通道的几个字段（`messageProvider`、`channel`、`channelId`、`chatId`）要么没有、要么是内部通道 `webchat`，没有发送者，`trigger` 是 `user`，会话不是子 agent、定时任务这类；认不出的一律不启用。不能按会话键认：外部渠道的私聊默认并进主会话（`agent:main:main`），网关的 HTTP 接口还能用请求头指定会话键。经网关时命令行与 HTTP 接口的通道都是 `webchat`，分不开，也不用分：到得了这里的都过了网关鉴权，OpenClaw 自己把它当操作者。
   - **`register` 是同步的，而且会被调很多次**（每次运行、每次重建注册表，`openclaw` 的每个命令也装载一次）：状态挂在 `globalThis` 上只建一次（`index.js`），`register` 里只挂钩子，不发请求、不等东西。入口导出普通对象就行，不用引 `openclaw/plugin-sdk`，包因此没有依赖。
   - **工具工厂也是同步的**，等不了取清单的请求：先用本机留的那一份（`openclaw-tools.json`，`kioku setup openclaw` 写下第一份，记着是哪个地址的、什么时候取的），后台每小时重新取。OpenClaw 按通道缓存工厂给出的工具描述，调用时会带着当时的上下文再问一次工厂，所以「给不给」只能看工具上下文里进了缓存键的那几项（`messageChannel`、`deliveryContext`、`requesterSenderId`）加会话键。
+  - **工具上下文里没有触发方式**，心跳在主会话上跑时通道、会话键和本机的一轮一样：给不给工具按通道定，调得动调不动另看这个会话现在跑的是不是过了 `localRun` 的一轮（`approved`，输入钩子里记、一轮结束或接着跑别的运行时收回）。新加的工具路径也要过它。
+  - **配置每分钟重读一次**（`ready`），换了地址或访问密钥时清掉按会话记着的启动加载与退避；服务地址返回跳转只当一次失败，不把插件停到重启为止。上报（`turn.end`）失败不设退避：它拦的是输入前的召回。
+  - 工具清单取回来是空的不当真（手上的接着用、不写回本机），`kioku setup openclaw` 也不留空的。
   - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份名单，用例核对；Kioku 加了新工具要两处一起加，否则 OpenClaw 不认。
   - **启动加载每一轮都要给**：`prependSystemContext` 不存进会话，系统提示每轮重建。按会话 id 记着取到的文本，隔一小时重新取；`session.start` 不是每轮都发。
   - **一次性的运行里上报要等发完**：`openclaw agent --local` 跑完进程就退出，`agent_end` 里不等的话 `turn.end` 发不出去。
-  - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。
+  - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。`openclaw plugins inspect` 失败、输出读不懂是「没查出来」（`pluginState` 返回 undefined），和「没装」（它明说 Plugin not found）分开：当成没装的话 `--undo` 会删了配置却留着槽位。
   - 本地实测要把 `HOME` 也换掉：只设 `OPENCLAW_STATE_DIR` 时它照样在真实的 `~/.openclaw` 下建工作区。`OPENCLAW_HOME` 换的是主目录（工作区在它下面的 `.openclaw/workspace`），不是 `.openclaw` 本身。要 Node 24.16 以上。停实验用的网关按端口找进程（进程名只是 `openclaw`），没停掉的旧网关会接着用旧的插件注册表应答。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。

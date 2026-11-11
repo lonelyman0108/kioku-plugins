@@ -47,7 +47,7 @@ const BACKOFF = 60_000
 const BOOT_TTL = 60 * 60_000
 // 工具清单隔这么久重新取一次
 const TOOLS_TTL = 60 * 60_000
-// 没有配置时隔这么久再读一次文件：网关一直开着，中途配好了不用重启也能认到
+// 隔这么久重读一次配置文件
 const PROFILE_RETRY = 60_000
 // 记着的会话与运行的个数上限
 const MAX_TRACKED = 200
@@ -55,6 +55,7 @@ const MAX_TRACKED = 200
 const UNFINISHED = new Set(['error', 'aborted'])
 
 const internal = (value) => value === undefined || value === null || value === INTERNAL_CHANNEL
+const absent = (value) => value === undefined || value === null || value === ''
 const userSession = (key) => typeof key === 'string' && key && !RESERVED_SESSION.test(key)
 
 // 这次运行是不是用户从本机入口发起的。按白名单认：通道的几个字段要么没有、要么是内部通道，没有发送者，
@@ -62,14 +63,15 @@ const userSession = (key) => typeof key === 'string' && key && !RESERVED_SESSION
 export function localRun(ctx) {
   if (ctx?.trigger !== 'user') return false
   if (![ctx.messageProvider, ctx.channel, ctx.channelId, ctx.chatId].every(internal)) return false
-  if (ctx.senderId !== undefined && ctx.senderId !== null && ctx.senderId !== '') return false
+  if (!absent(ctx.senderId)) return false
   return userSession(ctx.sessionKey)
 }
 
-// 给不给这次运行工具：和上面同一个规则，用工具上下文里的字段
+// 给不给这次运行工具：通道、发送者、会话的规则和上面一样。工具上下文里没有触发方式，
+// 心跳这类不是用户触发的运行在调用时挡（见 createKioku 里的 approved）
 export function localTools(ctx) {
   if (!ctx || !internal(ctx.messageChannel) || !internal(ctx.deliveryContext?.channel)) return false
-  if (ctx.requesterSenderId !== undefined && ctx.requesterSenderId !== null) return false
+  if (!absent(ctx.requesterSenderId)) return false
   return userSession(ctx.sessionKey)
 }
 
@@ -81,16 +83,28 @@ function textsIn(content) {
     .map((block) => block.text)
 }
 
-// 这一轮的回复：最后一条用户消息之后，助手正常说完的文字
-export function replyOf(messages) {
-  if (!Array.isArray(messages)) return ''
-  const last = messages.findLastIndex((message) => message?.role === 'user')
-  return messages
-    .slice(last + 1)
-    .filter((message) => message?.role === 'assistant' && !UNFINISHED.has(message.stopReason))
-    .flatMap((message) => textsIn(message.content))
-    .join('\n')
-    .trim()
+const finished = (message) => message?.role === 'assistant' && !UNFINISHED.has(message.stopReason)
+
+// 这一轮说了什么：{ users, reply }。start 是这一轮开始之前会话里已有的消息数，从它往后都是这一轮的：
+// 开头那条用户消息之后排进来的用户消息进 users，助手正常说完的文字都进 reply。
+// 不知道 start、或者消息比 start 还少（中途压缩过）时，只取最后一条用户消息之后的回复
+export function turnOf(messages, start) {
+  if (!Array.isArray(messages)) return { users: [], reply: '' }
+  const known = Number.isInteger(start) && start >= 0 && start < messages.length
+  const from = known ? start : messages.findLastIndex((message) => message?.role === 'user')
+  const turn = messages.slice(Math.max(from, 0))
+  const first = turn.findIndex((message) => message?.role === 'user')
+  const rest = turn.slice(first + 1)
+  return {
+    users: rest
+      .filter((message) => message?.role === 'user')
+      .flatMap((message) => textsIn(message.content)),
+    reply: rest
+      .filter(finished)
+      .flatMap((message) => textsIn(message.content))
+      .join('\n')
+      .trim(),
+  }
 }
 
 // 超出上限时丢掉最早记下的
@@ -121,8 +135,10 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   let quietUntil = 0
   // 会话的启动加载：会话 id → { text, at }
   const boots = new Map()
-  // 进行中的运行：运行 id → { sessionId, prompt }
+  // 进行中的运行：运行 id → { sessionId, prompt, start }
   const runs = new Map()
+  // 正在跑用户从本机入口发起的一轮的会话：会话键 → 运行 id。工具只在这样的运行里调得动
+  const approved = new Map()
 
   function tell(text) {
     if (told.has(text)) return
@@ -143,6 +159,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   async function load() {
     // 读完之前不再起第二次
     retryAt = Infinity
+    const before = profile
     try {
       profile = await readProfile(PLATFORM, env)
       problem = null
@@ -150,18 +167,23 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       profile = null
       problem = err instanceof KiokuFailure ? err.message : failureText(err)
     }
+    // 换了地址或访问密钥：之前的失败不算数了，按会话记着的启动加载也是给上一个访问密钥的
+    if (before && (before.url !== profile?.url || before.key !== profile?.key)) {
+      quietUntil = 0
+      boots.clear()
+      told.clear()
+    }
     // 本机留的清单是别的地址的、或者现在没有配置：不用它
     if (!profile || toolsUrl !== profile.url) {
       tools = []
       toolsAt = 0
     }
-    if (profile) refreshTools()
     retryAt = now() + PROFILE_RETRY
   }
 
-  // 等配置读完；没有配置、配置读不懂时隔一阵再读一次
+  // 等配置读完。隔一阵重读一次文件：网关一直开着，中途配好了、换了访问密钥不用重启也认得到
   function ready() {
-    if (!loading || (!profile && now() >= retryAt)) loading = load()
+    if (!loading || now() >= retryAt) loading = load()
     return loading
   }
 
@@ -171,6 +193,8 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
     const target = profile
     refreshing = listTools(target)
       .then(async (list) => {
+        // 一个工具都没有的回答不当真：手上那份接着用，隔一阵再取
+        if (!list.length) throw new KiokuFailure('Kioku 的响应格式不对')
         tools = list
         toolsUrl = target.url
         toolsAt = now()
@@ -197,20 +221,23 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       }
       return contextOf((await res.json()).hostOutput) ?? ''
     } catch (err) {
-      if (err instanceof Misconfigured) {
-        // 服务地址返回跳转：之后的请求也一样，当成配置写错
-        problem = err.message
-        tell(configNotice())
-      } else {
-        quietUntil = now() + BACKOFF
-        tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
-      }
+      // 上报失败不拦之后的召回：它不在输入前等着，慢一点不碍事
+      if (event !== 'turn.end') quietUntil = now() + BACKOFF
+      // 服务地址返回跳转多半是地址写错了，说明怎么改；也可能只是一时的（维护页），所以照样隔一阵再试
+      if (err instanceof Misconfigured) tell(`Kioku 这次没有生效：${err.message}。${SETUP_HINT}`)
+      else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
       return undefined
     }
   }
 
   async function beforePrompt(event, ctx) {
-    if (!localRun(ctx)) return undefined
+    const sessionKey = typeof ctx?.sessionKey === 'string' ? ctx.sessionKey : undefined
+    if (!localRun(ctx)) {
+      // 同一个会话接着跑的不是本机入口来的一轮（心跳、外部渠道并进主会话的私聊）：工具收回
+      if (sessionKey) approved.delete(sessionKey)
+      return undefined
+    }
+    remember(approved, sessionKey, typeof ctx.runId === 'string' ? ctx.runId : '')
     await ready()
     if (!profile || problem) {
       tell(configNotice())
@@ -223,7 +250,8 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
         ? ctx.sessionId.slice(0, MAX_SESSION_ID)
         : undefined
     if (sessionId && typeof ctx.runId === 'string' && ctx.runId) {
-      remember(runs, ctx.runId, { sessionId, prompt: clip(prompt, MAX_PROMPT) })
+      const start = Array.isArray(event?.messages) ? event.messages.length : undefined
+      remember(runs, ctx.runId, { sessionId, prompt, start })
     }
     const known = sessionId ? boots.get(sessionId) : undefined
     // 刚失败过：这次不等，手上有启动加载就照旧给
@@ -251,20 +279,26 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   // 一轮结束：把这一轮交给服务端写会话摘要。等它发完（各有时限）：一次性的运行里进程接着就退出了。
   // 没成功的、没有回复的一轮不报：没有可以写进摘要的内容
   async function agentEnd(event, ctx) {
-    const run = typeof ctx?.runId === 'string' ? runs.get(ctx.runId) : undefined
+    const runId = typeof ctx?.runId === 'string' ? ctx.runId : undefined
+    if (typeof ctx?.sessionKey === 'string' && approved.get(ctx.sessionKey) === (runId ?? '')) {
+      approved.delete(ctx.sessionKey)
+    }
+    const run = runId ? runs.get(runId) : undefined
     if (!run) return
-    runs.delete(ctx.runId)
+    runs.delete(runId)
     if (!profile || problem || event?.success === false) return
-    const reply = replyOf(event?.messages)
-    if (!reply || !run.prompt) return
+    const { users, reply } = turnOf(event?.messages, run.start)
+    // 开头的输入用钩子里拿到的那份，运行中排进来的接在后面
+    const user = [run.prompt, ...users].join('\n').trim()
+    if (!reply || !user) return
     await forward('turn.end', {
       sessionId: run.sessionId,
-      user: run.prompt,
+      user: clip(user, MAX_PROMPT),
       reply: clip(reply, MAX_REPLY),
     })
   }
 
-  function toTool({ name, description, inputSchema }) {
+  function toTool({ name, description, inputSchema }, sessionKey) {
     return {
       name,
       label: name,
@@ -272,6 +306,8 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       parameters: inputSchema,
       async execute(_callId, params, signal) {
         const say = (text) => ({ content: [{ type: 'text', text }] })
+        // 这个会话现在跑的不是用户从本机入口发起的一轮（心跳这类）：不调
+        if (!approved.has(sessionKey)) return say('这次运行里不能用 Kioku 的工具')
         await ready()
         if (!profile || problem) return say(configNotice())
         try {
@@ -287,14 +323,16 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   // 工具工厂是同步的：只能给手上已经有的清单
   function toolsFor(ctx) {
     if (!localTools(ctx)) return null
+    // 顺便把配置读上、看清单要不要重新取；都不等
+    ready().then(refreshTools, () => {})
     const list = tools.filter((tool) => TOOL_NAMES.includes(tool.name))
-    return list.length ? list.map(toTool) : null
+    return list.length ? list.map((tool) => toTool(tool, ctx.sessionKey)) : null
   }
 
-  // OpenClaw 每装载一次插件注册表就调一次，同一个进程里会调很多次：状态都在外面，这里只挂钩子
+  // OpenClaw 每装载一次插件注册表就调一次，同一个进程里会调很多次，openclaw 的每个命令也调：
+  // 状态都在外面，这里只挂钩子，不读文件、不发请求
   function register(api) {
     logger = api.logger ?? logger
-    ready()
     try {
       // 占住记忆槽位，自带的记忆插件随之停用；提示段不在这里给，由钩子按会话决定
       api.registerMemoryCapability({})

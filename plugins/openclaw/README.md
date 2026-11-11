@@ -33,7 +33,7 @@ openclaw gateway restart
 
 用 `npx @kioku-memory/cli doctor openclaw` 检查：地址与访问密钥、访问密钥的权限、插件装了没有、记忆槽位选的是不是 kioku、允不允许插件读对话。
 
-换访问密钥或地址时重新运行第 1 步，再重启网关。更新插件用 `openclaw plugins update kioku`。
+换访问密钥或地址时重新运行第 1 步；开着的网关一分钟之内认到新的，不用重启。更新插件用 `openclaw plugins update kioku`。
 
 ## setup 改了什么
 
@@ -42,9 +42,9 @@ openclaw gateway restart
   - `plugins.entries.kioku.hooks.allowConversationAccess` 设为 `true`：第三方插件默认拿不到每轮的输入与回复，召回与会话摘要都要它。
   - `plugins.slots.memory` 设为 `kioku`：装插件时 OpenClaw 自己会选上，`setup` 只在它被换走之后选回来。
 
-`--dry-run` 只看要改什么，`--no-check` 不连 Kioku 核对。`--undo` 删掉那两个文件，记忆槽位选的还是 kioku 时改回 `memory-core`；插件用 `openclaw plugins uninstall kioku` 卸载。
+`--dry-run` 只看要改什么，`--no-check` 不连 Kioku 核对。`--undo` 删掉那两个文件、去掉允许读对话的那一项，记忆槽位选的还是 kioku 时改回 `memory-core`；插件用 `openclaw plugins uninstall kioku` 卸载。
 
-没有 `openclaw` 命令，或者它的配置没改成时，地址与访问密钥照样写下，并列出要自己运行的命令。
+没有 `openclaw` 命令，或者它的配置没改成时，地址与访问密钥照样写下，并列出要自己运行的命令。插件的状态没查出来（`openclaw plugins inspect` 失败）时不当成没装，会说明没查出来。
 
 ## 工作区里的记忆文件
 
@@ -60,11 +60,12 @@ npx @kioku-memory/cli import --from openclaw --platform openclaw --dry-run
 
 - 启动加载不存进会话：OpenClaw 每一轮重建系统提示，插件按会话记着取到的启动加载、每一轮都放进去，每小时重新取一次。网关重启后第一轮会再取。
 - 工具由插件登记成 OpenClaw 自己的工具，调用转给 Kioku 的 MCP 端点，不用另配 MCP 服务。名字要在插件的清单里声明，服务端新加的工具要等插件更新才有。
-- 上报的回复是这一轮里助手正常说完的文字；思考、工具调用、出错或被中止的那一段不上报，没成功的一轮不上报。
+- 工具只在用户从本机入口发起的那一轮里调得动：同一个会话接着跑心跳这类运行时，模型看得到工具，调用会被拒绝。
+- 上报的是这一轮的输入（含运行中排进来的）与助手正常说完的文字；思考、工具调用、出错或被中止的那一段不上报，没成功的一轮不上报。
 - 没有 `kioku run`。要用凭据，另外装 `npm install -g @kioku-memory/cli`，并设置 `KIOKU_SERVER_URL` 与 `KIOKU_API_KEY`。
 
 ## 排查
 
-插件出错时不挡这一轮，也不往对话里写错误，原因写在网关的日志里（以「Kioku」开头，同一个原因只写一次）。还没配置、配置读不懂、服务地址返回跳转时，日志里会说怎么改；插件不跟着跳转走，访问密钥只发给配置的地址。请求失败之后一分钟内不再向 Kioku 发请求，免得服务端挂住时每一轮都等满时限。
+插件出错时不挡这一轮，也不往对话里写错误，原因写在网关的日志里（以「Kioku」开头，同一个原因只写一次）。还没配置、配置读不懂、服务地址返回跳转时，日志里会说怎么改；插件不跟着跳转走，访问密钥只发给配置的地址。取启动加载或召回失败之后一分钟内，输入前不再向 Kioku 发请求，免得服务端挂住时每一轮都等满时限。
 
 `openclaw plugins inspect kioku` 能看到插件的状态、登记的钩子与工具。装好之后没有生效，多半是网关没有重启。
