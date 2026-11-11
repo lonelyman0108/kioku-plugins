@@ -286,16 +286,18 @@ function hermes({ env, path, app }) {
   ])
 }
 
-// OpenClaw：工作区下的 MEMORY.md、USER.md，以及 memory/ 里按日期的笔记（一天一个文件，整个当一条）
+// OpenClaw：工作区下的 MEMORY.md、USER.md，以及 memory/ 里按日期的笔记（一个文件整个当一条）。
+// OPENCLAW_HOME 换的是主目录，工作区默认在它下面的 .openclaw/workspace；配置里改过工作区位置的用 --path 指明
 async function openclaw({ env, path, app }) {
-  const root = resolve(path ?? join(env.OPENCLAW_HOME || join(homedir(), '.openclaw'), 'workspace'))
+  const root = resolve(path ?? join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'workspace'))
   const notes = join(root, 'memory')
   const daily = ((await isRealDir(notes)) ? await markdownFiles(notes) : [])
-    .filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
+    // 一天可以有几个：2026-11-10.md，或者带后缀的 2026-11-10-<名字>.md
+    .filter((name) => /^\d{4}-\d{2}-\d{2}(-[A-Za-z0-9][A-Za-z0-9-]*)?\.md$/.test(name))
     .slice(0, MAX_FILES)
     .map((name) => ({
       file: join('memory', name),
-      prefix: `app://${app}/openclaw/journal/${name.slice(0, 10)}`,
+      prefix: `app://${app}/openclaw/journal/${name.slice(0, -3).toLowerCase()}`,
       title: `${name.slice(0, 10)} 的笔记`,
       single: true,
     }))

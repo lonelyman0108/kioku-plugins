@@ -332,16 +332,18 @@ describe('kioku import --from hermes / openclaw', () => {
     expect(writes()[2].body.title).toBe('Reply style')
   })
 
-  it('OpenClaw：工作区的两个文件，加上按日期的笔记一天一条', async () => {
+  it('OpenClaw：工作区的两个文件，加上按日期的笔记一个文件一条', async () => {
     env.OPENCLAW_HOME = join(dir, 'openclaw')
-    file('openclaw/workspace/MEMORY.md', '只有一段')
-    file('openclaw/workspace/memory/2026-11-10.md', '## 上午\n做了甲\n## 下午\n做了乙')
-    file('openclaw/workspace/memory/notes.md', '不是按日期的，不读')
+    file('openclaw/.openclaw/workspace/MEMORY.md', '只有一段')
+    file('openclaw/.openclaw/workspace/memory/2026-11-10.md', '## 上午\n做了甲\n## 下午\n做了乙')
+    file('openclaw/.openclaw/workspace/memory/2026-11-10-Deploy.md', '下午的部署记录')
+    file('openclaw/.openclaw/workspace/memory/notes.md', '不是按日期的，不读')
     const result = await run(['--from', 'openclaw', '--dry-run'])
     expect(result.text).toContain('新建  app://cc/openclaw/notes/m-')
     expect(result.text).toContain('新建  app://cc/openclaw/journal/2026-11-10\n')
+    expect(result.text).toContain('新建  app://cc/openclaw/journal/2026-11-10-deploy\n')
     expect(result.text).toContain('2026-11-10 的笔记')
-    expect(result.text).toContain('新建 2 条')
+    expect(result.text).toContain('新建 3 条')
   })
 
   it('Hermes：文件里插一条、删一条之后，别的条的坐标不变，再运行只写新的那条', async () => {
@@ -361,7 +363,7 @@ describe('kioku import --from hermes / openclaw', () => {
     env.HERMES_HOME = join(dir, 'hermes')
     env.OPENCLAW_HOME = join(dir, 'openclaw')
     file('hermes/memories/MEMORY.md', '同一段话')
-    file('openclaw/workspace/MEMORY.md', '同一段话')
+    file('openclaw/.openclaw/workspace/MEMORY.md', '同一段话')
     await run(['--from', 'hermes', '--yes'])
     const second = await run(['--from', 'openclaw', '--yes'])
     expect(second.text).toContain('新建 1 条')

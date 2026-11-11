@@ -1,0 +1,28 @@
+{
+  "id": "kioku",
+  "name": "Kioku",
+  "description": "Kioku 长期记忆：启动加载、每轮召回、会话摘要与记忆工具",
+  "kind": "memory",
+  "contracts": {
+    "tools": [
+      "kioku_boot",
+      "kioku_search",
+      "kioku_get",
+      "kioku_list",
+      "kioku_create",
+      "kioku_update",
+      "kioku_delete",
+      "kioku_move",
+      "kioku_credential",
+      "kioku_credential_save",
+      "kioku_credential_delete"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

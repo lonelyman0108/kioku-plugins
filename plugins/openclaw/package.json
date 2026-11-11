@@ -1,0 +1,42 @@
+{
+  "name": "@kioku-memory/openclaw",
+  "version": "0.0.0",
+  "description": "OpenClaw 的 Kioku 记忆插件：启动加载、每轮召回、会话摘要与记忆工具",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/lonelyman0108/kioku-plugins/tree/main/plugins/openclaw",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lonelyman0108/kioku-plugins.git",
+    "directory": "plugins/openclaw"
+  },
+  "keywords": [
+    "kioku",
+    "memory",
+    "openclaw"
+  ],
+  "type": "module",
+  "files": [
+    "index.js",
+    "kioku.js",
+    "lib",
+    "openclaw.plugin.json",
+    "NOTICE"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.6.35"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

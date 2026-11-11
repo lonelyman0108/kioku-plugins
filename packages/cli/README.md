@@ -14,13 +14,13 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 
 | 子命令 | 作用 |
 |---|---|
-| `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、pi、Hermes 再写下服务地址与访问密钥，Codex 还配好 MCP 服务 |
+| `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、pi、Hermes、OpenClaw 再写下服务地址与访问密钥，Codex 还配好 MCP 服务 |
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好这个平台，不用手动复制 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
 | `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
-每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`、`pi`、`hermes`。
+每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`、`pi`、`hermes`、`openclaw`。
 
 ## login
 
@@ -28,7 +28,7 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 kioku login codex --server-url https://kioku.example.com
 ```
 
-终端显示一个确认码并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选空间、应用与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。认得 `codex`、`pi`、`hermes`；Claude Code 的访问密钥在它的 `/plugin` 里填。
+终端显示一个确认码并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选空间、应用与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。认得 `codex`、`pi`、`hermes`、`openclaw`；Claude Code 的访问密钥在它的 `/plugin` 里填。
 
 - 确认码不在打开的地址里，要照着终端输入：只在自己刚运行了这条命令时确认。别人发来一个确认码让你去确认的，不要确认，那样对方的机器会拿到能读写你的记忆的访问密钥。
 - 申请 10 分钟内有效。被拒绝、过期，或者确认之后确认人的角色变了，都拿不到访问密钥，重新运行即可。
@@ -78,6 +78,14 @@ kioku setup hermes --server-url https://kioku.example.com
 
 核对后把地址与访问密钥写进 `~/.hermes/.env`，再经 `hermes config set` 选 Kioku 做记忆 provider、关掉内置的 `MEMORY.md` 与 `USER.md`。provider 用 `hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable` 装。细节见 [Hermes provider 的说明](https://github.com/lonelyman0108/kioku-plugins/tree/main/plugins/hermes#setup-改了什么)。
 
+### OpenClaw
+
+```bash
+kioku setup openclaw --server-url https://kioku.example.com
+```
+
+核对后写下 `~/.config/kioku/openclaw.json`，再经 `openclaw config set` 允许插件读对话（`plugins.entries.kioku.hooks.allowConversationAccess`）；记忆槽位在装插件时由 OpenClaw 选上，被换走了才由 `setup` 选回来。插件用 `openclaw plugins install npm:@kioku-memory/openclaw` 装，装完重启网关。细节见 [OpenClaw 插件的说明](https://github.com/lonelyman0108/kioku-plugins/tree/main/plugins/openclaw#setup-改了什么)。
+
 ## doctor
 
 ```bash
@@ -99,11 +107,11 @@ kioku import --from claude-code             # 列出计划，确认后写入
 |---|---|---|
 | `claude-code` | `~/.claude/projects/*/memory/*.md`（`MEMORY.md` 是索引，不读） | 按文件头里的类型：`user` → `user://about/<项目>/<名字>`；`project` → `user://projects/<项目>/<名字>`；`reference` → `user://reference/<项目>/<名字>`；`feedback` → `app://<应用>/feedback/<项目>/<名字>` |
 | `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` → `app://<应用>/hermes/notes/…`；`USER.md` → `user://about/hermes/…` |
-| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记 | `MEMORY.md` → `app://<应用>/openclaw/notes/…`；`USER.md` → `user://about/openclaw/…`；按日期的笔记 → `app://<应用>/openclaw/journal/<日期>` |
+| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记（`<日期>.md`、`<日期>-<名字>.md`） | `MEMORY.md` → `app://<应用>/openclaw/notes/…`；`USER.md` → `user://about/openclaw/…`；按日期的笔记 → `app://<应用>/openclaw/journal/<文件名>`，一个文件一条 |
 
 - `<应用>` 是访问密钥所属的应用的标识。偏「这个 agent 该怎么干活」的放在应用下，别的 agent 用不上；关于用户本人和项目的放在本人下，各个 agent 都读得到。
 - `<项目>` 取自 Claude Code 的项目目录名，去掉主目录与 `Documents`、`code` 这类常见的上级目录。分不清的两个项目（例如 `~/code/dev-proxy` 与 `~/code/proxy`）会得到同一个名字，同名的记忆会在计划里标出来，不会悄悄顶掉。
-- Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。有标题的用标题做标识；没有标题的用内容的摘要，所以文件里插一条、删一条不影响别的条，但改了某一段的内容会新建一条、旧的留着。Hermes 的位置与分隔符已经对着它的源码核对过（0.19.0），OpenClaw 的还没有在真实的安装上核对。
+- Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。有标题的用标题做标识；没有标题的用内容的摘要，所以文件里插一条、删一条不影响别的条，但改了某一段的内容会新建一条、旧的留着。Hermes 的位置与分隔符已经对着它的源码核对过（0.19.0），OpenClaw 的位置与文件名对着真实的安装核对过（2026.6.35）。OpenClaw 的 `USER.md` 是它生成的模板，没填过的话计划里会列出模板本身，不想要就先别迁。
 - 标题与触发场景取文件头里的说明。写进去的记忆优先级是默认的，不进启动加载；要进的在管理界面里改。
 - **重复运行不重复写**：坐标由来源决定，已经有、内容一样的跳过；已经有、内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才覆盖。
 - **疑似明文凭据的不写**：列出是哪个文件、正文第几行、哪一类，不带值。先把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次。
@@ -111,14 +119,14 @@ kioku import --from claude-code             # 列出计划，确认后写入
 - 只读普通的文本文件：符号链接不跟（它可以指到记忆目录之外的文件），太大的、不是文本的不读。
 - 写到一半连不上时停下来，说明写了多少、还剩多少；重新运行会接着写。
 - 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
-- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform pi` 或 `--platform hermes` 改用 `kioku setup` 给那个平台写下的。记忆迁进这个访问密钥所属的应用。
+- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform pi`、`--platform hermes` 或 `--platform openclaw` 改用 `kioku setup` 给那个平台写下的。记忆迁进这个访问密钥所属的应用。
 - 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
 
 ## 地址与访问密钥
 
-`kioku doctor codex`、`kioku doctor pi`、`kioku doctor hermes` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
+`kioku doctor codex`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
 - `KIOKU_API_KEY`：在 Kioku 管理界面的「应用」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { inspectCodex, preflightCodex, setupCodex } from './codex.mjs'
 import { inspectHermes, preflightHermes, readHermesConfig, setupHermes } from './hermes.mjs'
+import { inspectOpenclaw, setupOpenclaw } from './openclaw.mjs'
 import { inspectPi, setupPi } from './pi.mjs'
 import { readProfile } from './profile.mjs'
 
@@ -105,7 +106,16 @@ const hermes = {
   inspect: inspectHermes,
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes }
+const openclaw = {
+  name: 'OpenClaw',
+  runtimeFamily: 'openclaw',
+  detect: () => false,
+  readConfig: (env) => readProfile('openclaw', env),
+  setup: setupOpenclaw,
+  inspect: inspectOpenclaw,
+}
+
+export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes, openclaw }
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')
