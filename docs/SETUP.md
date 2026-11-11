@@ -91,7 +91,7 @@ JSON
 | 项 | 值 |
 |---|---|
 | 组织 | `kioku-memory`（scope `@kioku-memory`），公开包 |
-| 包 | `@kioku-memory/cli`（目录 `packages/cli`） |
+| 包 | `@kioku-memory/cli`（目录 `packages/cli`）、`@kioku-memory/openclaw`（目录 `plugins/openclaw`） |
 | 认证 | 受信发布（OIDC），没有 npm 令牌，仓库里也没有对应的 secret |
 
 每个包在 npmjs.com 的 Settings › Trusted Publisher 里配一个 GitHub Actions 发布者：
@@ -108,7 +108,7 @@ JSON
 
 ```bash
 node scripts/sync-core.mjs --check
-cd packages/<包目录> && npm publish --access public
+cd <包目录> && npm publish --access public
 ```
 
 配好受信发布之后的版本都由 `release.yml` 发。受信发布要 npm 11.5.1、Node 22.14 以上，只认 GitHub 托管的 runner；`scripts/ci/publish-npm.sh` 在 npm 版本不够时装一个固定的版本。
