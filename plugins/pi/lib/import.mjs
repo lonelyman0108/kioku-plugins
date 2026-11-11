@@ -17,7 +17,7 @@ export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目�
 
   --from <来源>  ${sourceNames()}
   --path <目录>  不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
-  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（codex、pi、hermes）；不写时读环境变量
+  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（codex、pi、hermes、openclaw）；不写时读环境变量
   --dry-run      只列出计划，不写
   --yes          不问，直接写（不在终端里运行时要带上）
   --overwrite    Kioku 里同一个坐标已经有、内容不一样的也覆盖（默认跳过）

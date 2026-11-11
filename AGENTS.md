@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、Hermes 的记忆 provider（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
+Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、OpenClaw 的记忆插件（在网关进程里跑的 JS，发 npm）、Hermes 的记忆 provider（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
 
 提交、PR、发版的完整规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只写 agent 需要、又无法从代码推出来的内容，每条约定都附原因。超过 300 行时拆到子目录的 AGENTS.md。
 
@@ -48,11 +48,12 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
-| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
+| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，OpenClaw 的在 `openclaw.mjs`，向 Kioku 的 MCP 端点取工具清单、调用工具与本机留的那份清单在 `mcp.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
 | `plugins/hermes` | Hermes 的记忆 provider：`kioku_bridge.py` 是不依赖 Hermes 的那一层（请求、会话状态），`__init__.py` 把 Hermes 的回调接过去；`plugin.yaml` 里的 `name` 就是装好之后的目录名与 `memory.provider` 的值。不收核心的副本（Python） |
+| `plugins/openclaw` | OpenClaw 的记忆插件，发到 npm 的 `@kioku-memory/openclaw`：清单 `openclaw.plugin.json`（`kind: "memory"`，工具名要在 `contracts.tools` 里声明），入口 `index.js` 只把状态挂到进程上，`kioku.js` 的 `createKioku` 是可以单测的那一层；`lib/` 同样是副本 |
 | `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：只有 `package.json` 与说明，`bin/`、`lib/` 同样是 `packages/core` 的副本 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
@@ -87,6 +88,18 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - `ruff` 不让捕获笼统的 `Exception`：网络这一层接 `OSError` 与 `http.client.HTTPException`。
   - `kioku setup hermes` 不自己改 Hermes 的 `config.yaml`，经 `hermes config set`（用例里用 `KIOKU_HERMES_BIN` 换成假的），改完读回来核对：托管的安装里它不生效却照样成功退出。访问密钥只写进 `.env`，不出现在命令的参数里；`.env` 里都是密钥，改它不留备份。访问密钥写下之后的步骤（改 Hermes 的配置）不成也不抛错，只把要做的列出来：抛了的话 `kioku login` 会让用户去吊销一个其实已经在用的访问密钥。`.env` 里同名的行收拾成一处（Hermes 读最后一行），没有要改的时候原样不动。`--undo` 只在现在选的还是 kioku 时才改 Hermes 的配置。
   - 本地实测 Hermes 时，自定义的模型端点要把密钥写在 `config.yaml` 的 `model.api_key`（或用具名的 `providers:` 加 `key_env`）：`OPENAI_API_KEY` 只发给 openai.com 的地址。
+- OpenClaw 的插件（核对过 OpenClaw 2026.6.35 与真实的 Kioku）：
+  - **只在本机入口里启用，按白名单认**（`kioku.js` 的 `localRun`、`localTools`）：钩子上下文里通道的几个字段（`messageProvider`、`channel`、`channelId`、`chatId`）要么没有、要么是内部通道 `webchat`，没有发送者，`trigger` 是 `user`，会话不是子 agent、定时任务这类；认不出的一律不启用。不能按会话键认：外部渠道的私聊默认并进主会话（`agent:main:main`），网关的 HTTP 接口还能用请求头指定会话键。经网关时命令行与 HTTP 接口的通道都是 `webchat`，分不开，也不用分：到得了这里的都过了网关鉴权，OpenClaw 自己把它当操作者。
+  - **`register` 是同步的，而且会被调很多次**（每次运行、每次重建注册表，`openclaw` 的每个命令也装载一次）：状态挂在 `globalThis` 上只建一次（`index.js`），`register` 里只挂钩子，不发请求、不等东西。入口导出普通对象就行，不用引 `openclaw/plugin-sdk`，包因此没有依赖。
+  - **工具工厂也是同步的**，等不了取清单的请求：先用本机留的那一份（`openclaw-tools.json`，`kioku setup openclaw` 写下第一份，记着是哪个地址的、什么时候取的），后台每小时重新取。OpenClaw 按通道缓存工厂给出的工具描述，调用时会带着当时的上下文再问一次工厂，所以「给不给」只能看工具上下文里进了缓存键的那几项（`messageChannel`、`deliveryContext`、`requesterSenderId`）加会话键。
+  - **工具上下文里没有触发方式**，心跳在主会话上跑时通道、会话键和本机的一轮一样：给不给工具按通道定，调得动调不动另看这个会话现在跑的是不是过了 `localRun` 的一轮（`approved`，输入钩子里记、一轮结束或接着跑别的运行时收回）。新加的工具路径也要过它。
+  - **配置每分钟重读一次**（`ready`），换了地址或访问密钥时清掉按会话记着的启动加载与退避；服务地址返回跳转只当一次失败，不把插件停到重启为止。上报（`turn.end`）失败不设退避：它拦的是输入前的召回。
+  - 工具清单取回来是空的不当真（手上的接着用、不写回本机），`kioku setup openclaw` 也不留空的。
+  - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份名单，用例核对；Kioku 加了新工具要两处一起加，否则 OpenClaw 不认。
+  - **启动加载每一轮都要给**：`prependSystemContext` 不存进会话，系统提示每轮重建。按会话 id 记着取到的文本，隔一小时重新取；`session.start` 不是每轮都发。
+  - **一次性的运行里上报要等发完**：`openclaw agent --local` 跑完进程就退出，`agent_end` 里不等的话 `turn.end` 发不出去。
+  - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。`openclaw plugins inspect` 失败、输出读不懂是「没查出来」（`pluginState` 返回 undefined），和「没装」（它明说 Plugin not found）分开：当成没装的话 `--undo` 会删了配置却留着槽位。
+  - 本地实测要把 `HOME` 也换掉：只设 `OPENCLAW_STATE_DIR` 时它照样在真实的 `~/.openclaw` 下建工作区。`OPENCLAW_HOME` 换的是主目录（工作区在它下面的 `.openclaw/workspace`），不是 `.openclaw` 本身。要 Node 24.16 以上。停实验用的网关按端口找进程（进程名只是 `openclaw`），没停掉的旧网关会接着用旧的插件注册表应答。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。

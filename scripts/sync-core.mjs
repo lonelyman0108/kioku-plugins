@@ -18,7 +18,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CORE = 'packages/core'
 // 收一份副本的目录
-export const TARGETS = ['plugins/claude-code', 'plugins/codex', 'plugins/pi', 'packages/cli']
+export const TARGETS = [
+  'plugins/claude-code',
+  'plugins/codex',
+  'plugins/pi',
+  'plugins/openclaw',
+  'packages/cli',
+]
 
 // 核心里要复制的文件（相对核心目录）：lib 下的实现与 kioku 命令的入口，不含测试
 function sources() {

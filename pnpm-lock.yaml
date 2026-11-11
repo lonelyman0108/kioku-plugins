@@ -35,6 +35,8 @@ importers:
 
   plugins/codex: {}
 
+  plugins/openclaw: {}
+
   plugins/pi: {}
 
 packages:

@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+// kioku 命令的入口，实现在 ../lib/kioku.mjs。插件启用期间，Claude Code 把插件的 bin/ 加进 Bash 工具的 PATH。
+// 没有扩展名的文件按 CommonJS 还是 ES 模块执行，取决于 Node 的版本与上层的 package.json，
+// 所以这里只用两边都能用的写法：动态 import，位置从 process.argv[1] 推
+const load = (name) =>
+  Promise.all([import('node:fs'), import('node:path'), import('node:url')]).then(
+    ([fs, path, url]) => {
+      const lib = path.join(path.dirname(fs.realpathSync(process.argv[1])), '..', 'lib')
+      return import(url.pathToFileURL(path.join(lib, name)).href)
+    },
+  )
+
+load('kioku.mjs')
+  .then((cli) => cli.main(process.argv.slice(2)))
+  .then((code) => {
+    process.exitCode = code
+  })
+  .catch((err) => {
+    process.exitCode = 2
+    // 只给错误类别：错误文字里可能带着环境变量的值。取不到共用的函数时只说一句固定的
+    return load('http.mjs').then(
+      ({ errorKind }) => process.stderr.write(`kioku：内部错误（${errorKind(err)}）\n`),
+      () => process.stderr.write('kioku：内部错误\n'),
+    )
+  })

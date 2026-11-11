@@ -286,19 +286,27 @@ function hermes({ env, path, app }) {
   ])
 }
 
-// OpenClaw：工作区下的 MEMORY.md、USER.md，以及 memory/ 里按日期的笔记（一天一个文件，整个当一条）
+// OpenClaw：工作区下的 MEMORY.md、USER.md，以及 memory/ 里按日期的笔记（一个文件整个当一条）。
+// OPENCLAW_HOME 换的是主目录，工作区默认在它下面的 .openclaw/workspace；配置里改过工作区位置的用 --path 指明
 async function openclaw({ env, path, app }) {
-  const root = resolve(path ?? join(env.OPENCLAW_HOME || join(homedir(), '.openclaw'), 'workspace'))
+  const root = resolve(path ?? join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'workspace'))
   const notes = join(root, 'memory')
   const daily = ((await isRealDir(notes)) ? await markdownFiles(notes) : [])
-    .filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
+    // 一天可以有几个：2026-11-10.md，或者带后缀的 2026-11-10-<名字>.md
+    .filter((name) => /^\d{4}-\d{2}-\d{2}(-[A-Za-z0-9][A-Za-z0-9-]*)?\.md$/.test(name))
     .slice(0, MAX_FILES)
-    .map((name) => ({
-      file: join('memory', name),
-      prefix: `app://${app}/openclaw/journal/${name.slice(0, 10)}`,
-      title: `${name.slice(0, 10)} 的笔记`,
-      single: true,
-    }))
+    .map((name) => {
+      const stem = name.slice(0, -3)
+      const suffix = stem.slice(11)
+      return {
+        file: join('memory', name),
+        // 和别的来源一样规整成坐标里的一段（长度、连着的连字符）；只差大小写的两个文件会落到同一个坐标，
+        // 后一个在计划里按撞名列出来
+        prefix: `app://${app}/openclaw/journal/${segment(stem)}`,
+        title: suffix ? `${stem.slice(0, 10)} 的笔记（${suffix}）` : `${stem} 的笔记`,
+        single: true,
+      }
+    })
   return fromFiles(root, [
     { file: 'MEMORY.md', prefix: `app://${app}/openclaw/notes`, title: 'OpenClaw 的记忆' },
     { file: 'USER.md', prefix: 'user://about/openclaw', title: 'OpenClaw 记下的用户画像' },
