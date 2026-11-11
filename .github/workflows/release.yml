@@ -1,4 +1,4 @@
-# 推送版本 tag（vX.Y.Z）时发布：把 packages/ 下公开的包发到 npm，再建 Release 页面。
+# 推送版本 tag（vX.Y.Z）时发布：把 packages/ 与 plugins/ 下公开的包发到 npm，再建 Release 页面。
 # npm 用受信发布（OIDC）：仓库里不放 npm 令牌，发出的包自带来源证明；npm 那边的设置见 docs/SETUP.md。
 # 判断和命令全部放在 scripts/，这里只做薄壳。
 name: Release

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 把 packages/ 下公开的包（package.json 里没有 "private": true）发到 npm。只被 release.yml 调用，本地用 --dry-run 核对。
+# 把 packages/ 与 plugins/ 下公开的 npm 包（package.json 里没有 "private": true）发到 npm。只被 release.yml 调用，本地用 --dry-run 核对。
 # 用法：publish-npm.sh [--dry-run] <tag>
 #   <tag>      版本 tag（vX.Y.Z）：每个要发的包的版本都要等于它，否则不发
 #   --dry-run  不上传，只打印每个包会带哪些文件；不要求 npm 的版本
@@ -22,7 +22,7 @@ node scripts/sync-core.mjs --check
 
 # 要发的包的目录：有 package.json、不是 private
 dirs=()
-for manifest in packages/*/package.json; do
+for manifest in packages/*/package.json plugins/*/package.json; do
   [ -f "$manifest" ] || continue
   if [ "$(node -p 'require(process.argv[1]).private === true' "./$manifest")" = false ]; then
     dirs+=("$(dirname "$manifest")")
