@@ -8,6 +8,7 @@ import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
 import { loadConfig } from './config.mjs'
+import { login, LOGIN_USAGE } from './login.mjs'
 import { doctor, DOCTOR_USAGE } from './doctor.mjs'
 import { errorKind, fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
 import { setup, SETUP_USAGE } from './setup.mjs'
@@ -356,6 +357,7 @@ async function run(argv) {
 const OVERVIEW = `用法：kioku <子命令> [参数…]
 
   run     向 Kioku 取凭据的值，放进环境变量交给命令
+  login   用浏览器授权签发访问密钥并配好这个平台
   setup   停用平台自带的长期记忆，由 Kioku 接管
   doctor  检查地址、访问密钥与平台的配置
 
@@ -390,6 +392,7 @@ export async function main(argv) {
     return 0
   }
   if (sub === 'run') return run(rest)
+  if (sub === 'login') return guarded('login', LOGIN_USAGE, login, rest)
   if (sub === 'setup') return guarded('setup', SETUP_USAGE, setup, rest)
   if (sub === 'doctor') return guarded('doctor', DOCTOR_USAGE, doctor, rest)
   process.stderr.write(sub === undefined ? OVERVIEW : `kioku：不认识的子命令 ${sub}\n\n${OVERVIEW}`)
