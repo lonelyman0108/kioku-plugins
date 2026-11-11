@@ -130,7 +130,9 @@ describe('kioku setup codex', () => {
     expect(same.text).not.toContain('接下来在 Codex 这一边')
     expect(readFileSync(toml, 'utf8')).toBe(rewritten)
     // 换访问密钥：只换这个服务的那几行
-    await run(setup, ['codex', '--no-check'], { key: 'new_key' })
+    const rotated = await run(setup, ['codex', '--no-check'], { key: 'new_key' })
+    expect(rotated.text).toContain('mcp_servers.kioku：换访问密钥')
+    expect(rotated.text).not.toContain('new_key')
     expect(readFileSync(toml, 'utf8')).toBe(`${rest}\n${block(base, 'new_key')}`)
     // 撤销：别的段还在
     await run(setup, ['codex', '--undo'])
@@ -187,11 +189,164 @@ describe('kioku setup codex', () => {
   it('已有手写的同名 MCP 服务时换成 setup 的写法，改动里写出原来的地址', async () => {
     writeFileSync(toml, '[mcp_servers.kioku]\nurl = "http://127.0.0.1:1/other"\nenabled = false\n')
     const result = await run(setup, ['codex', '--server-url', base])
-    expect(result.text).toContain(
-      `mcp_servers.kioku：http://127.0.0.1:1/other/v1/mcp → ${base}/v1/mcp`,
-    )
+    expect(result.text).toContain(`mcp_servers.kioku：http://127.0.0.1:1/other → ${base}/v1/mcp`)
     expect(readFileSync(toml, 'utf8')).toBe(block(base))
     expect(readFileSync(`${toml}.kioku-backup`, 'utf8')).toContain('enabled = false')
+  })
+
+  it('访问密钥、地址里有换行这类字符时在写文件、发请求之前就拦下', async () => {
+    for (const key of ['kk_abc\nnote', 'kk\u0015abc', 'a\tb']) {
+      await expect(run(setup, ['codex', '--server-url', base], { key })).rejects.toThrow('格式不对')
+      await expect(
+        run(setup, ['codex', '--server-url', base, '--no-check'], { key }),
+      ).rejects.toThrow('格式不对')
+    }
+    for (const url of [`${base}/a\nb`, `http://127.0.0.1\t:1`, 'http://a b']) {
+      await expect(run(setup, ['codex', '--server-url', url, '--no-check'])).rejects.toThrow(
+        '空白或控制字符',
+      )
+    }
+    expect(requests).toHaveLength(0)
+    expect(readdirSync(dir)).toEqual(['codex'])
+    expect(readdirSync(join(dir, 'codex'))).toEqual([])
+  })
+
+  it('段名的等价写法（带引号、点两边有空白）认作同一个服务，换掉而不是再加一段', async () => {
+    for (const header of [
+      '[mcp_servers."kioku"]',
+      "[ mcp_servers . 'kioku' ]",
+      '[mcp_servers.kioku] # 注释',
+    ]) {
+      writeFileSync(
+        toml,
+        `a = 1\n\n${header}\nurl = "http://old.example.com/v1/mcp"\n\n[mcp_servers."kioku".http_headers]\nAuthorization = "Bearer old"\n`,
+      )
+      await run(setup, ['codex', '--server-url', base, '--no-check'])
+      expect(readFileSync(toml, 'utf8'), header).toBe(`a = 1\n\n${block(base)}`)
+    }
+  })
+
+  it('用行内表或带点的键定义的 kioku 服务按行认不出范围：不动 config.toml', async () => {
+    for (const original of [
+      'mcp_servers.kioku.url = "http://127.0.0.1:1"\n',
+      'mcp_servers."kioku" = { url = "http://127.0.0.1:1" }\n',
+      'mcp_servers = { kioku = { url = "http://127.0.0.1:1" } }\n',
+      '[mcp_servers]\nkioku = { url = "http://127.0.0.1:1" }\n',
+      '[mcp_servers]\n"kioku".url = "http://127.0.0.1:1"\n',
+    ]) {
+      writeFileSync(toml, original)
+      await expect(
+        run(setup, ['codex', '--server-url', base], { key: KEY }),
+        original,
+      ).rejects.toThrow('没有改动它')
+      expect(readFileSync(toml, 'utf8')).toBe(original)
+      const checked = await run(doctor, ['codex'])
+      expect(checked.text).toContain('用了行内表或带点的键')
+    }
+    // 名字里带着 kioku 的别的服务不算
+    writeFileSync(
+      toml,
+      '[mcp_servers]\nkioku_old = { url = "x" }\n\n[mcp_servers.kioku2]\nurl = "y"\n',
+    )
+    await run(setup, ['codex', '--server-url', base, '--no-check'])
+    expect(readFileSync(toml, 'utf8')).toContain(
+      '[mcp_servers.kioku2]\nurl = "y"\n\n[mcp_servers.kioku]',
+    )
+  })
+
+  it('多行数组里单独成行的方括号不当成段的标题；别处的空行、紧跟在后面的注释都不动', async () => {
+    const original = [
+      '[features]',
+      'list = [',
+      '  [1, 2],',
+      '  [3]',
+      ']',
+      'memories = true',
+      '',
+      '',
+      '[mcp_servers.kioku]',
+      'args = [',
+      '  [1]',
+      ']',
+      'url = "http://old.example.com/v1/mcp"',
+      '',
+      '# 下面这个是另一个服务',
+      '[mcp_servers.other]',
+      'url = "z"',
+      '',
+    ].join('\n')
+    writeFileSync(toml, original)
+    await run(setup, ['codex', '--server-url', base, '--no-check'])
+    expect(readFileSync(toml, 'utf8')).toBe(
+      [
+        '[features]',
+        'list = [',
+        '  [1, 2],',
+        '  [3]',
+        ']',
+        'memories = false',
+        '',
+        '',
+        '# 下面这个是另一个服务',
+        '[mcp_servers.other]',
+        'url = "z"',
+        '',
+        block(base),
+      ].join('\n'),
+    )
+  })
+
+  it('config.toml 里已经写着访问密钥时不留备份：换访问密钥、撤销之后旧的不留在备份里', async () => {
+    await run(setup, ['codex', '--server-url', base])
+    await run(setup, ['codex', '--no-check'], { key: 'second_key' })
+    expect(readdirSync(join(dir, 'codex'))).toEqual(['config.toml'])
+    await run(setup, ['codex', '--undo'])
+    expect(readdirSync(join(dir, 'codex'))).toEqual(['config.toml'])
+    expect(readFileSync(toml, 'utf8')).toBe('')
+  })
+
+  it('--undo 一起删掉钩子记下的用户输入', async () => {
+    await run(setup, ['codex', '--server-url', base])
+    const fallback = join(dir, 'kioku', 'codex-state', 'turns')
+    const data = join(dir, 'codex', 'plugins', 'data', 'kioku-kioku', 'turns')
+    const other = join(dir, 'codex', 'plugins', 'data', 'other-x', 'turns')
+    for (const turns of [fallback, data, other]) {
+      mkdirSync(turns, { recursive: true })
+      writeFileSync(join(turns, 'turn.s.t.json'), '{}')
+    }
+    await run(setup, ['codex', '--undo'])
+    expect(readdirSync(join(dir, 'kioku'))).toEqual([])
+    expect(readdirSync(join(dir, 'codex', 'plugins', 'data', 'kioku-kioku'))).toEqual([])
+    expect(readdirSync(other)).toEqual(['turn.s.t.json'])
+  })
+
+  it('改动里的地址只写协议、主机与路径，不带账号密码与查询参数', async () => {
+    writeFileSync(
+      toml,
+      '[mcp_servers.kioku]\nurl = "https://user:hunter-22@old.example.com/v1/mcp?token=abc"\n',
+    )
+    const result = await run(setup, ['codex', '--server-url', base, '--dry-run'])
+    expect(result.text).toContain(
+      `mcp_servers.kioku：https://old.example.com/v1/mcp → ${base}/v1/mcp`,
+    )
+    expect(result.text).not.toMatch(/hunter-22|token=abc/)
+    writeFileSync(toml, '[mcp_servers.kioku]\ncommand = "x"\n')
+    expect((await run(setup, ['codex', '--server-url', base, '--dry-run'])).text).toContain(
+      'mcp_servers.kioku：（认不出的写法） →',
+    )
+  })
+
+  it('features 写成行内表时认不出 Memories 的开关：提醒，不当成已经关着', async () => {
+    writeFileSync(toml, 'features = { memories = true }\n')
+    const result = await run(setup, ['codex', '--server-url', base])
+    expect(result.text).toContain('codex features disable memories')
+    const checked = await run(doctor, ['codex'])
+    expect(checked.text).toContain('features 的写法认不出来')
+    expect(checked.text).not.toContain('Memories 没有启用')
+    // 带引号的键照样认得
+    writeFileSync(toml, '[features]\n"memories" = true\n')
+    await run(setup, ['codex', '--server-url', base])
+    expect(readFileSync(toml, 'utf8')).toMatch(/^\[features\]\n"memories" = false\n/)
   })
 
   it('--dry-run 不提示输入、不发请求、不写文件', async () => {

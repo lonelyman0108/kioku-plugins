@@ -210,13 +210,17 @@ describe('Codex 钩子转发', () => {
     expect(readdirSync(join(config, 'codex-state', 'turns'))).toEqual(['turn.s1.t1.json'])
   })
 
-  it('会话开始时删掉放了一天以上的输入', async () => {
+  it('会话开始与下一次输入时删掉放了一天以上的输入', async () => {
     await run('prompt.submit', { session_id: 's1', turn_id: 'old', prompt: '问' })
     await run('prompt.submit', { session_id: 's1', turn_id: 'new', prompt: '问' })
     const old = new Date(Date.now() - 25 * 60 * 60 * 1000)
     utimesSync(join(data, 'turns', 'turn.s1.old.json'), old, old)
     await run('session.start', { session_id: 's2' })
     expect(turns()).toEqual(['turn.s1.new.json'])
+    // 下一次输入时也清
+    utimesSync(join(data, 'turns', 'turn.s1.new.json'), old, old)
+    await run('prompt.submit', { session_id: 's2', turn_id: 't1', prompt: '问' })
+    expect(turns()).toEqual(['turn.s2.t1.json'])
   })
 
   it('没有配置时只在会话开始提示一次，不发请求', async () => {

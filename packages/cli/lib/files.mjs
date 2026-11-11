@@ -50,9 +50,9 @@ export function serialize(settings, text) {
 // - 设置文件是符号链接时改它指向的文件，不把链接换成普通文件。
 // - 先写临时文件再改名：写到一半被打断时原来的设置还在；失败时临时文件删掉。
 // - 改名之前再读一次，和开始时读到的不一样就不写：别的程序刚改过，写下去会盖掉它的改动。
-// - 备份只留第一份：之后再改时不覆盖，最早的原文件才留得住。
+// - 备份只留第一份：之后再改时不覆盖，最早的原文件才留得住。原文里有不该多留一份的内容时（backup 为假）不备份。
 // 权限沿用原文件的，新建的只给本人
-export async function safeWrite(file, body, text) {
+export async function safeWrite(file, body, text, { backup = true } = {}) {
   let target = file
   let temp
   try {
@@ -69,7 +69,7 @@ export async function safeWrite(file, body, text) {
       throw new KiokuFailure(`${file} 刚被别的程序改过，没有写入：重新运行一次`)
     }
     let backedUp = false
-    if (text !== null) {
+    if (text !== null && backup) {
       try {
         await copyFile(target, `${file}.kioku-backup`, constants.COPYFILE_EXCL)
         backedUp = true

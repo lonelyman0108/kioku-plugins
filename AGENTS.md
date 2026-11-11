@@ -69,7 +69,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - `kioku setup` 只改平台设置里 `platforms.mjs` 列出的那几项：读不懂的设置文件（不是 JSON 对象）不动它；符号链接改它指向的文件；先写临时文件，改名之前再读一次，和开始时读到的不一样就不写；备份只留第一份；`--undo` 只把这几项改回去，不用备份覆盖。原因：设置文件是用户的，里面还有别的工具写的内容，平台自己也随时在改它，有人用符号链接把它放在别处管理。
 - `kioku doctor` 打印不是自己写的文字（服务端给的应用名、环境变量里的地址）之前一律经 `plain`：控制字符、行与段落分隔符、改变显示方向的字符换成空格。它可能在 agent 的 Bash 工具里跑，输出会进上下文，名字里的换行能伪造一行结果。地址只打印协议、主机与路径，写在地址里的账号密码不打印。
 - 两份市场清单要都在：Codex 没有 `.agents/plugins/marketplace.json` 时会退回去读 `.claude-plugin/marketplace.json`，把 Claude Code 插件当成可装的（它的钩子读的是 Claude Code 的配置，装上只会一直提示没有配置）。
-- Codex 的 `config.toml` 只按行改（`codex.mjs`），不引 TOML 库（插件目录里的副本不能带依赖）。名叫 kioku 的 MCP 服务按段名认（`[mcp_servers.kioku]` 与它的子段），整个归 `kioku setup` 管；不要用注释当标记圈范围：Codex 自己会重写这个文件，注释会被它挪到别的段后面，圈进去的就成了别人的配置。
+- Codex 的 `config.toml` 只按行改（`codex.mjs`），不引 TOML 库（插件目录里的副本不能带依赖）。名叫 kioku 的 MCP 服务按段名认（`[mcp_servers.kioku]` 与它的子段），整个归 `kioku setup` 管；不要用注释当标记圈范围：Codex 自己会重写这个文件，注释会被它挪到别的段后面，圈进去的就成了别人的配置。段名先规整再比（带引号的、点两边有空白的是同一个名字）；用行内表或带点的键定义的 kioku 服务按行认不出范围，这时不写，否则再加一段就成了重复定义，整份配置 Codex 都读不了。访问密钥与地址先过格式检查再写、再发请求：带换行的值写进去同样是坏的 TOML。`config.toml` 里已经写着访问密钥时改它不留备份（`safeWrite` 的 `backup: false`）。
 - Codex 的钩子要注意三点（都在真实的 Codex 上核对过，版本 0.167.1）：Stop 不带用户的输入，要在 UserPromptSubmit 时按会话与轮次记下、结束时取走；注入的上下文默认超过约 2,500 token 就被存成文件、只给模型看头尾，`hooks.json` 里的 `additionalContextLimit` 要比服务端给 Codex 的字数上限（`HOST_CONTEXT_LIMIT`，9,500 字约 7,400 token）宽；插件带的钩子要用户在 `/hooks` 里信任过才运行，自动化的测试用 `--dangerously-bypass-hook-trust`。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。

@@ -25,6 +25,8 @@ export function profileFile(platform, env) {
 
 // 服务地址：去掉首尾空白与结尾的斜杠；不是 http(s) 地址、或者带着账号密码、查询参数时返回原因
 export function serverUrlProblem(url) {
+  // URL 解析会悄悄去掉中间的换行与制表符：原样写进配置文件的是带着它们的那一份
+  if (/[\s\p{Cc}]/u.test(url)) return '服务地址里不能有空白或控制字符'
   let parsed
   try {
     parsed = new URL(url)

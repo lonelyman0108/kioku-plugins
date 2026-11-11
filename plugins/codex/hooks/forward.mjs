@@ -25,7 +25,7 @@ const HOOK_EVENTS = { 'session.start': 'SessionStart', 'prompt.submit': 'UserPro
 // 会话与轮次的标识要拼进文件名，只收这些字符
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const PENDING_PREFIX = 'turn.'
-// 没等到这一轮结束的输入（会话被强行结束）留这么久，之后在会话开始时删掉
+// 没等到这一轮结束的输入（这一轮被中断、会话被强行结束）留这么久，之后在会话开始或下一次输入时删掉
 const PENDING_MAX_AGE = 24 * 60 * 60 * 1000
 const SETUP_HINT =
   '运行 kioku setup codex 配置（没有 kioku 命令时用 npx @kioku-memory/cli setup codex）'
@@ -107,7 +107,8 @@ async function main(event) {
   } catch {
     // 输入不是 JSON 时按空输入处理：会话开始照常注入，提交的提示语为空则不召回
   }
-  if (event === 'session.start') await sweepPending(env)
+  // 每轮结束之外的两个事件都顺手清一次：只在会话开始清的话，一直开着的会话里中断的轮次会留很久
+  if (event !== 'turn.end') await sweepPending(env)
 
   let profile
   try {

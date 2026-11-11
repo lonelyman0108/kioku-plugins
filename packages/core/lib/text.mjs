@@ -6,3 +6,9 @@ export function plain(value) {
     .trim()
   return Array.from(text).slice(0, 200).join('')
 }
+
+// 地址只打印协议、主机与路径：写在地址里的账号密码、查询参数不打印
+export function shownUrl(url) {
+  const { origin, pathname } = new URL(url)
+  return plain(origin + pathname.replace(/\/+$/, ''))
+}

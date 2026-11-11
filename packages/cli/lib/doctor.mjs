@@ -7,7 +7,7 @@ import { failureText } from './http.mjs'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.mjs'
 import { readSettings } from './files.mjs'
 import { readProfile } from './profile.mjs'
-import { plain } from './text.mjs'
+import { plain, shownUrl } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
 export const DOCTOR_USAGE = `用法：kioku doctor [平台]
@@ -30,12 +30,6 @@ const LAYERS = {
 }
 const SENSITIVITIES = { public: '公开', internal: '内部', private: '私密', secret: '机密' }
 const CAPABILITIES = { none: '不可用', use: '取用', manage: '管理' }
-
-// 地址只打印协议、主机与路径：写在地址里的账号密码、查询参数不打印
-export function shownUrl(url) {
-  const { origin, pathname } = new URL(url)
-  return plain(origin + pathname.replace(/\/+$/, ''))
-}
 
 function named(names, value) {
   return Object.hasOwn(names, value) ? names[value] : plain(value)
