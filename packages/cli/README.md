@@ -28,7 +28,10 @@ kioku setup claude-code             # 停用 Claude Code 的自动记忆
 kioku setup claude-code --undo      # 改回去
 ```
 
-只改平台的用户设置里和自带记忆有关的几项（Claude Code 是 `~/.claude/settings.json` 的 `autoMemoryEnabled`），设置里的其他内容不动。改之前把原来的文件备份成同目录下的 `settings.json.kioku-backup`，改完新开会话生效。本地已有的记忆文件不会被删掉。
+只改平台的用户设置里和自带记忆有关的几项（Claude Code 是 `~/.claude/settings.json` 的 `autoMemoryEnabled`），设置里的其他内容不动。第一次改之前把原来的文件备份成同目录下的 `settings.json.kioku-backup`（已有备份时不覆盖），改完新开会话生效。本地已有的记忆文件不会被删掉。
+
+- 设置文件是符号链接时改它指向的文件；文件会按 JSON 重新排版（缩进、换行符沿用原来的）。
+- 只看用户设置：当前项目的 `.claude/settings.json`、`.claude/settings.local.json` 里又启用了的话会提醒，要在那里一起改；托管的设置查不到。
 
 不停用的话，平台自带的记忆和 Kioku 会各记一份，两边的内容迟早对不上。
 

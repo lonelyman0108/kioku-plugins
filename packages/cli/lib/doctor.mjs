@@ -29,12 +29,19 @@ const LAYERS = {
 const SENSITIVITIES = { public: '公开', internal: '内部', private: '私密', secret: '机密' }
 const CAPABILITIES = { none: '不可用', use: '取用', manage: '管理' }
 
-// 服务端给的文字打印之前去掉控制字符，压成一行
+// 不由本命令写的文字（服务端给的名字、环境变量里的地址）打印之前压成一行：控制字符、行与段落分隔符、
+// 改变显示方向的格式字符都换成空格，免得伪造出一行结果；截断时不切开代理对
 function plain(value) {
-  return String(value ?? '')
-    .replace(/\p{Cc}+/gu, ' ')
+  const text = String(value ?? '')
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
     .trim()
-    .slice(0, 200)
+  return Array.from(text).slice(0, 200).join('')
+}
+
+// 地址只打印协议、主机与路径：写在地址里的账号密码、查询参数不打印
+function shownUrl(url) {
+  const { origin, pathname } = new URL(url)
+  return plain(origin + pathname.replace(/\/+$/, ''))
 }
 
 function named(names, value) {
@@ -65,7 +72,11 @@ async function whoami({ url, key }) {
   }
   if (res.status === 401) throw new KiokuFailure('访问密钥无效或已吊销')
   if (!res.ok) throw new KiokuFailure(`Kioku 返回 HTTP ${res.status}`)
-  if (typeof data?.app?.runtimeFamily !== 'string' || typeof data.scopes !== 'object') {
+  if (
+    typeof data?.app?.runtimeFamily !== 'string' ||
+    data.scopes === null ||
+    typeof data.scopes !== 'object'
+  ) {
     throw new KiokuFailure('Kioku 的响应格式不对')
   }
   return data
@@ -84,7 +95,10 @@ export function parseDoctorArgs(argv) {
   return { platform: names[0] ?? null }
 }
 
-export async function doctor(argv, { env = process.env, out = process.stdout } = {}) {
+export async function doctor(
+  argv,
+  { env = process.env, out = process.stdout, cwd = process.cwd() } = {},
+) {
   const id = parseDoctorArgs(argv).platform ?? detectPlatform(env)
   const platform = id ? PLATFORMS[id] : null
   let failed = false
@@ -98,7 +112,7 @@ export async function doctor(argv, { env = process.env, out = process.stdout } =
   let who = null
   try {
     const config = await loadConfig(env)
-    ok(`地址 ${config.url}`)
+    ok(`地址 ${shownUrl(config.url)}`)
     who = await whoami(config)
   } catch (err) {
     bad(failureText(err))
@@ -133,7 +147,12 @@ export async function doctor(argv, { env = process.env, out = process.stdout } =
     if (platform.pluginActive(settings, env)) ok(`${platform.name} 的 kioku 插件已启用`)
     else warn(`用户设置里没有启用 ${platform.name} 的 kioku 插件：${platform.pluginHint}`)
     const by = platform.memory.disabledBy(settings, env)
-    if (by) ok(`${platform.name} 的${platform.memory.name}已停用（${by}）`)
+    const again = by ? await platform.memory.enabledBy(env, cwd) : null
+    if (again) {
+      warn(
+        `${platform.name} 的${platform.memory.name}在${by}里停用了，${again}又启用了它：要在那里一起改`,
+      )
+    } else if (by) ok(`${platform.name} 的${platform.memory.name}已停用（${by}）`)
     else {
       warn(
         `${platform.name} 的${platform.memory.name}还开着，会和 Kioku 各记一份：运行 kioku setup ${id} 停用它`,

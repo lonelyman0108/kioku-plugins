@@ -31,7 +31,7 @@ Claude Code 自带的自动记忆（auto memory）不停用的话，会和 Kioku
 kioku setup claude-code
 ```
 
-它把 `~/.claude/settings.json` 的 `autoMemoryEnabled` 设为 `false`，别的设置不动，原来的文件备份成 `settings.json.kioku-backup`；`--dry-run` 只看要改什么，`--undo` 改回去。已有的记忆文件不会被删掉。新开会话生效。
+它把 `~/.claude/settings.json` 的 `autoMemoryEnabled` 设为 `false`，别的设置不动，第一次改之前把原来的文件备份成 `settings.json.kioku-backup`；`--dry-run` 只看要改什么，`--undo` 改回去。已有的记忆文件不会被删掉。新开会话生效。
 
 装好之后可以用 `kioku doctor` 检查：地址与访问密钥能不能用、访问密钥的权限、插件是否启用、自动记忆是否已停用。
 

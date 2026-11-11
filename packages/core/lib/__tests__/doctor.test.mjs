@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,7 +49,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 const settings = (value) => writeFileSync(join(dir, 'settings.json'), JSON.stringify(value))
 async function run(args = []) {
   let text = ''
-  const code = await doctor(args, { env, out: { write: (chunk) => (text += chunk) } })
+  const code = await doctor(args, { env, cwd: dir, out: { write: (chunk) => (text += chunk) } })
   return { code, text, lines: text.trimEnd().split('\n') }
 }
 
@@ -116,6 +116,7 @@ describe('kioku doctor', () => {
       [() => ({ status: 401, body: { error: 'x' } }), '✗ 访问密钥无效或已吊销'],
       [() => ({ status: 500, body: {} }), '✗ Kioku 返回 HTTP 500'],
       [() => ({ status: 200, body: { app: {} } }), '✗ Kioku 的响应格式不对'],
+      [() => ({ status: 200, body: { app: WHO.app, scopes: null } }), '✗ Kioku 的响应格式不对'],
       [
         () => ({ status: 301, headers: { location: 'https://kioku.example.com/v1/whoami' } }),
         '✗ Kioku 返回了跳转（301），把地址改成跳转之后的地址（例如 https://kioku.example.com）',
@@ -151,6 +152,33 @@ describe('kioku doctor', () => {
     })
     const result = await run()
     expect(result.lines[1]).toBe('✓ 访问密钥可用：应用 甲 ✓ 假的一行 [2J（cc），运行时 claudecode')
+    // 行分隔符、段落分隔符与改变显示方向的字符也一样；截断不切开表情
+    reply = () => ({
+      status: 200,
+      body: { ...WHO, app: { ...WHO.app, name: `乙\u2028丙\u2029丁\u202e戊${'😀'.repeat(300)}` } },
+    })
+    const separators = await run()
+    expect(separators.lines).toHaveLength(7)
+    expect(separators.lines[1]).toContain(`应用 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
+  })
+
+  it('地址里的账号密码与查询参数不打印', async () => {
+    env.KIOKU_SERVER_URL = `http://user:hunter-22@127.0.0.1:${new URL(base).port}/sub/?token=abc`
+    const result = await run()
+    expect(result.lines[0]).toBe(`✓ 地址 ${base}/sub`)
+    expect(result.text).not.toMatch(/hunter-22|token=abc/)
+  })
+
+  it('用户设置停用了、项目的设置又启用时提醒', async () => {
+    settings({ enabledPlugins: { 'kioku@kioku': true }, autoMemoryEnabled: false })
+    mkdirSync(join(dir, '.claude'))
+    writeFileSync(join(dir, '.claude', 'settings.json'), '{"autoMemoryEnabled":true}')
+    const result = await run(['claude-code'])
+    expect(result.code).toBe(0)
+    expect(result.text).toContain(
+      '! Claude Code 的自动记忆（auto memory）在用户设置里停用了，项目的 .claude/settings.json 又启用了它',
+    )
+    expect(result.text).not.toContain('已停用（')
   })
 
   it('设置文件坏了是 ✗', async () => {

@@ -1,11 +1,22 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { KiokuFailure } from '../http.mjs'
-import { setup } from '../setup.mjs'
+import { setup, writeSettings } from '../setup.mjs'
 import { UsageError } from '../usage.mjs'
 
 let dir
@@ -20,7 +31,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 async function run(args) {
   let text = ''
-  const code = await setup(args, { env, out: { write: (chunk) => (text += chunk) } })
+  const code = await setup(args, { env, cwd: dir, out: { write: (chunk) => (text += chunk) } })
   return { code, text }
 }
 const saved = () => JSON.parse(readFileSync(file, 'utf8'))
@@ -88,6 +99,82 @@ describe('kioku setup claude-code', () => {
       expect(readFileSync(file, 'utf8')).toBe(original)
     }
     expect(readdirSync(dir)).toEqual(['settings.json'])
+  })
+
+  it('设置文件是符号链接时改它指向的文件，链接还在', async () => {
+    const real = join(dir, 'dotfiles', 'settings.json')
+    mkdirSync(join(dir, 'dotfiles'))
+    writeFileSync(real, '{"model":"x"}\n')
+    symlinkSync(real, file)
+    await run(['claude-code'])
+    expect(lstatSync(file).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(readFileSync(real, 'utf8'))).toEqual({ model: 'x', autoMemoryEnabled: false })
+    expect(readdirSync(join(dir, 'dotfiles'))).toEqual(['settings.json'])
+    expect(readFileSync(`${file}.kioku-backup`, 'utf8')).toBe('{"model":"x"}\n')
+  })
+
+  it('空文件与带 BOM 的文件照常读；换行符与结尾有没有换行沿用原文件', async () => {
+    writeFileSync(file, '  \n')
+    await run(['claude-code'])
+    expect(saved()).toEqual({ autoMemoryEnabled: false })
+
+    writeFileSync(file, '\uFEFF{\r\n  "model": "x"\r\n}')
+    await run(['claude-code'])
+    expect(readFileSync(file, 'utf8')).toBe(
+      '{\r\n  "model": "x",\r\n  "autoMemoryEnabled": false\r\n}',
+    )
+  })
+
+  it('设置目录还没有时建出来', async () => {
+    env.CLAUDE_CONFIG_DIR = join(dir, 'new', 'claude')
+    file = join(env.CLAUDE_CONFIG_DIR, 'settings.json')
+    const result = await run(['claude-code'])
+    expect(result.code).toBe(0)
+    expect(saved()).toEqual({ autoMemoryEnabled: false })
+  })
+
+  it('备份只留第一份，之后再改不覆盖', async () => {
+    const original = '{"model":"x"}\n'
+    writeFileSync(file, original)
+    await run(['claude-code'])
+    const undone = await run(['claude-code', '--undo'])
+    expect(undone.text).toContain('已有更早的备份，没有覆盖')
+    expect(undone.text).not.toContain('原来的设置备份在')
+    expect(readFileSync(`${file}.kioku-backup`, 'utf8')).toBe(original)
+  })
+
+  it('读过之后文件被别的程序改了就不写，也不留临时文件和备份', async () => {
+    writeFileSync(file, '{"model":"新的"}')
+    await expect(
+      writeSettings(file, { autoMemoryEnabled: false }, '{"model":"旧的"}'),
+    ).rejects.toThrow('刚被别的程序改过')
+    expect(readFileSync(file, 'utf8')).toBe('{"model":"新的"}')
+    expect(readdirSync(dir)).toEqual(['settings.json'])
+    // 读的时候没有这个文件，写的时候有了，也一样
+    await expect(writeSettings(file, {}, null)).rejects.toThrow('刚被别的程序改过')
+    expect(readdirSync(dir)).toEqual(['settings.json'])
+  })
+
+  it('写不进去时报无法写入，原文件不变', async () => {
+    writeFileSync(file, '{}')
+    // 目录只读：临时文件建不出来
+    chmodSync(dir, 0o500)
+    try {
+      await expect(run(['claude-code'])).rejects.toThrow(/无法写入 .*（E[A-Z]+）/)
+    } finally {
+      chmodSync(dir, 0o700)
+    }
+    expect(readFileSync(file, 'utf8')).toBe('{}')
+    expect(readdirSync(dir)).toEqual(['settings.json'])
+  })
+
+  it('项目的设置又启用了自动记忆时提醒；环境变量停用着时不提', async () => {
+    mkdirSync(join(dir, '.claude'))
+    writeFileSync(join(dir, '.claude', 'settings.local.json'), '{"autoMemoryEnabled":true}')
+    const result = await run(['claude-code'])
+    expect(result.text).toContain('注意：项目的 .claude/settings.local.json 又启用了它')
+    env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = ' 1 '
+    expect((await run(['claude-code'])).text).not.toContain('注意')
   })
 
   it('参数不对', async () => {
