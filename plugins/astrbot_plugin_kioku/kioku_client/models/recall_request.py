@@ -23,12 +23,12 @@ class RecallRequest:
     """
     Attributes:
         query (str):
-        limit (int | Unset):  Default: 8.
+        limit (int | Unset):
         context (SessionContext | Unset):
     """
 
     query: str
-    limit: int | Unset = 8
+    limit: int | Unset = UNSET
     context: SessionContext | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
