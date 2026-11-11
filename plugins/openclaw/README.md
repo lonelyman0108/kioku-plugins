@@ -14,7 +14,7 @@
 
 ## 安装
 
-要 OpenClaw 2026.6.35 或更新的版本（更早的没有核对过）。
+要 OpenClaw 2026.6.35 或更新的版本（更早的没有核对过；核对过 2026.6.35 与 2026.11.3）。
 
 先在 Kioku 管理界面的「应用」页建一个运行时是 OpenClaw 的应用，签发访问密钥。然后：
 
@@ -28,6 +28,8 @@ openclaw plugins install npm:@kioku-memory/openclaw
 # 3. 重启网关
 openclaw gateway restart
 ```
+
+新一些的 OpenClaw（2026.11.3 上是这样）装第三方插件前要确认它声明的能力：第 2 步提示 `requires capability consent` 时，看过插件要用的能力（记忆槽位、每轮的输入与回复、工具）之后加上 `--accept-capabilities` 再运行一次。
 
 第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login openclaw --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好空间与权限后确认。
 

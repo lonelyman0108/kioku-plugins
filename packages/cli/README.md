@@ -132,6 +132,14 @@ kioku import --from claude-code             # 列出计划，确认后写入
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
 
+## 各系统
+
+macOS 与 Linux 上各平台都实测过。Windows 上只跑过单元用例（CI），没有在真实的平台里跑过端到端：
+
+- 配置文件在 `%USERPROFILE%\.config\kioku\`（和别的系统一样的相对位置，可以用 `KIOKU_CONFIG_DIR` 改）。Windows 没有 600 这种权限位，文件靠用户目录自己的访问控制保护。
+- npm 装的命令是 `.cmd`：`kioku setup openclaw`、`kioku run -- npm …` 会经 `cmd.exe` 起它们，参数里的 `&`、`|`、`%` 这类字符照原样交给命令。
+- `kioku run` 转发信号（Ctrl-C、终止）的行为只在 macOS、Linux 上核对过。
+
 ## 地址与访问密钥
 
 `kioku doctor codex`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：

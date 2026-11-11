@@ -112,6 +112,12 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **MCP 的地址与访问密钥在补丁的表达式里读本机的文件**（`!!js`，用 `process.getBuiltinModule` 取 `node:fs`）：表达式引用不到插件的代码，找文件的规则在补丁里又写了一遍，`plugins/dsh/__tests__/patch.test.mjs` 拿 `profile.mjs` 写出来的文件核对。改 `profileDir` 的规则要同步改补丁；地址与访问密钥的规整（去空白、去结尾的斜杠、只收可见的 ASCII）也照着 `readProfile` 写了一遍，手改的文件两边读出来要一样。正则里用 `[/]` 不用反斜杠（YAML 的双引号里反斜杠要转义）。表达式里只用单引号（用例按双引号截取）。
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
+- 跨系统（CI 里 `test-windows` 在真的 Windows 上跑 JS 的用例；五个平台在 Linux 容器里各实测过一遍）：
+  - **起外部命令一律经 `command.mjs`**（`findCommand` 找、`invocation` 算怎么起）：Windows 上 npm 装的命令是 `.cmd`，直接 `execFile`、`spawn` 起不来，经 `cmd.exe` 时参数要转义（规则改写自 cross-spawn，登记在 `NOTICE`）。「没有这个命令」靠自己在 PATH 里找不到来判断，不靠 `ENOENT`：经 `cmd.exe` 起的时候找不到只是退出码 1。
+  - 用例里的假命令用 `__tests__/fakeCommand.mjs` 造（Windows 上是 `.cmd` 加一个 `.js`），不手写 shebang 加 `chmod`。
+  - 用例不按 `/` 切路径（用 `basename`、`join`、`sep`）；权限位的断言经 `mode(0o600)`（Windows 上文件一律是 666）；只在 POSIX 上有意义的（信号、直接执行带 shebang 的脚本、文件名里的控制字符、靠目录权限让写入失败）用 `posixOnly`，在 Windows 上跳过。
+  - `bin/kioku` 在输出被提前关掉（`| head`）时安静地结束；`run` 除外，它自己等命令结束、按命令的结果退出。
+  - 本机起 Linux 容器实测：非交互的会话里 docker 会去找钥匙串，换 `DOCKER_CONFIG` 还不够，要把 `docker-credential-osxkeychain` 所在的目录也从 PATH 里去掉；容器里用普通用户跑，经 `host.docker.internal` 连本机的 Kioku（转发要听 `0.0.0.0`）。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。
