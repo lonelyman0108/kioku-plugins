@@ -70,8 +70,8 @@ export async function setup(
     out = process.stdout,
     cwd = process.cwd(),
     readKey = readSecret,
-    // 在终端里运行、没给访问密钥时可以改用浏览器授权；不在终端里（管道、agent 的命令）时没有
-    login = process.stdin.isTTY ? browserLogin(out) : undefined,
+    // 在终端里运行、没给访问密钥时可以改用浏览器授权；不在终端里（管道、agent 的命令）时没有；传 null 是明说不要
+    login = process.stdin.isTTY ? browserLogin(out) : null,
   } = {},
 ) {
   const options = parseSetupArgs(argv)

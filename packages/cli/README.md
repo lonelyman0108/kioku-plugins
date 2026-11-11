@@ -34,7 +34,9 @@ kioku login codex --server-url https://kioku.example.com
 - 不用在本机开端口，远程登录的机器上也能用：在任何一台登录了管理界面的浏览器里确认都行。
 - 要 Kioku 服务端支持浏览器授权；旧的服务端会提示改用 `kioku setup` 手动填访问密钥。
 
-`kioku setup codex`、`kioku setup pi` 在终端里提示输入访问密钥时直接回车，走的是同一个流程。
+`kioku setup codex`、`kioku setup pi` 第一次配置时，在终端里提示输入访问密钥的地方直接回车，走的是同一个流程。已经配过的再运行 `setup`，直接回车是沿用上次的访问密钥；要换一个就运行 `kioku login`。
+
+- 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的应用页吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
 
 ## setup
 

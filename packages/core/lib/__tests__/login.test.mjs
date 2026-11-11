@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -154,6 +154,95 @@ describe('kioku login', () => {
     expect(slept).toEqual([3000, 4000, 5000, 5000])
   })
 
+  it('服务端一时出错（5xx）几次不算失败，连着五次才放弃并提醒可能留下了访问密钥；跳转不重试', async () => {
+    answers = [{ status: 502 }, pending, answers[0]]
+    expect((await run(['pi', '--server-url', base])).code).toBe(0)
+
+    answers = [{ status: 503 }]
+    requests = []
+    await expect(run(['pi', '--server-url', base])).rejects.toThrow(/HTTP 503.*吊销/)
+    expect(tokenPolls()).toHaveLength(5)
+    // 出过错之后申请不在了：访问密钥可能已经签出去了
+    answers = [{ status: 500 }, { status: 200, body: { status: 'expired' } }]
+    await expect(run(['pi', '--server-url', base])).rejects.toThrow(/申请已经不在了.*吊销/)
+    // 轮询时地址返回跳转是配置的问题，不重试
+    answers = [{ status: 302, headers: { location: 'https://kioku.example.com/x' } }]
+    requests = []
+    await expect(run(['pi', '--server-url', base])).rejects.toThrow('返回了跳转')
+    expect(tokenPolls()).toHaveLength(1)
+  })
+
+  it('确认页的路径只收一种写法：带别的站点、查询参数、命令符号的都不收', async () => {
+    for (const verificationPath of [
+      '//evil.example.com',
+      '/authorize&calc.exe',
+      '/authorize?next=//evil.example.com',
+      '/authorize#x',
+      '/a b',
+      '/',
+      '/authorize/',
+    ]) {
+      authorize = () => ({ status: 201, body: { ...GRANT, verificationPath } })
+      await expect(run(['pi', '--server-url', base]), verificationPath).rejects.toThrow(
+        '响应格式不对',
+      )
+    }
+    expect(opened).toEqual([])
+    // 显示的和打开的是同一个地址
+    authorize = () => ({ status: 201, body: { ...GRANT, verificationPath: '/device/confirm' } })
+    const result = await run(['pi', '--server-url', base])
+    expect(opened).toEqual([`${base}/device/confirm`])
+    expect(result.text).toContain(`打开 ${base}/device/confirm，`)
+  })
+
+  it('服务端给的时限与间隔收在范围里：离谱的值不会一直等、不会忙等', async () => {
+    const cases = [
+      // 无穷大过了 JSON 就是 null：按默认的 10 分钟
+      [
+        { expiresIn: Infinity, interval: 0.001 },
+        { first: 1000, polls: 600 },
+      ],
+      [
+        { expiresIn: 1e9, interval: 0.5 },
+        { first: 1000, polls: 1800 },
+      ],
+      [
+        { expiresIn: 'Infinity', interval: 'x' },
+        { first: 3000, polls: 200 },
+      ],
+      [
+        { expiresIn: -5, interval: 1e12 },
+        { first: 60_000, polls: 10 },
+      ],
+      [
+        { expiresIn: 86_400, interval: 30 },
+        { first: 30_000, polls: 60 },
+      ],
+    ]
+    for (const [extra, expected] of cases) {
+      authorize = () => ({ status: 201, body: { ...GRANT, ...extra } })
+      answers = [pending]
+      requests = []
+      slept = []
+      clock = 0
+      await expect(run(['pi', '--server-url', base])).rejects.toThrow('申请过期了')
+      expect(slept[0], JSON.stringify(extra)).toBe(expected.first)
+      expect(tokenPolls(), JSON.stringify(extra)).toHaveLength(expected.polls)
+    }
+  })
+
+  it('访问密钥取到了、配置却写不下：报错里说明要去吊销；能提前看出来的在申请之前就拦下', async () => {
+    answers = [{ status: 200, body: { status: 'approved', key: 'bad key', app: WHO.app } }]
+    await expect(run(['pi', '--server-url', base])).rejects.toThrow(/格式不对.*已经签发.*吊销/)
+    // Codex 的 config.toml 写不进去：不申请
+    mkdirSync(join(dir, 'codex'))
+    writeFileSync(join(dir, 'codex', 'config.toml'), 'mcp_servers.kioku.url = "x"\n')
+    env.CODEX_HOME = join(dir, 'codex')
+    requests = []
+    await expect(run(['codex', '--server-url', base])).rejects.toThrow('行内表或带点的键')
+    expect(requests).toHaveLength(0)
+  })
+
   it('申请不下来：旧的服务端、申请太多、响应不对、地址跳转', async () => {
     const cases = [
       [{ status: 404 }, '还不支持浏览器授权'],
@@ -227,7 +316,7 @@ describe('kioku setup 没给访问密钥时改用浏览器授权', () => {
   })
 
   it('不在终端里（没有 login）照旧报没有给访问密钥；预览、已有访问密钥时不走', async () => {
-    await expect(runSetup(['pi', '--server-url', base], { login: undefined })).rejects.toThrow(
+    await expect(runSetup(['pi', '--server-url', base], { login: null })).rejects.toThrow(
       '没有给访问密钥',
     )
     let called = 0
@@ -238,6 +327,40 @@ describe('kioku setup 没给访问密钥时改用浏览器授权', () => {
     await runSetup(['pi', '--server-url', base, '--dry-run'], { login })
     await runSetup(['pi', '--server-url', base], { readKey: async () => 'kioku_typed', login })
     await runSetup(['pi'], { login })
+    expect(called).toBe(0)
+  })
+
+  it('已经有上次写下的访问密钥时，提示里直接回车是沿用它，不说成改用浏览器授权', async () => {
+    await runSetup(['pi', '--server-url', base], {
+      readKey: async () => 'kioku_typed',
+      login: null,
+    })
+    const asked = []
+    await runSetup(['pi'], {
+      readKey: async (options) => {
+        asked.push([options.canLogin, options.hasSaved])
+        return ''
+      },
+      login: async () => {
+        throw new Error('不该走到这里')
+      },
+    })
+    expect(asked).toEqual([[false, true]])
+  })
+
+  it('Codex：要走浏览器授权、config.toml 却写不进去时，在申请之前就拦下', async () => {
+    mkdirSync(join(dir, 'codex'))
+    writeFileSync(join(dir, 'codex', 'config.toml'), '[mcp_servers]\nkioku = { url = "x" }\n')
+    env.CODEX_HOME = join(dir, 'codex')
+    let called = 0
+    await expect(
+      runSetup(['codex', '--server-url', base], {
+        login: async () => {
+          called++
+          return KEY
+        },
+      }),
+    ).rejects.toThrow('没有改动它')
     expect(called).toBe(0)
   })
 })

@@ -215,13 +215,19 @@ export async function setupCodex(options, io) {
   const text = await readText(file)
   const found = scanConfig(text)
 
-  const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, io)
-  // 地址与访问密钥都定下来之后、写文件之前再看这个
-  if (found.unsupported) {
+  const refuseUnsupported = () => {
+    if (!found.unsupported) return
     throw new KiokuFailure(
       `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务，没有改动它：删掉那个定义后重新运行`,
     )
   }
+  // 要走浏览器授权时先看这个：访问密钥签发了却写不进去的话，会留下一个没人拿着的
+  const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, {
+    ...io,
+    beforeLogin: refuseUnsupported,
+  })
+  // 地址与访问密钥都定下来之后、写文件之前再看一次
+  refuseUnsupported()
 
   const before = blockValues(found)
   const sameBlock = Boolean(before && key && before.url === url && before.key === key)
@@ -258,6 +264,16 @@ export async function setupCodex(options, io) {
   }
   out.write(`Codex 已配好，新开会话生效。\n${found.plugin ? '' : NEXT_STEPS}`)
   return 0
+}
+
+// kioku login 申请之前先看：config.toml 写不写得进去
+export async function preflightCodex({ env }) {
+  const file = join(codexHome(env), 'config.toml')
+  if (scanConfig(await readText(file)).unsupported) {
+    throw new KiokuFailure(
+      `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务：删掉那个定义后重新运行`,
+    )
+  }
 }
 
 export async function inspectCodex({ env }, { ok, warn, bad, note }) {
