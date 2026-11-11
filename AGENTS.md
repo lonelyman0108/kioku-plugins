@@ -106,8 +106,10 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **钩子里抛出去的错会让这一轮整个失败**（实测：处理函数里一个 TypeError，dsh 以 `UNKNOWN` 退出）：三个入口都自己接住。`agent/pre-step` 是瀑布式的，一定要把 `next()` 的结果交回去，自己的请求出什么错都不能影响它。
   - **消息的来源不能叫 `plugin`**：会话格式不收（报错里说 message requires a producer-owned source kind），用自己的名字（`kioku`），附带的字段（`part`）会原样留在会话里，靠它认出会话里有没有注入过启动加载。消息对象自己拼（`role`、`id`、`content`、`source`），不引 `@deepseek-ai/dsh-llm`：按仓库装的包引用不到 dsh 自己的依赖。
   - **会话记录用 `session.snapshotEvents()` 读**（`session.events` 在这个版本里不能遍历）。一轮的范围是 `turn/start` 到下一个 `turn/start`；用户说的是 `user/message` 里来源为 `user` 的，运行时的说明、别的插件加的消息来源不同。
-  - **接着之前的会话（`resume`）时不重复注入启动加载**：注入的消息存在会话里，每次恢复都注入会越攒越多。
-  - **MCP 的地址与访问密钥在补丁的表达式里读本机的文件**（`!!js`，用 `process.getBuiltinModule` 取 `node:fs`）：表达式引用不到插件的代码，找文件的规则在补丁里又写了一遍，`plugins/dsh/__tests__/patch.test.mjs` 拿 `profile.mjs` 写出来的文件核对。改 `profileDir` 的规则要同步改补丁。表达式里只用单引号（用例按双引号截取）。
+  - **接着之前的会话（`resume`）时不重复注入启动加载**：注入的消息存在会话里，每次恢复都注入会越攒越多。只看最后一次压缩（`compaction/end`）之后有没有。取到了启动加载、这一步却被别的插件拒绝时不算注入过（`booted` 在消息真的接上去之后才清）。
+  - **子 agent 按会话头的 `origin`、`delegationDepth` 认**，不看 `parentSession`：用户分出来的会话也可能带着它。
+  - 上报不听这一轮的取消信号（被打断的一轮也要记），和输入前的请求各有各的退避。
+  - **MCP 的地址与访问密钥在补丁的表达式里读本机的文件**（`!!js`，用 `process.getBuiltinModule` 取 `node:fs`）：表达式引用不到插件的代码，找文件的规则在补丁里又写了一遍，`plugins/dsh/__tests__/patch.test.mjs` 拿 `profile.mjs` 写出来的文件核对。改 `profileDir` 的规则要同步改补丁；地址与访问密钥的规整（去空白、去结尾的斜杠、只收可见的 ASCII）也照着 `readProfile` 写了一遍，手改的文件两边读出来要一样。正则里用 `[/]` 不用反斜杠（YAML 的双引号里反斜杠要转义）。表达式里只用单引号（用例按双引号截取）。
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。

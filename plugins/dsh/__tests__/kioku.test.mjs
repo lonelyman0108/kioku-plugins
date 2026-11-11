@@ -78,10 +78,10 @@ const userMessage = (text, kind = 'user') => ({
   content: [{ type: 'text', text }],
   source: { kind },
 })
-function agentOf({ id = 'session-1', events = [], parentSession, cwd = undefined } = {}) {
+function agentOf({ id = 'session-1', events = [], header = {}, cwd = undefined } = {}) {
   return {
     session: {
-      header: { version: 4, id, cwd, ...(parentSession ? { parentSession } : {}) },
+      header: { version: 4, id, cwd, ...header },
       snapshotEvents: () => events,
     },
   }
@@ -182,14 +182,77 @@ describe('DeepSeek Harness 插件：输入前', () => {
     expect(events()).toEqual(['prompt.submit', 'session.start'])
   })
 
-  it('子 agent 的会话不管', async () => {
+  it('子 agent 的会话不管；用户自己分出来的会话（只带着上一级会话的 id）照常', async () => {
     const kioku = start()
-    const sub = agentOf({ id: 'session-sub', parentSession: 'session-1' })
-    kioku.created({ agent: sub, source: 'startup' })
-    const input = [userMessage('子任务')]
-    expect((await kioku.preStep(step(sub, input), enter(input))).messages).toEqual(input)
-    await kioku.turnStopping({ agent: sub, turn: 1 })
+    for (const header of [
+      { origin: 'subagent', parentSession: 'session-1' },
+      { delegationDepth: 1 },
+    ]) {
+      const sub = agentOf({ id: 'session-sub', header })
+      kioku.created({ agent: sub, source: 'startup' })
+      const input = [userMessage('子任务')]
+      expect((await kioku.preStep(step(sub, input), enter(input))).messages).toEqual(input)
+      await kioku.turnStopping({ agent: sub, turn: 1 })
+    }
     expect(requests).toEqual([])
+    const fork = agentOf({ id: 'session-fork', header: { parentSession: 'session-1' } })
+    kioku.created({ agent: fork, source: 'startup' })
+    await kioku.preStep(step(fork, [userMessage('甲')]), enter([]))
+    expect(events()).toEqual(['prompt.submit', 'session.start'])
+  })
+
+  it('取到了启动加载、这一步却没进去（被拒绝、结果认不出来）：不算注入过，下一次输入再给', async () => {
+    const kioku = start()
+    const agent = agentOf()
+    kioku.created({ agent, source: 'startup' })
+    const input = [userMessage('甲')]
+    expect(await kioku.preStep(step(agent, input), async () => ({ kind: 'reject' }))).toEqual({
+      kind: 'reject',
+    })
+    // 后面的插件给了一个没有消息列表的结果：原样交回去，不抛错
+    expect(await kioku.preStep(step(agent, input), async () => ({ kind: 'enter' }))).toEqual({
+      kind: 'enter',
+    })
+    const entered = await kioku.preStep(step(agent, input), enter(input))
+    expect(entered.messages.map((m) => m.source.part ?? m.source.kind)).toEqual([
+      'user',
+      'boot',
+      'recall',
+    ])
+    expect(events().filter((e) => e === 'session.start')).toHaveLength(3)
+  })
+
+  it('接着之前的会话：压缩之前注入的启动加载不算，要再注入', async () => {
+    const kioku = start()
+    const boot = record('user/message', {
+      ...userMessage('旧的'),
+      source: { kind: SOURCE, part: 'boot' },
+    })
+    const compacted = agentOf({ events: [boot, record('compaction/end', {})] })
+    kioku.created({ agent: compacted, source: 'resume' })
+    await kioku.preStep(step(compacted, [userMessage('甲')]), enter([]))
+    expect(events()).toEqual(['prompt.submit', 'session.start'])
+    requests = []
+    const after = agentOf({ id: 'session-2', events: [record('compaction/end', {}), boot] })
+    kioku.created({ agent: after, source: 'resume' })
+    await kioku.preStep(step(after, [userMessage('乙')]), enter([]))
+    expect(events()).toEqual(['prompt.submit'])
+  })
+
+  it('等着启动加载的会话太多时丢掉最早的，刚开的还在', async () => {
+    const kioku = start()
+    for (let n = 0; n <= 200; n++) {
+      kioku.created({ agent: agentOf({ id: `session-${n}` }), source: 'startup' })
+    }
+    await kioku.preStep(step(agentOf({ id: 'session-200' }), [userMessage('甲')]), enter([]))
+    expect(events()).toEqual(['prompt.submit', 'session.start'])
+    requests = []
+    await kioku.preStep(step(agentOf({ id: 'session-0' }), [userMessage('乙')]), enter([]))
+    expect(events()).toEqual(['prompt.submit'])
+    // 只丢最早的那一个，别的都还等着
+    requests = []
+    await kioku.preStep(step(agentOf({ id: 'session-1' }), [userMessage('丙')]), enter([]))
+    expect(events()).toEqual(['prompt.submit', 'session.start'])
   })
 
   it('启动加载带上项目的目录名', async () => {
@@ -307,6 +370,30 @@ describe('DeepSeek Harness 插件：一轮结束', () => {
       user: '今天做什么\n顺便做乙',
       reply: '先看了一下\n做甲和乙',
     })
+  })
+
+  it('用户中途打断的一轮也上报：不听这一轮的取消信号', async () => {
+    const kioku = start()
+    await kioku.turnStopping({
+      agent: agentOf({ events: history }),
+      turn: 2,
+      signal: AbortSignal.abort(),
+    })
+    expect(bodyOf('turn.end')).toMatchObject({ reply: '先看了一下\n做甲和乙' })
+  })
+
+  it('上报失败之后一分钟内不再上报，日志里说的是没有上报', async () => {
+    const kioku = start()
+    const agent = agentOf({ events: history })
+    reply = () => ({ status: 500 })
+    await kioku.turnStopping({ agent, turn: 2 })
+    await kioku.turnStopping({ agent, turn: 2 })
+    expect(requests).toHaveLength(1)
+    expect(warnings).toEqual(['Kioku 这一轮没有上报（HTTP 500），稍后再试'])
+    reply = contexts
+    clock += 61_000
+    await kioku.turnStopping({ agent, turn: 2 })
+    expect(requests).toHaveLength(2)
   })
 
   it('没有回复的、找不到这一轮的不上报；上报失败不拦之后的召回', async () => {

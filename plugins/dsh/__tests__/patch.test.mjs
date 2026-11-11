@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { profileFile, writeProfile } from '../lib/profile.mjs'
+import { profileFile, readProfile, writeProfile } from '../lib/profile.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const patch = readFileSync(join(here, '..', 'cordis.patch.yml'), 'utf8')
@@ -62,6 +62,33 @@ describe('DeepSeek Harness 的补丁', () => {
       // 表达式读到的就是 profile.mjs 写的那个文件
       rmSync(profileFile('dsh', where))
       expect(evaluate('disabled', where)).toBe(true)
+    }
+  })
+
+  it('手改过的文件：和 profile.mjs 读出来的一样，去掉首尾空白与结尾的斜杠', async () => {
+    mkdirSync(env.KIOKU_CONFIG_DIR)
+    writeFileSync(
+      join(env.KIOKU_CONFIG_DIR, 'dsh.json'),
+      JSON.stringify({ serverUrl: ' https://kioku.example.com// ', apiKey: 'kioku_test_key\n' }),
+    )
+    const read = await readProfile('dsh', env)
+    expect(evaluate('disabled', env)).toBe(false)
+    expect(evaluate('url', env)).toBe(`${read.url}/v1/mcp`)
+    expect(evaluate('Authorization', env)).toBe(`Bearer ${read.key}`)
+  })
+
+  it('访问密钥、地址中间带着空白或换行的不收：放进请求头会出错', () => {
+    mkdirSync(env.KIOKU_CONFIG_DIR)
+    const file = join(env.KIOKU_CONFIG_DIR, 'dsh.json')
+    for (const value of [
+      { serverUrl: 'https://kioku.example.com', apiKey: 'a\nb' },
+      { serverUrl: 'https://kioku.example.com', apiKey: 'a b' },
+      { serverUrl: 'https://kioku .example.com', apiKey: 'k' },
+      { serverUrl: 'ftp://kioku.example.com', apiKey: 'k' },
+    ]) {
+      writeFileSync(file, JSON.stringify(value))
+      expect(evaluate('disabled', env)).toBe(true)
+      expect(evaluate('Authorization', env)).toBe('')
     }
   })
 

@@ -40,10 +40,11 @@ const textOf = (content) =>
 
 const fromUser = (message) => message?.role === 'user' && message.source?.kind === 'user'
 
-// 会话的 id；子 agent 的会话（有上一级会话的）不管：它的输入是模型写的，回复也不是给用户的
+// 会话的 id；子 agent 的会话不管：它的输入是模型写的，回复也不是给用户的。
+// 按 origin 与委派深度认，不看 parentSession：用户自己分出来的会话也可能带着它
 function sessionOf(agent) {
   const header = agent?.session?.header
-  if (!header || header.parentSession) return undefined
+  if (!header || header.origin === 'subagent' || header.delegationDepth > 0) return undefined
   return typeof header.id === 'string' && header.id ? header.id.slice(0, MAX_SESSION_ID) : undefined
 }
 
@@ -68,14 +69,18 @@ export function turnOf(events, turn) {
   return { user: join(users), reply: join(replies) }
 }
 
-// 会话里有没有这个插件放进去的启动加载
+// 会话里有没有这个插件放进去的启动加载。只看最后一次压缩之后的：压缩之前注入的已经不在上下文里了
 function hasBoot(events) {
-  return (Array.isArray(events) ? events : []).some(
-    (event) =>
-      event?.type === 'user/message' &&
-      event.data?.source?.kind === SOURCE &&
-      event.data.source.part === 'boot',
-  )
+  const list = Array.isArray(events) ? events : []
+  const compacted = list.findLastIndex((event) => event?.type === 'compaction/end')
+  return list
+    .slice(compacted + 1)
+    .some(
+      (event) =>
+        event?.type === 'user/message' &&
+        event.data?.source?.kind === SOURCE &&
+        event.data.source.part === 'boot',
+    )
 }
 
 // env、now、warn 与 uuid 可以换掉，给用例用
@@ -96,6 +101,8 @@ export function createKioku({
   let quietUntil = 0
   // 启动加载还没注入的会话：新开、清空、压缩之后各注入一次，放在下一次输入的后面
   const bootPending = new Set()
+  // 这个时刻之前不上报：服务端挂住时不让每一轮结束都等满时限
+  let reportQuietUntil = 0
   // 项目的目录名与仓库名，按目录记着
   const projects = new Map()
 
@@ -129,6 +136,7 @@ export function createKioku({
     // 换了地址或访问密钥：之前的失败不算数了
     if (before && (before.url !== profile?.url || before.key !== profile?.key)) {
       quietUntil = 0
+      reportQuietUntil = 0
       told.clear()
     }
     retryAt = now() + PROFILE_RETRY
@@ -147,12 +155,13 @@ export function createKioku({
     return projects.get(cwd)
   }
 
-  // 把一个事件交给服务端，返回要注入的文本（没有时为空字符串）；失败时说一次原因，返回 undefined
-  async function forward(event, body, signal) {
+  // 把一个事件交给服务端，返回要注入的文本（没有时为空字符串）；失败时说一次原因，返回 undefined。
+  // target 是调用方读到的那份地址与访问密钥：等的过程中配置可能被重读、换掉，一步里的几个请求要用同一份
+  async function forward(target, event, body, signal) {
     try {
       const res = await postEvent(
-        profile.url,
-        profile.key,
+        target.url,
+        target.key,
         { event, ...body },
         TIMEOUTS[event],
         signal,
@@ -166,9 +175,11 @@ export function createKioku({
     } catch (err) {
       // 用户自己取消的不算失败
       if (signal?.aborted) return undefined
-      // 上报失败不拦之后的召回：它不在输入前等着
-      if (event !== 'turn.end') quietUntil = now() + BACKOFF
+      // 上报与输入前的请求各退避各的：上报失败不拦之后的召回
+      if (event === 'turn.end') reportQuietUntil = now() + BACKOFF
+      else quietUntil = now() + BACKOFF
       if (err instanceof Misconfigured) tell(`Kioku 这次没有生效：${err.message}。${SETUP_HINT}`)
+      else if (event === 'turn.end') tell(`Kioku 这一轮没有上报（${failureText(err)}），稍后再试`)
       else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
       return undefined
     }
@@ -188,25 +199,30 @@ export function createKioku({
       const id = sessionOf(agent)
       if (!id) return
       if (source === 'resume' && hasBoot(agent.session.snapshotEvents?.())) return
-      if (bootPending.size >= MAX_TRACKED) bootPending.clear()
+      // 超出上限时丢掉最早记下的那个，不动刚开的会话
+      bootPending.delete(id)
+      if (bootPending.size >= MAX_TRACKED) bootPending.delete(bootPending.values().next().value)
       bootPending.add(id)
     } catch {
       // 认不出来就当没有这个会话
     }
   }
 
-  // 这一步要用的上下文消息：启动加载（还没注入时）与召回。取不到时为空
+  // 这一步要用的上下文：{ messages, booted }。messages 是启动加载（还没注入时）与召回，取不到时为空；
+  // booted 是这次取到了启动加载的会话 id，等消息真的接上去了才算注入过
   async function contextFor({ agent, messages, signal }) {
+    const none = { messages: [] }
     const id = sessionOf(agent)
     const prompt = textOf(messages.filter(fromUser).flatMap((item) => item.content)).trim()
-    if (!id || !prompt) return []
+    if (!id || !prompt) return none
     await ready()
-    if (!profile || problem) {
+    const target = profile
+    if (!target || problem) {
       tell(configNotice())
-      return []
+      return none
     }
     // 刚失败过：这次不等，直接让输入过去
-    if (now() < quietUntil) return []
+    if (now() < quietUntil) return none
     const wantBoot = bootPending.has(id)
     const cwd = agent.session.header.cwd
     const session = { sessionId: id }
@@ -215,20 +231,20 @@ export function createKioku({
       wantBoot
         ? (typeof cwd === 'string' && cwd ? projectFor(cwd) : Promise.resolve({})).then((project) =>
             forward(
+              target,
               'session.start',
               { ...session, ...(Object.keys(project).length ? { project } : {}) },
               signal,
             ),
           )
         : undefined,
-      forward('prompt.submit', { ...session, prompt: clip(prompt, MAX_PROMPT) }, signal),
+      forward(target, 'prompt.submit', { ...session, prompt: clip(prompt, MAX_PROMPT) }, signal),
     ])
-    // 启动加载没取到时之后的输入再试；取到了（哪怕是空的）就不再取
-    if (wantBoot && boot !== undefined) bootPending.delete(id)
     const out = []
     if (boot) out.push(message(boot, 'boot'))
     if (recall) out.push(message(recall, 'recall'))
-    return out
+    // 启动加载没取到时之后的输入再试；取到了（哪怕是空的）就不再取
+    return { messages: out, booted: wantBoot && boot !== undefined ? id : undefined }
   }
 
   // 一步开始之前：有用户的输入时，把启动加载与召回接在这一步的消息后面。只加消息，不改、不拦用户的输入
@@ -238,29 +254,34 @@ export function createKioku({
       .then(() => contextFor(payload))
       .catch((err) => {
         tell(`Kioku 的插件出错了（${failureText(err)}），这一轮没有生效`)
-        return []
+        return { messages: [] }
       })
     const decision = await next()
-    const extra = await ours
-    if (!extra.length || decision?.kind !== 'enter') return decision
+    const { messages: extra, booted } = await ours
+    // 这一步被拒绝了、结果的样子认不出来：什么都不加，启动加载留到下一次输入
+    if (decision?.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
+    if (booted) bootPending.delete(booted)
+    if (!extra.length) return decision
     return { ...decision, messages: [...decision.messages, ...extra] }
   }
 
   // 一轮要结束了：把这一轮交给服务端写会话摘要。等它发完（有时限）：一次性的运行里进程接着就退出了。
   // 没有回复的一轮不报：没有可以写进摘要的内容
-  async function turnStopping({ agent, turn, signal } = {}) {
+  // 不听这一轮的取消信号：用户中途打断的一轮，已经说出来的也要记下，上报只按自己的时限
+  async function turnStopping({ agent, turn } = {}) {
     try {
       const id = sessionOf(agent)
-      if (!id) return
+      if (!id || now() < reportQuietUntil) return
       await ready()
-      if (!profile || problem) return
+      const target = profile
+      if (!target || problem) return
       const { user, reply } = turnOf(agent.session.snapshotEvents(), turn)
       if (!user || !reply) return
-      await forward(
-        'turn.end',
-        { sessionId: id, user: clip(user, MAX_PROMPT), reply: clip(reply, MAX_REPLY) },
-        signal,
-      )
+      await forward(target, 'turn.end', {
+        sessionId: id,
+        user: clip(user, MAX_PROMPT),
+        reply: clip(reply, MAX_REPLY),
+      })
     } catch (err) {
       tell(`Kioku 的插件出错了（${failureText(err)}），这一轮没有上报`)
     }
