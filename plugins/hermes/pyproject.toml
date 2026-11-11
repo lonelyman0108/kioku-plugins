@@ -1,0 +1,21 @@
+# 只用于在仓库里测试与检查；provider 本身只用标准库，没有要装的依赖
+[project]
+name = "hermes-kioku"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.17.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# provider 按包导入（plugins/ 在路径上，包名是目录名 hermes）；Hermes 的基类用测试里的替身
+pythonpath = ["..", "tests/stubs"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

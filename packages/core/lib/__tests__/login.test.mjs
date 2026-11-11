@@ -284,6 +284,14 @@ describe('kioku login', () => {
   })
 })
 
+describe('kioku login hermes', () => {
+  it('Hermes 的目录不在时在申请之前就拦下，不签发访问密钥', async () => {
+    env.HERMES_HOME = join(dir, 'no-hermes')
+    await expect(run(['hermes', '--server-url', base])).rejects.toThrow('没有找到 Hermes 的目录')
+    expect(requests).toHaveLength(0)
+  })
+})
+
 describe('kioku setup 没给访问密钥时改用浏览器授权', () => {
   async function runSetup(args, extra = {}) {
     let text = ''

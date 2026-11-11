@@ -422,11 +422,11 @@ describe('kioku doctor codex', () => {
     expect(result.text).not.toContain(KEY)
   })
 
-  it('没配过：✗ 缺少配置，其余各项提醒', async () => {
+  it('没配过：说怎么给 Codex 配，其余各项提醒', async () => {
     writeFileSync(toml, '[features]\nmemories = true\n\n[plugins."kioku@kioku"]\nenabled = false\n')
     const result = await run(doctor, ['codex'])
     expect(result.code).toBe(1)
-    expect(result.text).toMatch(/^✗ 缺少 Kioku 的地址或访问密钥/m)
+    expect(result.text).toContain('✗ 还没有给 Codex 配过：运行 kioku setup codex')
     expect(result.text).toContain('! 没有 kioku setup codex 写下的地址与访问密钥')
     expect(result.text).toContain('里没有 Kioku 的 MCP 服务')
     expect(result.text).toContain('! Codex 的 kioku 插件没有启用')

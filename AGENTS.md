@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
+Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、pi 的扩展（在 pi 进程里跑的 JS）、Hermes 的记忆 provider（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
 
 提交、PR、发版的完整规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只写 agent 需要、又无法从代码推出来的内容，每条约定都附原因。超过 300 行时拆到子目录的 AGENTS.md。
 
@@ -33,7 +33,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - 门禁：`scripts/check.sh`（`--quick` 只跑通用检查）
 - 初始化：`scripts/bootstrap.sh`
 - 开 PR：`scripts/pr.sh`（`--no-merge` 只开不合并）
-- 测试：`pnpm test`（Claude Code 插件）；`cd plugins/astrbot_plugin_kioku && uv run pytest`
+- 测试：`pnpm test`（JS 的几个包）；`cd plugins/astrbot_plugin_kioku && uv run pytest`；`cd plugins/hermes && uv run pytest`
 - 同步客户端：`scripts/sync-client.sh <Kioku 仓库的路径>`
 - 改版本号：`scripts/bump-version.sh <X.Y.Z>`（发版时用，流程见 CONTRIBUTING.md「发布」）；核对会发出哪些文件：`scripts/ci/publish-npm.sh --dry-run v<X.Y.Z>`
 - 同步共用实现：`node scripts/sync-core.mjs`（`--check` 只比对）
@@ -48,10 +48,11 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
-| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
+| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`，本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
+| `plugins/hermes` | Hermes 的记忆 provider：`kioku_bridge.py` 是不依赖 Hermes 的那一层（请求、会话状态），`__init__.py` 把 Hermes 的回调接过去；`plugin.yaml` 里的 `name` 就是装好之后的目录名与 `memory.provider` 的值。不收核心的副本（Python） |
 | `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：只有 `package.json` 与说明，`bin/`、`lib/` 同样是 `packages/core` 的副本 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
@@ -74,7 +75,18 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - Codex 的钩子要注意三点（都在真实的 Codex 上核对过，版本 0.167.1）：Stop 不带用户的输入，要在 UserPromptSubmit 时按会话与轮次记下、结束时取走；注入的上下文默认超过约 2,500 token 就被存成文件、只给模型看头尾，`hooks.json` 里的 `additionalContextLimit` 要比服务端给 Codex 的字数上限（`HOST_CONTEXT_LIMIT`，9,500 字约 7,400 token）宽；插件带的钩子要用户在 `/hooks` 里信任过才运行，自动化的测试用 `--dangerously-bypass-hook-trust`。
 - pi 的扩展在 pi 的进程里跑（核对过 pi 1.5.2）：标准输出属于 pi（`--print`、JSON 模式都用它），原因只写标准错误；`before_agent_start` 在用户按下回车之后等着，启动加载与召回一起发、各有时限；`agent_end` 不是最后一次（重试、排队的消息还会再跑），回复攒到 `agent_settled` 再上报；上报不等它完成，但 `session_shutdown` 要等，否则 `--print` 跑完进程先退出就丢了。服务端对没有专门输出格式的运行时回 `return_value`，文本在 `value.context`（`contextOf`）。`forward` 用空字符串表示「没有内容」、`undefined` 表示失败：启动加载失败时下一次输入再试，空的不重取。
 - 浏览器授权（`login.mjs`，服务端在 Kioku 的 `routes/device.ts`）：确认码不放进打开的地址，要用户照着终端输入，别人发来的链接带不了它；访问密钥、设备码不写进输出，拿到之后直接交给这个平台的 `setup`（核对、写文件都照它的规矩）；服务端给的确认码、应用名与自报的机器名都经 `plain` 再显示或上报；确认页的路径只收以 `/` 开头的，接在配置的服务地址后面，不让服务端把人带到别的站点。服务端的回答不全信：确认页的路径只收一种写法（`VERIFICATION_PATH`，不带查询参数与符号），时限与间隔收在范围里（`seconds`），打开浏览器不经过 shell（Windows 上用 rundll32，不用 `cmd /c start`）。访问密钥只在签发时给一次：申请之前先做平台的预检（`preflight`、`beforeLogin`），取走之后写不下、或者有过没得到回答的轮询之后申请不在了，报错里都要提醒去吊销那个没人拿着的访问密钥。`kioku setup` 只在终端里运行时（`process.stdin.isTTY`）才回落到它：agent 的 Bash 工具里没有人去确认。
-- `kioku import`：坐标由来源算出（`sources.mjs`），这就是去重的依据，不另外记「迁过没有」：改某个来源的坐标规则等于让已经迁过的再迁一遍到新位置，要改得同时想好旧的怎么办。已经有、内容不一样的默认不覆盖（可能在 Kioku 里改过）。写入走访问密钥的记忆接口，不带 `plaintextOk`：疑似明文的照常被服务端拦下，输出里只写第几行、哪一类，不带值。本地的文件一律不删、不改。Hermes、OpenClaw 两个来源的格式是按调研写的，还没有在真实的安装上核对。读文件只收普通的文本文件（`readable`）：符号链接不跟、项目的 memory 目录是符号链接时不进去，否则记忆目录之外的文件（`.env` 这类）会被读出来发给服务端。没有标题的段用内容的摘要做标识，不按顺序编号：文件里插一条之后别的条的坐标不能变。文件头只认单独一行的 `---` 结尾，像文件头却没写完的不迁，不把它当正文发出去。输出里的路径、目录名也经 `plain`。流程编号检查会把分节号当成编号：代码与用例里写成转义（`\\u00a7`），注释里写「分节号」。
+- `kioku import`：坐标由来源算出（`sources.mjs`），这就是去重的依据，不另外记「迁过没有」：改某个来源的坐标规则等于让已经迁过的再迁一遍到新位置，要改得同时想好旧的怎么办。已经有、内容不一样的默认不覆盖（可能在 Kioku 里改过）。写入走访问密钥的记忆接口，不带 `plaintextOk`：疑似明文的照常被服务端拦下，输出里只写第几行、哪一类，不带值。本地的文件一律不删、不改。Hermes 的位置与分隔符对着它的源码核对过（`tools/memory_tool.py` 的 `ENTRY_DELIMITER`），OpenClaw 的还没有在真实的安装上核对。读文件只收普通的文本文件（`readable`）：符号链接不跟、项目的 memory 目录是符号链接时不进去，否则记忆目录之外的文件（`.env` 这类）会被读出来发给服务端。没有标题的段用内容的摘要做标识，不按顺序编号：文件里插一条之后别的条的坐标不能变。文件头只认单独一行的 `---` 结尾，像文件头却没写完的不迁，不把它当正文发出去。输出里的路径、目录名也经 `plain`。流程编号检查会把分节号当成编号：代码与用例里写成转义（`\\u00a7`），注释里写「分节号」。
+- Hermes 的 provider（核对过 Hermes 0.19.0 与真实的 Kioku）：
+  - **只用发布版里有的东西**：GitHub 主干比 PyPI 的发布版新，主干的 `agent/memory_provider.py` 里有 `is_trivial_prompt`、`spawn_context_thread`，0.19.0 没有，直接导入的话 provider 加载失败、Hermes 只说「没有装」。这类新东西一律 `try` 导入、带退路。写之前对着装出来的版本看，不对着主干的文档。
+  - **工具清单要在初始化之前就拿得出来**：Hermes 在 `add_provider` 时就调 `get_tool_schemas()` 登记「哪个工具归谁」，早于 `initialize()`。那时返回空的话，模型看得到工具（之后又问了一次清单），调用时却报 `Unknown tool`。所以第一次被问到就向 Kioku 取（只取一次）；开始之后，不启用的会话里返回空的，调用时再拒绝一次。
+  - **只在本机的入口里启用，按白名单认**（`LOCAL_PLATFORMS`：cli、tui、gui、acp、desktop），认不出的一律不启用。不能只看有没有网关的标识（`gateway_session_key`、`chat_id`）：Hermes 的 API 服务器在调用方不带会话头时两个都没有，那样远程的 HTTP 客户端就拿得到注入、用得上工具。工具转给 Kioku 的 MCP 端点，不带会话上下文，按访问密钥的全部权限读写；要放开别的入口得先有带会话上下文的工具接口。
+  - **工具清单取不到就不补取**：归属只在注册时登记一次，之后再让模型看到这些工具也调不通。取的过程拿着锁，同时来问的等它取完。
+  - **上报按顺序发**：每轮一个后台线程，等上一轮的发完再发，服务端收到的顺序才和对话一致。
+  - **不走环境变量里的代理**（`ProxyHandler({})`），不跟跳转；`urllib` 这一层除了 `OSError`、`HTTPException` 还要接 `ValueError`（地址或请求头里有编不进去的字符，文字里可能带着整个 Authorization）。访问密钥的格式用 `fullmatch`：`$` 会放过结尾的换行。
+  - provider 的状态都在实例上，不放在模块里（一个网关进程会给几个 profile 各建一个实例）；后台线程用 `spawn_context_thread`（有的话），带着调用方的上下文。
+  - `ruff` 不让捕获笼统的 `Exception`：网络这一层接 `OSError` 与 `http.client.HTTPException`。
+  - `kioku setup hermes` 不自己改 Hermes 的 `config.yaml`，经 `hermes config set`（用例里用 `KIOKU_HERMES_BIN` 换成假的），改完读回来核对：托管的安装里它不生效却照样成功退出。访问密钥只写进 `.env`，不出现在命令的参数里；`.env` 里都是密钥，改它不留备份。访问密钥写下之后的步骤（改 Hermes 的配置）不成也不抛错，只把要做的列出来：抛了的话 `kioku login` 会让用户去吊销一个其实已经在用的访问密钥。`.env` 里同名的行收拾成一处（Hermes 读最后一行），没有要改的时候原样不动。`--undo` 只在现在选的还是 kioku 时才改 Hermes 的配置。
+  - 本地实测 Hermes 时，自定义的模型端点要把密钥写在 `config.yaml` 的 `model.api_key`（或用具名的 `providers:` 加 `key_env`）：`OPENAI_API_KEY` 只发给 openai.com 的地址。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。

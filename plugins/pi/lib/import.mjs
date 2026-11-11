@@ -7,7 +7,6 @@ import { whoami } from './api.mjs'
 import { loadConfig } from './config.mjs'
 import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
 import { platformNames, PLATFORMS } from './platforms.mjs'
-import { readProfile } from './profile.mjs'
 import { sourceNames, SOURCES, UNSUPPORTED_SOURCES } from './sources.mjs'
 import { plain, shownUrl } from './text.mjs'
 import { UsageError } from './usage.mjs'
@@ -18,7 +17,7 @@ export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目�
 
   --from <来源>  ${sourceNames()}
   --path <目录>  不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
-  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（codex、pi）；不写时读环境变量
+  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（codex、pi、hermes）；不写时读环境变量
   --dry-run      只列出计划，不写
   --yes          不问，直接写（不在终端里运行时要带上）
   --overwrite    Kioku 里同一个坐标已经有、内容不一样的也覆盖（默认跳过）
@@ -59,7 +58,7 @@ export function parseImportArgs(argv) {
   if (!Object.hasOwn(SOURCES, options.from)) {
     throw new UsageError(`不认识的来源 ${options.from}，可以用的：${sourceNames()}`)
   }
-  if (options.platform !== undefined && !PLATFORMS[options.platform]?.profile) {
+  if (options.platform !== undefined && !PLATFORMS[options.platform]?.readConfig) {
     throw new UsageError(
       `--platform 只收用 kioku setup 写下配置的平台，可以用的：${platformNames()}`,
     )
@@ -153,7 +152,7 @@ export async function importMemories(
   // 地址与访问密钥：指明了平台就用 kioku setup 给它写下的，否则读环境变量
   let config
   if (options.platform) {
-    config = await readProfile(options.platform, env)
+    config = await PLATFORMS[options.platform].readConfig(env)
     if (!config) {
       throw new KiokuFailure(
         `还没有给 ${options.platform} 配过：先运行 kioku setup ${options.platform}`,
