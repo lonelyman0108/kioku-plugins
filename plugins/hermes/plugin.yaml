@@ -1,6 +1,6 @@
 name: kioku
 version: 0.1.0
-description: "Kioku：自托管的长期记忆。会话开始注入启动加载，每轮注入召回候选，每轮结束后写会话摘要，并提供读写记忆的 kioku_* 工具。"
+description: 'Kioku：自托管的长期记忆。会话开始注入启动加载，每轮注入召回候选，每轮结束后写会话摘要，并提供读写记忆的 kioku_* 工具。'
 requires_env:
   - KIOKU_SERVER_URL
   - KIOKU_API_KEY
