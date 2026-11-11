@@ -5,26 +5,23 @@
 // 失败的原因写到标准错误，和 kioku 命令一样不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别，
 // 也不跟着跳转走，访问密钥只发给配置的地址
 
-import { execFileSync } from 'node:child_process'
 import { open } from 'node:fs/promises'
-import { basename } from 'node:path'
 
+import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
-  failureText,
-  fetchFailure,
-  isRedirect,
-  keyFormatError,
-  KiokuFailure,
-  redirectError,
-} from '../lib/http.mjs'
+  assertKeyFormat,
+  clip,
+  contextOf,
+  MAX_PROMPT,
+  MAX_REPLY,
+  MAX_SESSION_ID,
+  Misconfigured,
+  normalizeBase,
+  postEvent,
+  projectOf,
+  TIMEOUTS,
+} from '../lib/lifecycle.mjs'
 
-// 各事件等待服务端的上限（毫秒），要比 hooks.json 里的 timeout 短
-const TIMEOUTS = { 'session.start': 8000, 'prompt.submit': 5000, 'turn.end': 5000 }
-// 与服务端 contracts 的上限一致
-const MAX_PROMPT = 20_000
-const MAX_REPLY = 20_000
-const MAX_SESSION_ID = 200
-const MAX_NAME = 128
 // 会话记录只读末尾这么多字节：最后一轮就在末尾，整份可能很大
 const TRANSCRIPT_TAIL = 2 * 1024 * 1024
 
@@ -32,25 +29,6 @@ async function readStdin() {
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)
   return Buffer.concat(chunks).toString('utf8')
-}
-
-// 当前项目的目录名与 git 仓库名，服务端用它们召回与项目相关的记忆；取不到的就不带
-function projectOf(cwd) {
-  const project = {}
-  const dirName = basename(cwd)
-  if (dirName) project.dirName = dirName.slice(0, MAX_NAME)
-  try {
-    const remote = execFileSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
-      encoding: 'utf8',
-      timeout: 1500,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim()
-    const repoName = /([^/:]+?)(?:\.git)?$/.exec(remote)?.[1]
-    if (repoName) project.repoName = repoName.slice(0, MAX_NAME)
-  } catch {
-    // 不是 git 仓库或没有 origin
-  }
-  return project
 }
 
 // 只把上下文文本交给 Claude Code，钩子输出的其他字段（例如 decision、continue）一律不透传：
@@ -101,13 +79,6 @@ async function lastTurn(path) {
   return { user: userText(entries[at]), reply }
 }
 
-// 按长度截断时不切开代理对（表情这类字符）：落单的半个到了服务端会变成替换字符
-function clip(text, max) {
-  if (text.length <= max) return text
-  const code = text.charCodeAt(max - 1)
-  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max)
-}
-
 function textsOf(content) {
   if (typeof content === 'string') return [content]
   if (!Array.isArray(content)) return []
@@ -127,54 +98,17 @@ function userText(entry) {
   return text || null
 }
 
-function contextOf(hostOutput) {
-  if (hostOutput?.mode === 'stdout_json')
-    return hostOutput.value?.hookSpecificOutput?.additionalContext
-  if (hostOutput?.mode === 'stdout_text') return hostOutput.value
-  return undefined
-}
-
-// 配置写错了（访问密钥格式不对、服务地址返回跳转）：和没有配置一样，会话开始时给模型一段提示，
-// 让它告诉用户去改；notice 是这段提示，不带访问密钥
-class Misconfigured extends KiokuFailure {
-  constructor(message, notice) {
-    super(message)
-    this.notice = notice
-  }
-}
-
-const KEY_NOTICE =
-  'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。'
-
-// 把一个生命周期事件交给服务端；连不上、超时、跳转与非 2xx 都以 KiokuFailure 抛出
-async function post(base, key, body, timeout) {
-  let res
-  try {
-    res = await fetch(`${base}/v1/lifecycle/event`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify(body),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(timeout),
-    })
-  } catch (err) {
-    throw new KiokuFailure(fetchFailure(err, timeout))
-  }
-  if (isRedirect(res.status)) {
-    const text = redirectError(res.status, res.headers.get('location'), base)
-    throw new Misconfigured(
-      text,
-      `Kioku 插件的服务地址无法使用，长期记忆不可用：${text}，在 /plugin 里为 kioku 修改。`,
-    )
-  }
-  if (!res.ok) throw new KiokuFailure(`HTTP ${res.status}`)
-  return res
+// 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
+function noticeOf(err) {
+  return err.kind === 'key'
+    ? 'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。'
+    : `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，在 /plugin 里为 kioku 修改。`
 }
 
 async function main(event) {
   const timeout = TIMEOUTS[event]
   if (!timeout) throw new KiokuFailure(`未知事件 ${event}`)
-  const base = (process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
+  const base = normalizeBase(process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL)
   const key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
   let input = {}
   try {
@@ -193,8 +127,7 @@ async function main(event) {
     }
     return
   }
-  const problem = keyFormatError(key)
-  if (problem) throw new Misconfigured(problem, KEY_NOTICE)
+  assertKeyFormat(key)
 
   const body = { event }
   if (typeof input.session_id === 'string' && input.session_id) {
@@ -209,7 +142,7 @@ async function main(event) {
     if (!turn) return
     body.user = clip(turn.user, MAX_PROMPT)
     body.reply = clip(turn.reply, MAX_REPLY)
-    await post(base, key, body, timeout)
+    await postEvent(base, key, body, timeout)
     return
   }
   if (event === 'session.start') {
@@ -223,14 +156,14 @@ async function main(event) {
     body.prompt = prompt.slice(0, MAX_PROMPT)
   }
 
-  const res = await post(base, key, body, timeout)
+  const res = await postEvent(base, key, body, timeout)
   const { hostOutput } = await res.json()
   writeContext(event, contextOf(hostOutput))
 }
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  if (event === 'session.start' && err instanceof Misconfigured) writeContext(event, err.notice)
+  if (event === 'session.start' && err instanceof Misconfigured) writeContext(event, noticeOf(err))
   // 标准错误只出现在 Claude Code 的调试输出里，不进上下文；插件自己写的原因原样给出，别的只给类别
   process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
 })

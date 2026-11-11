@@ -8,7 +8,10 @@ export default [
   js.configs.recommended,
   { languageOptions: { globals: globals.node } },
   // bin/kioku 没有扩展名，要列出来才检查；Node 按 CommonJS 或 ES 模块执行它都要能跑，所以按脚本的语法检查
-  { files: ['plugins/claude-code/bin/kioku'], languageOptions: { sourceType: 'script' } },
+  {
+    files: ['packages/core/bin/kioku', 'plugins/*/bin/kioku'],
+    languageOptions: { sourceType: 'script' },
+  },
   // Prettier 负责排版：关掉所有与它冲突的格式类规则
   prettier,
 ]

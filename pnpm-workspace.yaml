@@ -1,4 +1,5 @@
 packages:
+  - packages/*
   - plugins/*
 # 只允许这些依赖运行安装脚本：esbuild 下载平台二进制（vitest 用到）
 allowBuilds:
