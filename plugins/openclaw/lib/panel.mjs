@@ -6,7 +6,7 @@ import { stat } from 'node:fs/promises'
 import { KeyRejected, whoami } from './api.mjs'
 import { hasCommand } from './command.mjs'
 import { failureText, fetchFailure, isRedirect, KiokuFailure } from './http.mjs'
-import { countLocal, countPending } from './import.mjs'
+import { countLocal } from './import.mjs'
 import { PLATFORMS } from './platforms.mjs'
 import { serverUrlProblem } from './profile.mjs'
 import { plain, shownUrl } from './text.mjs'
@@ -106,17 +106,10 @@ export async function scanPlatform(id, { env, cwd, url }) {
   const status = await platform.status({ env, cwd }).catch(() => ({ plugin: null, memory: null }))
   row.plugin = status.plugin
   row.memory = status.memory
+  if (status.reenabledIn) row.reenabledIn = status.reenabledIn
 
-  if (platform.source) {
-    row.local = await countLocal(platform.source, { env }).catch(() => null)
-    // 能和 Kioku 比的（有这个平台的访问密钥）才算没迁的有几条
-    if (row.local && row.connection === 'ok' && !row.otherServer) {
-      row.pending = await countPending(config, platform.source, {
-        env,
-        app: row.who.app.slug,
-      }).catch(() => null)
-    }
-  }
+  // 只数本地有几条；和 Kioku 比（没迁的有几条）要一条一条地问，选了迁移再比
+  if (platform.source) row.local = await countLocal(platform.source, { env }).catch(() => null)
   return row
 }
 
@@ -135,6 +128,20 @@ const PLUGIN_NAMES = new Map([
   [null, '无法判断'],
 ])
 const MEMORY_NAMES = { off: '已停用', on: '未停用', none: '无' }
+
+// 访问密钥属于哪个空间：服务端给了空间名就用名字，否则用 id 的前 8 位
+function spaceText(who) {
+  if (typeof who.spaceName === 'string' && who.spaceName) return plain(who.spaceName)
+  return typeof who.spaceId === 'string' ? plain(who.spaceId).slice(0, 8) : null
+}
+
+// 能不能停用：配过（不管现在能不能用），或者 Claude Code 的自动记忆停着
+export function canDisable(row) {
+  return (
+    ['ok', 'invalid', 'unknown', 'broken'].includes(row.connection) ||
+    (row.connection === 'manual' && row.memory === 'off')
+  )
+}
 
 // 平台接到哪一步，一个短词
 export function connectionText(row) {
@@ -157,8 +164,11 @@ function platformLines(row) {
   if (row.connection === 'ok') {
     const app = row.who.app
     facts.push(`应用 ${plain(app.name)}（${plain(app.slug)}）`)
-    if (typeof row.who.spaceId === 'string')
-      facts.push(`空间 ${plain(row.who.spaceId).slice(0, 8)}`)
+    const space = spaceText(row.who)
+    if (space) facts.push(`空间 ${space}`)
+    if (typeof row.who.accountName === 'string' && row.who.accountName) {
+      facts.push(`账号 ${plain(row.who.accountName)}`)
+    }
     if (app.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) facts.push('应用的运行时不对')
   }
   if (row.otherServer) facts.push(shownUrl(row.url))
@@ -169,11 +179,15 @@ function platformLines(row) {
   const details = []
   if (row.connection === 'manual') details.push('访问密钥 无法判断（在 /plugin 里填）')
   details.push(`插件 ${PLUGIN_NAMES.get(row.plugin) ?? '无法判断'}`)
-  details.push(`自带记忆 ${MEMORY_NAMES[row.memory] ?? '无法判断'}`)
+  const reenabled = row.reenabledIn ? `（被 ./${row.reenabledIn} 重新启用）` : ''
+  details.push(`自带记忆 ${MEMORY_NAMES[row.memory] ?? '无法判断'}${reenabled}`)
   if (row.local) {
-    const pending = row.pending
-      ? `（未迁移 ${row.pending.pending}${row.pending.capped ? '+' : ''} 条）`
-      : ''
+    // 未迁移的条数只在选过迁移、和 Kioku 比过之后才有
+    const pending = !row.pending
+      ? ''
+      : row.pending.pending === null
+        ? '（未迁移 无法判断）'
+        : `（未迁移 ${row.pending.pending} 条）`
     details.push(`本地记忆 ${row.local} 条${pending}`)
   }
   return [first, `  ${details.join(' · ')}`]
@@ -196,8 +210,9 @@ export function renderPanel(state) {
     const spaces = [
       ...new Set(
         state.platforms
-          .filter((row) => row.connection === 'ok' && typeof row.who.spaceId === 'string')
-          .map((row) => plain(row.who.spaceId).slice(0, 8)),
+          .filter((row) => row.connection === 'ok')
+          .map((row) => spaceText(row.who))
+          .filter(Boolean),
       ),
     ]
     if (spaces.length > 1) lines.push(`访问密钥分属 ${spaces.length} 个空间：${spaces.join('、')}`)
@@ -247,8 +262,12 @@ export function actionsFor(state) {
       actions.push({ value: 'reauth', label: `重新授权 ${names(invalid)}（访问密钥已失效）` })
     }
   }
+  // Claude Code 的访问密钥在它的 /plugin 里填，浏览器授权不给它发：插件没启用时列出安装与要填的地址，
+  // 顺带停用自动记忆；插件启用了、自动记忆还开着时只停用自动记忆。项目设置又启用了的，停用也没用，不提供
   const claude = state.platforms.find((row) => row.id === 'claude-code')
-  if (claude?.present && claude.memory === 'on') {
+  if (claude?.present && server && claude.plugin === false) {
+    actions.push({ value: 'claude-connect', label: '接入 Claude Code', hint: '在 /plugin 里填' })
+  } else if (claude?.present && claude.memory === 'on' && !claude.reenabledIn) {
     actions.push({ value: 'claude-memory', label: '停用 Claude Code 的自动记忆' })
   }
   if (ready) {
@@ -256,17 +275,16 @@ export function actionsFor(state) {
       if (!row.local) continue
       // 迁移要这个平台的访问密钥（Claude Code 的另外问）
       if (row.connection !== 'manual' && !(row.connection === 'ok' && !row.otherServer)) continue
-      if (row.pending && row.pending.pending === 0 && !row.pending.capped) continue
-      const count = row.pending ? row.pending.pending : row.local
-      actions.push({ value: `import:${row.id}`, label: `迁移 ${row.name} 的 ${count} 条本地记忆` })
+      // 比过、确实都迁了的不再提供
+      if (row.pending?.pending === 0) continue
+      const count =
+        typeof row.pending?.pending === 'number'
+          ? `未迁移 ${row.pending.pending} 条`
+          : `${row.local} 条`
+      actions.push({ value: `import:${row.id}`, label: `迁移 ${row.name} 的本地记忆（${count}）` })
     }
   }
-  const undoable = state.platforms.filter(
-    (row) =>
-      ['ok', 'invalid', 'unknown', 'broken'].includes(row.connection) ||
-      (row.connection === 'manual' && row.memory === 'off'),
-  )
-  if (undoable.length) {
+  if (state.platforms.some(canDisable)) {
     actions.push({ value: 'disable', label: '停用某个平台', hint: '恢复自带记忆、清掉配置' })
   }
   actions.push({ value: 'doctor', label: '检查（doctor）' })

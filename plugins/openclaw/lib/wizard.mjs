@@ -7,24 +7,28 @@ import { loadConfig } from './config.mjs'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.mjs'
 import { doctor } from './doctor.mjs'
 import { keyFormatError, KiokuFailure } from './http.mjs'
-import { planImport, writeImport } from './import.mjs'
+import { pendingOf, planImport, writeImport } from './import.mjs'
 import {
+  composeState,
   composeUp,
   defaultLocalDir,
   expandDir,
   hasCompose,
   healthy,
+  latestRelease,
   LOCAL_PORT,
   LOCAL_URL,
   manualDownload,
   portBusy,
   prepareDir,
+  setupCodeIn,
   setupDone,
   waitUntil,
 } from './local.mjs'
 import { openBrowser } from './login.mjs'
 import {
   actionsFor,
+  canDisable,
   connectCandidates,
   defaultServerUrl,
   renderPanel,
@@ -77,7 +81,18 @@ const DEPS = {
   writeImport,
   loadConfig,
   open: openBrowser,
-  local: { composeUp, hasCompose, healthy, portBusy, prepareDir, setupDone, waitUntil },
+  local: {
+    composeState,
+    composeUp,
+    hasCompose,
+    healthy,
+    latestRelease,
+    portBusy,
+    prepareDir,
+    setupCodeIn,
+    setupDone,
+    waitUntil,
+  },
 }
 
 const cancelled = (ui, value) => ui.isCancel(value)
@@ -139,6 +154,36 @@ async function connect(ctx, rows, { reauth = false } = {}) {
   if (steps) ui.note(steps, '装插件')
 }
 
+// 接入 Claude Code：它的访问密钥只认 /plugin 里填的，浏览器授权不给它发。列出安装命令与要填的服务地址，
+// 顺带停用自动记忆（项目设置又启用了的，说明要在那里改）
+async function connectClaude(ctx, row) {
+  const { ui, deps, env, cwd } = ctx
+  const steps = await deps.pluginSteps(['claude-code'], { env, cwd, url: ctx.url })
+  const memory = row.memory === 'on' && !row.reenabledIn
+  if (row.reenabledIn) {
+    ui.log.warn(
+      `Claude Code 的自动记忆被 ./${row.reenabledIn} 重新启用：要在那里把 autoMemoryEnabled 去掉`,
+    )
+  }
+  if (memory) {
+    const preview = bufferOut()
+    await deps.setup(['claude-code', '--dry-run'], { env, out: preview, cwd, login: null })
+    ui.note(
+      [
+        '停用自动记忆',
+        preview.text().replace(/\n?没有写入（--dry-run）$/, ''),
+        '',
+        '插件与访问密钥在 Claude Code 的 /plugin 里装、填（浏览器授权不给它发访问密钥），做完列出步骤',
+      ].join('\n'),
+      '计划',
+    )
+    const ok = await ui.confirm({ message: '开始？' })
+    if (cancelled(ui, ok) || !ok) return
+    await deps.setup(['claude-code'], { env, out: ctx.out, cwd, login: null })
+  }
+  if (steps) ui.note(steps, '装插件')
+}
+
 // 先用 --dry-run 看要改什么，确认后再做
 async function previewThenRun(ctx, args, question) {
   const { ui, deps, env, cwd } = ctx
@@ -150,7 +195,8 @@ async function previewThenRun(ctx, args, question) {
   await deps.setup(args, { env, out: ctx.out, cwd, login: null })
 }
 
-// 迁移一个平台的本地记忆：照 kioku import 列计划、确认后写入
+// 迁移一个平台的本地记忆：照 kioku import 列计划（这时才和 Kioku 逐条比对）、确认后写入。
+// 比出来的未迁移条数记在这次向导里，面板上显示；写入之后作废
 async function migrate(ctx, id) {
   const { ui, deps, env, out } = ctx
   const platform = PLATFORMS[id]
@@ -170,23 +216,24 @@ async function migrate(ctx, id) {
   }
   if (!config) throw new KiokuFailure(`还没有给 ${platform.name} 配过：先接入`)
   const plan = await deps.planImport(config, { from: platform.source }, { env, out })
-  if (plan.empty) return
+  if (plan.empty) {
+    ctx.pending.set(id, { pending: 0 })
+    return
+  }
+  ctx.pending.set(id, pendingOf(plan))
   if (!plan.todo.length) {
     ui.log.info('没有要写的')
     return
   }
   const ok = await ui.confirm({ message: `写入这 ${plan.todo.length} 条？` })
   if (cancelled(ui, ok) || !ok) return
+  ctx.pending.delete(id)
   await deps.writeImport(config, plan, { out })
 }
 
 async function disable(ctx, state) {
   const { ui } = ctx
-  const rows = state.platforms.filter(
-    (row) =>
-      ['ok', 'invalid', 'unknown', 'broken'].includes(row.connection) ||
-      (row.connection === 'manual' && row.memory === 'off'),
-  )
+  const rows = state.platforms.filter(canDisable)
   const id = await ui.select({
     message: '停用哪个平台（恢复自带记忆、清掉配置）',
     options: rows.map((row) => ({ value: row.id, label: row.name })),
@@ -223,7 +270,35 @@ async function awaitSetup(ctx, url, code) {
   return done
 }
 
-// 本机起一个 Kioku：放好 compose.yaml 与 .env，docker compose up -d，等它就绪、等用户建好管理员
+// 等这个目录里的 Kioku 就绪
+async function waitHealthy(ctx, dir, spin) {
+  spin.message?.('等待 Kioku 就绪')
+  const up = await ctx.deps.local.waitUntil(() => ctx.deps.local.healthy(LOCAL_URL), {
+    timeoutMs: 180_000,
+  })
+  spin.stop(up ? 'Kioku 已就绪' : 'Kioku 没有就绪')
+  if (!up) {
+    throw new KiokuFailure(
+      `Kioku 在 3 分钟内没有就绪：运行 cd ${dir} && docker compose logs kioku 看原因`,
+    )
+  }
+}
+
+// docker compose up -d，等它就绪
+async function bringUp(ctx, dir) {
+  const spin = ctx.ui.spinner()
+  spin.start('docker compose up -d（第一次要拉镜像，可能要几分钟）')
+  try {
+    await ctx.deps.local.composeUp(dir, ctx.env)
+  } catch (err) {
+    spin.stop('没有起来')
+    throw err
+  }
+  await waitHealthy(ctx, dir, spin)
+}
+
+// 本机起一个 Kioku：放好 compose.yaml 与 .env，docker compose up -d，等它就绪、等用户建好管理员。
+// 目录里已经有这个 compose 项目（上次起过）时不再判端口、不重新准备，接着启动或等它就绪
 async function startLocal(ctx) {
   const { ui, deps, env } = ctx
   const local = deps.local
@@ -235,11 +310,6 @@ async function startLocal(ctx) {
   if (!(await local.hasCompose(env))) {
     throw new KiokuFailure('没有找到 docker compose：先装好 Docker（含 compose 插件）再来')
   }
-  if (await local.portBusy(LOCAL_PORT)) {
-    throw new KiokuFailure(
-      `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它（lsof -i :${LOCAL_PORT} 看是哪个），或者改 compose.yaml 里的端口后自己启动`,
-    )
-  }
   const answer = await ui.text({
     message: '放在哪个目录',
     initialValue: defaultLocalDir(env),
@@ -247,50 +317,64 @@ async function startLocal(ctx) {
   })
   if (cancelled(ui, answer)) return
   const dir = expandDir(answer.trim(), env)
-  ui.note(
-    [
-      `目录 ${dir}`,
-      '下载 compose.yaml、.env.example（已有的不覆盖）',
-      '生成 .env：数据库密码、主密钥、初始化码随机生成，只给本人读写（已有的不覆盖）',
-      `docker compose up -d，端口只开在 127.0.0.1:${LOCAL_PORT}`,
-    ].join('\n'),
-    '计划',
-  )
-  const ok = await ui.confirm({ message: '开始？' })
-  if (cancelled(ui, ok) || !ok) return
 
-  let prepared
-  try {
-    prepared = await local.prepareDir(dir)
-  } catch (err) {
-    if (!(err instanceof KiokuFailure)) throw err
-    ui.note(manualDownload(dir), '手动下载')
-    throw err
-  }
-  if (prepared.env.written) {
-    ui.log.warn(
-      `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢了机密记忆与托管凭据解不开`,
+  const existing = await local.composeState(dir, env)
+  let code
+  if (existing === 'running') {
+    ui.log.info(`${dir} 里的 Kioku 已经在运行，等它就绪`)
+    const spin = ui.spinner()
+    spin.start('等待 Kioku 就绪')
+    await waitHealthy(ctx, dir, spin)
+    code = await local.setupCodeIn(dir)
+  } else if (existing === 'stopped') {
+    ui.note(`目录 ${dir}\n这里的 Kioku 建过、没在运行：docker compose up -d`, '计划')
+    const ok = await ui.confirm({ message: '启动？' })
+    if (cancelled(ui, ok) || !ok) return
+    await bringUp(ctx, dir)
+    code = await local.setupCodeIn(dir)
+  } else {
+    if (await local.portBusy(LOCAL_PORT)) {
+      throw new KiokuFailure(
+        `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它（lsof -i :${LOCAL_PORT} 看是哪个），或者改 compose.yaml 里的端口后自己启动`,
+      )
+    }
+    const release = await local.latestRelease()
+    if (!release.release) {
+      ui.log.warn(
+        `没取到最新的正式版（${release.problem}）：用 main 上的 compose.yaml 与 edge 镜像（main 上最新的提交，不保证稳定）`,
+      )
+    }
+    ui.note(
+      [
+        `目录 ${dir}`,
+        `版本 ${release.imageTag}${release.release ? '（最新的正式版）' : ''}`,
+        `下载 ${release.ref} 的 compose.yaml、.env.example（已有的不覆盖）`,
+        `生成 .env：数据库密码、主密钥、初始化码随机生成，镜像固定在 ${release.imageTag}，只给本人读写（已有的不覆盖）`,
+        `docker compose up -d，端口只开在 127.0.0.1:${LOCAL_PORT}`,
+      ].join('\n'),
+      '计划',
     )
-  } else ui.log.info(`${prepared.env.file} 已经有了，沿用`)
+    const ok = await ui.confirm({ message: '开始？' })
+    if (cancelled(ui, ok) || !ok) return
 
-  const spin = ui.spinner()
-  spin.start('docker compose up -d（第一次要拉镜像，可能要几分钟）')
-  try {
-    await local.composeUp(dir, env)
-  } catch (err) {
-    spin.stop('没有起来')
-    throw err
-  }
-  spin.message?.('等待 Kioku 就绪')
-  const up = await local.waitUntil(() => local.healthy(LOCAL_URL), { timeoutMs: 180_000 })
-  spin.stop(up ? 'Kioku 已就绪' : 'Kioku 没有就绪')
-  if (!up) {
-    throw new KiokuFailure(
-      `Kioku 在 3 分钟内没有就绪：运行 cd ${dir} && docker compose logs kioku 看原因`,
-    )
+    let prepared
+    try {
+      prepared = await local.prepareDir(dir, release)
+    } catch (err) {
+      if (!(err instanceof KiokuFailure)) throw err
+      ui.note(manualDownload(dir, release.ref), '手动下载')
+      throw err
+    }
+    if (prepared.env.written) {
+      ui.log.warn(
+        `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢了机密记忆与托管凭据解不开`,
+      )
+    } else ui.log.info(`${prepared.env.file} 已经有了，沿用`)
+    await bringUp(ctx, dir)
+    code = prepared.env.setupCode
   }
   ctx.url = LOCAL_URL
-  const code = prepared.env.setupCode
+  if (await local.setupDone(LOCAL_URL)) return 'connect'
   if (!code) ui.log.info(`初始化码看日志：cd ${dir} && docker compose logs kioku`)
   if (await awaitSetup(ctx, LOCAL_URL, code)) return 'connect'
 }
@@ -316,6 +400,12 @@ async function perform(ctx, choice, state) {
       { reauth: true },
     )
   }
+  if (choice === 'claude-connect') {
+    return connectClaude(
+      ctx,
+      state.platforms.find((row) => row.id === 'claude-code'),
+    )
+  }
   if (choice === 'claude-memory') {
     return previewThenRun(ctx, ['claude-code'], '停用 Claude Code 的自动记忆？')
   }
@@ -326,13 +416,17 @@ async function perform(ctx, choice, state) {
 
 // 向导的主循环，返回退出码
 export async function wizard({ ui, env, cwd, out, deps = {} }) {
-  const ctx = { ui, env, cwd, out, deps: { ...DEPS, ...deps }, url: null }
+  // pending：选过迁移的平台比出来的未迁移条数（平台 id → pendingOf 的结果），只在这次向导里有效
+  const ctx = { ui, env, cwd, out, deps: { ...DEPS, ...deps }, url: null, pending: new Map() }
   ctx.url = await ctx.deps.defaultServerUrl(env)
   ui.intro('Kioku')
   for (;;) {
     const spin = ui.spinner()
     spin.start('读取现状')
     const state = await ctx.deps.scan({ env, cwd, url: ctx.url })
+    for (const row of state.platforms) {
+      if (ctx.pending.has(row.id)) row.pending = ctx.pending.get(row.id)
+    }
     spin.stop('现状')
     ui.note(renderPanel(state), '面板')
     const choice = await ui.select({ message: '要做什么', options: actionsFor(state) })
@@ -341,6 +435,8 @@ export async function wizard({ ui, env, cwd, out, deps = {} }) {
       return 0
     }
     if (choice === 'refresh') continue
+    // 换了服务器、接入或停用之后，比过的未迁移条数可能对不上了
+    if (!choice.startsWith('import:') && choice !== 'doctor') ctx.pending.clear()
     try {
       await perform(ctx, choice, state)
     } catch (err) {

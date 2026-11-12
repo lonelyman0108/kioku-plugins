@@ -9,21 +9,30 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.mjs'
 import { install, installPlan, keyVariable, parseInstallArgs } from '../install.mjs'
 import { main } from '../kioku.mjs'
-import { machineName } from '../login.mjs'
-import { fillEnv, generateSecrets, LOCAL_SETTINGS, portBusy, writeEnvFile } from '../local.mjs'
-import { actionsFor, renderPanel, scan } from '../panel.mjs'
+import { deviceLoginMany, machineName } from '../login.mjs'
+import { pendingOf } from '../import.mjs'
+import {
+  composeState,
+  fillEnv,
+  generateSecrets,
+  latestRelease,
+  LOCAL_SETTINGS,
+  portBusy,
+  writeEnvFile,
+} from '../local.mjs'
+import { actionsFor, canDisable, renderPanel, scan, scanPlatform } from '../panel.mjs'
 import { readProfile } from '../profile.mjs'
 import { nodeSupported } from '../prompts.mjs'
 import { UsageError } from '../usage.mjs'
 import { barOut, bufferOut, wizard } from '../wizard.mjs'
-import { mode } from './fakeCommand.mjs'
+import { fakeCommand, mode } from './fakeCommand.mjs'
 
 const GRANT = {
   deviceCode: 'device-code-1',
@@ -309,8 +318,11 @@ describe('几个平台一起的浏览器授权', () => {
   })
 
   it('旧的服务端回 400：退回逐个平台申请，每个确认一次', async () => {
+    // 旧的服务端：校验失败，第一条问题是缺 runtimeFamily
     authorize = (body) =>
-      body.platforms ? { status: 400, body: {} } : { status: 201, body: GRANT }
+      body.platforms
+        ? { status: 400, body: { error: 'runtimeFamily：Invalid input' } }
+        : { status: 201, body: GRANT }
     answers = [
       { status: 200, body: { status: 'approved', key: 'key-pi', app: app('pi') } },
       { status: 200, body: { status: 'approved', key: 'key-dsh', app: app('dsh') } },
@@ -321,6 +333,47 @@ describe('几个平台一起的浏览器授权', () => {
     expect(asked.map((b) => b.runtimeFamily ?? 'many')).toEqual(['many', 'pi', 'dsh'])
     expect(results.map((r) => r.status)).toEqual(['connected', 'connected'])
     expect((await readProfile('dsh', env)).key).toBe('key-dsh')
+  })
+
+  it('别的 400 不当成旧服务端：原样报错，不退回单平台', async () => {
+    authorize = () => ({
+      status: 400,
+      body: { error: 'platforms.0.runtimeFamily：运行时不能重复' },
+    })
+    const { results, text } = await connect(['pi'])
+    expect(text).not.toContain('服务端版本较旧')
+    expect(results).toEqual([
+      {
+        id: 'pi',
+        status: 'failed',
+        reason: 'Kioku 拒绝了这次申请：platforms.0.runtimeFamily：运行时不能重复',
+      },
+    ])
+    expect(requests.filter((r) => r.url === '/v1/device/authorize')).toHaveLength(1)
+  })
+
+  it('一次申请的平台去重、不超过上限，机器名为空时用 kioku-cli', async () => {
+    answers = [
+      {
+        status: 200,
+        body: {
+          status: 'approved',
+          keys: [{ runtimeFamily: 'pi', status: 'issued', key: 'key-pi', app: app('pi') }],
+        },
+      },
+    ]
+    const out = output()
+    const results = await deviceLoginMany(
+      { url: base, runtimeFamilies: ['pi', 'pi'] },
+      { out, ...fast, clientName: ' .local' },
+    )
+    expect(results).toHaveLength(1)
+    const asked = requests.find((r) => r.url === '/v1/device/authorize').body
+    expect(asked).toEqual({ platforms: [{ runtimeFamily: 'pi' }], clientName: 'kioku-cli' })
+    const many = Array.from({ length: 9 }, (_, i) => `rt${i}`)
+    await expect(
+      deviceLoginMany({ url: base, runtimeFamilies: many }, { out, ...fast }),
+    ).rejects.toThrow(/1 到 8 个平台/)
   })
 
   it('签发了却写不下的提醒去吊销；申请之前就过不了的不申请', async () => {
@@ -391,7 +444,9 @@ describe('面板', () => {
     expect(row('codex')).toMatchObject({ connection: 'unknown', otherServer: true, memory: 'off' })
     // 没有 hermes 命令：自带记忆查不了
     expect(row('hermes')).toMatchObject({ connection: 'ok', local: 2, memory: null, plugin: false })
-    expect(row('hermes').pending).toEqual({ pending: 2, capped: false })
+    // 扫描时不和 Kioku 逐条比对
+    expect(row('hermes').pending).toBeUndefined()
+    expect(requests.some((r) => r.url.startsWith('/v1/memories'))).toBe(false)
     expect(row('claude-code')).toMatchObject({ present: true, connection: 'manual', memory: 'on' })
     expect(row('claude-code').local).toBe(1)
     expect(row('openclaw')).toMatchObject({ present: false, connection: 'none', plugin: null })
@@ -401,7 +456,7 @@ describe('面板', () => {
     expect(text).toContain('pi：已接入 · 应用 pi 应用（pi） · 空间 0f1e2d3c')
     expect(text).toContain('DeepSeek Harness：已失效 · 访问密钥无效或已吊销')
     expect(text).toMatch(/Codex：无法判断 · http:\/\/127\.0\.0\.1:9 · 无法连接 Kioku/)
-    expect(text).toContain('插件 未安装 · 自带记忆 无法判断 · 本地记忆 2 条（未迁移 2 条）')
+    expect(text).toContain('插件 未安装 · 自带记忆 无法判断 · 本地记忆 2 条')
     expect(text).toContain('Claude Code：未接入')
     expect(text).toContain('访问密钥 无法判断（在 /plugin 里填）')
     expect(text).toContain('OpenClaw：未安装')
@@ -413,15 +468,95 @@ describe('面板', () => {
     expect(labels).toEqual([
       '接入 Codex（1 个未接入）',
       '重新授权 DeepSeek Harness（访问密钥已失效）',
-      '停用 Claude Code 的自动记忆',
-      '迁移 Claude Code 的 1 条本地记忆',
-      '迁移 Hermes 的 2 条本地记忆',
+      '接入 Claude Code',
+      '迁移 Claude Code 的本地记忆（1 条）',
+      '迁移 Hermes 的本地记忆（2 条）',
       '停用某个平台',
       '检查（doctor）',
       '更换服务器地址',
       '刷新',
       '退出',
     ])
+  })
+
+  it('Claude Code 的自动记忆被项目设置重新启用：写明在哪，不再提供停用', async () => {
+    writeFileSync(
+      join(dir, 'claude', 'settings.json'),
+      JSON.stringify({ autoMemoryEnabled: false }),
+    )
+    mkdirSync(join(dir, '.claude'))
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryEnabled: true }),
+    )
+    const row = await scanPlatform('claude-code', { env, cwd: dir, url: base })
+    expect(row).toMatchObject({ memory: 'on', reenabledIn: '.claude/settings.json' })
+    const state = { server: { url: base, reachable: true, problem: null }, platforms: [row] }
+    expect(renderPanel(state)).toContain('自带记忆 未停用（被 ./.claude/settings.json 重新启用）')
+    // 插件没启用：给「接入 Claude Code」，不给单独的停用
+    const values = actionsFor(state).map((item) => item.value)
+    expect(values).toContain('claude-connect')
+    expect(values).not.toContain('claude-memory')
+    row.plugin = true
+    expect(actionsFor(state).map((item) => item.value)).not.toContain('claude-memory')
+  })
+
+  it('Claude Code 的插件启用了、自动记忆还开着时只给停用', async () => {
+    writeFileSync(
+      join(dir, 'claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'kioku@kioku': true } }),
+    )
+    const row = await scanPlatform('claude-code', { env, cwd: dir, url: base })
+    expect(row).toMatchObject({ plugin: true, memory: 'on' })
+    const state = { server: { url: base, reachable: true, problem: null }, platforms: [row] }
+    const values = actionsFor(state).map((item) => item.value)
+    expect(values).toContain('claude-memory')
+    expect(values).not.toContain('claude-connect')
+  })
+
+  it('服务端给了账号名与空间名时显示名字', () => {
+    const row = {
+      id: 'pi',
+      name: 'pi',
+      present: true,
+      connection: 'ok',
+      who: { ...who('pi'), accountName: '小林', spaceName: '个人' },
+      plugin: true,
+      memory: 'none',
+    }
+    const text = renderPanel({ server: null, platforms: [row] })
+    expect(text).toContain('pi：已接入 · 应用 pi 应用（pi） · 空间 个人 · 账号 小林')
+  })
+
+  it('比对失败时未迁移写「无法判断」，迁移照常提供', () => {
+    const plan = {
+      compared: [{ state: 'new' }, { state: 'failed', reason: 'HTTP 500' }],
+    }
+    expect(pendingOf(plan)).toEqual({ pending: null, reason: '1 条读取失败' })
+    expect(pendingOf({ compared: [{ state: 'new' }, { state: 'same' }] })).toEqual({ pending: 1 })
+    const row = {
+      id: 'hermes',
+      name: 'Hermes',
+      present: true,
+      connection: 'ok',
+      who: who('hermes'),
+      plugin: true,
+      memory: 'off',
+      local: 3,
+      pending: pendingOf(plan),
+    }
+    const state = { server: { url: base, reachable: true, problem: null }, platforms: [row] }
+    expect(renderPanel(state)).toContain('本地记忆 3 条（未迁移 无法判断）')
+    expect(actionsFor(state).map((item) => item.label)).toContain('迁移 Hermes 的本地记忆（3 条）')
+    row.pending = { pending: 0 }
+    expect(actionsFor(state).map((item) => item.value)).not.toContain('import:hermes')
+  })
+
+  it('能不能停用只有一处判断', () => {
+    expect(canDisable({ connection: 'invalid' })).toBe(true)
+    expect(canDisable({ connection: 'none' })).toBe(false)
+    expect(canDisable({ connection: 'manual', memory: 'off' })).toBe(true)
+    expect(canDisable({ connection: 'manual', memory: 'on' })).toBe(false)
   })
 
   it('没有服务器地址时先给本机起一个与填地址', async () => {
@@ -485,6 +620,65 @@ describe('本机起一个 Kioku 的 .env', () => {
       await new Promise((resolve) => busy.close(resolve))
     }
     expect(await portBusy(port)).toBe(false)
+  })
+
+  it('镜像固定在最新的正式版，上面写明怎么升级', async () => {
+    const template = '# 镜像的标签\nKIOKU_TAG=latest\nPOSTGRES_PASSWORD=\n'
+    const { file } = await writeEnvFile(dir, template, { imageTag: '0.1.0' })
+    const body = readFileSync(file, 'utf8')
+    expect(body).toMatch(
+      /# 固定在 0\.1\.0（生成时的最新正式版）。升级时改这里.*\nKIOKU_TAG=0\.1\.0\n/,
+    )
+    expect(body.match(/^KIOKU_TAG=/gm)).toHaveLength(1)
+  })
+
+  it('最新的正式版：从 tag 取文件、镜像用版本号；取不到时退回 main 与 edge', async () => {
+    const reply = (status, body) => async () => ({
+      ok: status === 200,
+      status,
+      json: async () => body,
+    })
+    expect(await latestRelease({ fetchImpl: reply(200, { tag_name: 'v0.2.1' }) })).toEqual({
+      ref: 'v0.2.1',
+      imageTag: '0.2.1',
+      release: true,
+    })
+    expect(await latestRelease({ fetchImpl: reply(403, {}) })).toEqual({
+      ref: 'main',
+      imageTag: 'edge',
+      release: false,
+      problem: 'HTTP 403',
+    })
+    expect((await latestRelease({ fetchImpl: reply(200, { tag_name: 'nightly' }) })).ref).toBe(
+      'main',
+    )
+    const offline = async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    }
+    expect((await latestRelease({ fetchImpl: offline })).problem).toBe('ENOTFOUND')
+  })
+
+  it('目录里的 compose 项目：没有 compose.yaml、在运行、建过没运行', async () => {
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    const project = join(dir, 'project')
+    mkdirSync(project)
+    const run = (running) =>
+      fakeCommand(
+        bin,
+        'docker',
+        `const args = process.argv.slice(2)
+if (args.includes('--status')) console.log(${JSON.stringify(running)})
+else console.log('db\\nkioku')`,
+      )
+    // 假命令是 Node 脚本：PATH 里还要有 node
+    const dockerEnv = { ...env, PATH: [bin, dirname(process.execPath)].join(delimiter) }
+    run('db\nkioku')
+    expect(await composeState(project, dockerEnv)).toBe('none')
+    writeFileSync(join(project, 'compose.yaml'), 'name: kioku\n')
+    expect(await composeState(project, dockerEnv)).toBe('running')
+    run('db')
+    expect(await composeState(project, dockerEnv)).toBe('stopped')
   })
 
   it('只给本人读写，已有的不覆盖', async () => {
@@ -687,8 +881,12 @@ describe('向导', () => {
       env: { written: true, file: '/x/.env', setupCode: 'setup-code-1234567' },
     })),
     composeUp: vi.fn(async () => {}),
+    composeState: async () => 'none',
+    latestRelease: async () => ({ ref: 'v0.1.0', imageTag: '0.1.0', release: true }),
+    setupCodeIn: async () => 'setup-code-from-env',
     waitUntil: async (check) => check(),
-    setupDone: async () => true,
+    // 第一次问时还没建管理员，之后建好了
+    setupDone: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
     ...overrides,
   })
 
@@ -715,7 +913,13 @@ describe('向导', () => {
       },
     })
     expect(code).toBe(0)
-    expect(fake.prepareDir).toHaveBeenCalledWith(resolve('/home/someone', 'kioku-here'))
+    expect(fake.prepareDir).toHaveBeenCalledWith(resolve('/home/someone', 'kioku-here'), {
+      ref: 'v0.1.0',
+      imageTag: '0.1.0',
+      release: true,
+    })
+    const plan = ui.shown.find((item) => item.title === '计划').text
+    expect(plan).toContain('版本 0.1.0（最新的正式版）')
     expect(fake.composeUp).toHaveBeenCalledOnce()
     expect(opened).toEqual(['http://127.0.0.1:18920'])
     const notes = ui.shown.filter((item) => item.kind === 'note').map((item) => item.text)
@@ -731,7 +935,7 @@ describe('向导', () => {
 
   it('本机起一个 Kioku：端口被占时说明，不启动', async () => {
     const fake = local({ portBusy: async () => true })
-    const ui = fakeUi(['local', 'exit'])
+    const ui = fakeUi(['local', '~/kioku-here', 'exit'])
     await wizard({
       ui,
       env,
@@ -746,6 +950,145 @@ describe('向导', () => {
     expect(ui.shown.find((item) => item.kind === 'error').text).toMatch(/端口 18920 被别的程序占着/)
     expect(fake.prepareDir).not.toHaveBeenCalled()
     expect(fake.composeUp).not.toHaveBeenCalled()
+  })
+
+  it('本机起一个 Kioku：目录里上次起的还在运行时，不判端口、不重新准备，等就绪后接着接入', async () => {
+    const fake = local({
+      composeState: async () => 'running',
+      portBusy: vi.fn(async () => true),
+    })
+    fake.healthy.mockResolvedValueOnce(false).mockResolvedValue(true)
+    const opened = []
+    const connect = vi.fn(async () => [{ id: 'pi', status: 'connected' }])
+    const scans = [{ ...state('none'), server: null }, state('none'), state('ok')]
+    const ui = fakeUi(['local', '~/kioku-here', ['pi'], true, 'exit'])
+    await wizard({
+      ui,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => null,
+        scan: async () => scans.shift(),
+        connectPlatforms: connect,
+        pluginSteps: async () => '',
+        open: (url) => opened.push(url),
+        local: fake,
+      },
+    })
+    expect(fake.portBusy).not.toHaveBeenCalled()
+    expect(fake.prepareDir).not.toHaveBeenCalled()
+    expect(fake.composeUp).not.toHaveBeenCalled()
+    // 初始化码取目录里的 .env
+    const notes = ui.shown.filter((item) => item.kind === 'note').map((item) => item.text)
+    expect(notes.some((text) => text.includes('初始化码：setup-code-from-env'))).toBe(true)
+    expect(connect).toHaveBeenCalledOnce()
+  })
+
+  it('本机起一个 Kioku：建过、没在运行时确认后启动，不判端口', async () => {
+    const fake = local({ composeState: async () => 'stopped', portBusy: vi.fn(async () => true) })
+    fake.healthy.mockResolvedValueOnce(false).mockResolvedValue(true)
+    fake.setupDone = async () => true
+    const scans = [{ ...state('none'), server: null }, state('ok'), state('ok')]
+    // 管理员已经建好：直接进入接入，这里不选平台
+    const ui = fakeUi(['local', '~/kioku-here', true, [], 'exit'])
+    await wizard({
+      ui,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => null,
+        scan: async () => scans.shift(),
+        local: fake,
+      },
+    })
+    expect(fake.portBusy).not.toHaveBeenCalled()
+    expect(fake.composeUp).toHaveBeenCalledOnce()
+    expect(fake.prepareDir).not.toHaveBeenCalled()
+  })
+
+  it('迁移：选了才比对，未迁移条数在这次向导里显示，写入之后作废', async () => {
+    const plan = {
+      empty: false,
+      compared: [
+        { state: 'new', uri: 'user://a' },
+        { state: 'same', uri: 'user://b' },
+      ],
+      skipped: [],
+      todo: [{ state: 'new', uri: 'user://a' }],
+    }
+    const hermes = {
+      id: 'hermes',
+      name: 'Hermes',
+      present: true,
+      connection: 'ok',
+      who: who('hermes'),
+      plugin: true,
+      memory: 'off',
+      local: 2,
+    }
+    const scanState = () => ({ ...state('ok'), platforms: [{ ...hermes }] })
+    const write = vi.fn(async () => 0)
+    // 第一次看了计划不写，第二次写入
+    const ui = fakeUi(['import:hermes', false, 'import:hermes', true, 'exit'])
+    writeFileSync(
+      join(dir, 'hermes', '.env'),
+      `KIOKU_SERVER_URL=${base}\nKIOKU_API_KEY=key-hermes\n`,
+    )
+    await wizard({
+      ui,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => base,
+        scan: async () => scanState(),
+        planImport: async () => plan,
+        writeImport: write,
+      },
+    })
+    const menus = ui.shown.filter((item) => item.kind === 'select').map((m) => m.options)
+    const label = (options) => options.find((o) => o.value === 'import:hermes')?.label
+    expect(label(menus[0])).toBe('迁移 Hermes 的本地记忆（2 条）')
+    expect(label(menus[1])).toBe('迁移 Hermes 的本地记忆（未迁移 1 条）')
+    expect(write).toHaveBeenCalledOnce()
+    // 写入之后作废，回到本地条数
+    expect(label(menus[2])).toBe('迁移 Hermes 的本地记忆（2 条）')
+    const panels = ui.shown.filter((item) => item.title === '面板').map((item) => item.text)
+    expect(panels[1]).toContain('本地记忆 2 条（未迁移 1 条）')
+  })
+
+  it('接入 Claude Code：列出 /plugin 的安装与要填的服务地址，顺带停用自动记忆', async () => {
+    const claude = {
+      id: 'claude-code',
+      name: 'Claude Code',
+      present: true,
+      connection: 'manual',
+      plugin: false,
+      memory: 'on',
+    }
+    const setupCalls = []
+    const ui = fakeUi(['claude-connect', true, 'exit'])
+    await wizard({
+      ui,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => base,
+        scan: async () => ({ ...state('ok'), platforms: [claude] }),
+        setup: async (args, io) => {
+          setupCalls.push(args)
+          io.out.write('settings.json\n  autoMemoryEnabled：（未设置） → false\n')
+          return 0
+        },
+      },
+    })
+    expect(setupCalls).toEqual([['claude-code', '--dry-run'], ['claude-code']])
+    const steps = ui.shown.find((item) => item.title === '装插件').text
+    expect(steps).toContain('/plugin install kioku --marketplace lonelyman0108/kioku-plugins')
+    expect(steps).toContain(`服务地址填：${base}`)
   })
 
   it('输出接在竖线下面', () => {

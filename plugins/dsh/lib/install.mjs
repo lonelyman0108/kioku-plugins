@@ -139,7 +139,7 @@ export async function install(
     ordered
       .filter((item) => item.status === 'connected' || item.status === 'manual')
       .map((item) => item.id),
-    { env, cwd },
+    { env, cwd, url },
   )
   if (steps) out.write(`\n${steps}\n`)
   return ordered.some((item) => item.status === 'failed') ? 1 : 0

@@ -2,7 +2,7 @@
 // 再等用户在管理界面建好第一个管理员。已有的文件不覆盖；端口被占时只说明，不动别的进程
 
 import { randomBytes } from 'node:crypto'
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { connect, createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,9 +10,41 @@ import { join, resolve } from 'node:path'
 import { capture } from './command.mjs'
 import { errorKind, KiokuFailure } from './http.mjs'
 
-const RAW = 'https://raw.githubusercontent.com/lonelyman0108/kioku/main'
-export const COMPOSE_URL = `${RAW}/compose.yaml`
-export const ENV_EXAMPLE_URL = `${RAW}/.env.example`
+const REPO = 'lonelyman0108/kioku'
+export const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`
+
+// 仓库里某个版本（tag 或分支）的文件
+export function rawUrl(ref, file) {
+  return `https://raw.githubusercontent.com/${REPO}/${ref}/${file}`
+}
+
+// 用哪个版本：最新的正式版，compose.yaml、.env.example 从它的 tag 取，镜像固定在这个版本号；
+// 取不到时退回 main 上的文件与 edge 镜像（main 上最新的提交），problem 写明原因。
+// 返回 { ref, imageTag, release, problem? }
+export async function latestRelease({ fetchImpl = fetch } = {}) {
+  let problem
+  try {
+    const res = await fetchImpl(LATEST_RELEASE_URL, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'kioku-cli' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = res.ok ? await res.json().catch(() => null) : null
+    const tag = typeof data?.tag_name === 'string' ? data.tag_name : ''
+    const match = /^v?(\d+\.\d+\.\d+)$/.exec(tag)
+    if (match) return { ref: tag, imageTag: match[1], release: true }
+    problem = res.ok ? '版本号认不出' : `HTTP ${res.status}`
+  } catch (err) {
+    problem = networkReason(err)
+  }
+  return { ref: 'main', imageTag: 'edge', release: false, problem }
+}
+
+// fetch 失败的原因：超时、错误码，或者笼统的网络错误
+function networkReason(err) {
+  const code = err?.cause?.code
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return '超时'
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : '网络错误'
+}
 export const LOCAL_PORT = 18920
 export const LOCAL_URL = `http://127.0.0.1:${LOCAL_PORT}`
 
@@ -72,9 +104,16 @@ export function envValue(text, name) {
   return null
 }
 
-// 写 .env：只给本人读写，已有的不覆盖。返回 { written, file, setupCode }：
-// 已有的文件不动，初始化码取它里面写的（没写为 null，要看日志）
-export async function writeEnvFile(dir, template, { random } = {}) {
+// .env 里 KIOKU_TAG 上面的说明
+function tagNote(imageTag) {
+  return imageTag === 'edge'
+    ? '# 没取到最新的正式版，用的是 main 上最新的提交（edge），不保证稳定；改成版本号（如 0.1.0）固定下来'
+    : `# 固定在 ${imageTag}（生成时的最新正式版）。升级时改这里，再 docker compose pull && docker compose up -d`
+}
+
+// 写 .env：只给本人读写，已有的不覆盖。imageTag 给了时 KIOKU_TAG 写成它，上面加一行说明。
+// 返回 { written, file, setupCode }：已有的文件不动，初始化码取它里面写的（没写为 null，要看日志）
+export async function writeEnvFile(dir, template, { random, imageTag } = {}) {
   const file = join(dir, '.env')
   const existing = await readFile(file, 'utf8').catch((err) => {
     if (err?.code === 'ENOENT') return null
@@ -84,13 +123,18 @@ export async function writeEnvFile(dir, template, { random } = {}) {
     return { written: false, file, setupCode: envValue(existing, 'KIOKU_SETUP_CODE') || null }
   }
   const secrets = generateSecrets(random)
-  const body = fillEnv(template, { ...secrets, ...LOCAL_SETTINGS })
+  let body = fillEnv(template, {
+    ...secrets,
+    ...LOCAL_SETTINGS,
+    ...(imageTag ? { KIOKU_TAG: imageTag } : {}),
+  })
+  if (imageTag) body = body.replace(/^KIOKU_TAG=/m, `${tagNote(imageTag)}\nKIOKU_TAG=`)
   try {
     // wx：写的这一刻别人刚建了也不覆盖
     await writeFile(file, body, { mode: 0o600, flag: 'wx' })
     await chmod(file, 0o600)
   } catch (err) {
-    if (err?.code === 'EEXIST') return writeEnvFile(dir, template, { random })
+    if (err?.code === 'EEXIST') return writeEnvFile(dir, template, { random, imageTag })
     await rm(file, { force: true }).catch(() => {})
     throw new KiokuFailure(`无法写入 ${file}（${errorKind(err)}）`)
   }
@@ -113,14 +157,7 @@ export async function download(url, file, { fetchImpl = fetch } = {}) {
     text = await res.text()
   } catch (err) {
     if (err instanceof KiokuFailure) throw err
-    const code = err?.cause?.code
-    const reason =
-      err?.name === 'TimeoutError' || err?.name === 'AbortError'
-        ? '超时'
-        : typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code)
-          ? code
-          : '网络错误'
-    throw new KiokuFailure(`下载 ${url} 失败（${reason}）`)
+    throw new KiokuFailure(`下载 ${url} 失败（${networkReason(err)}）`)
   }
   try {
     await writeFile(file, text, { flag: 'wx' })
@@ -132,26 +169,49 @@ export async function download(url, file, { fetchImpl = fetch } = {}) {
 }
 
 // 下载失败时让用户自己运行的命令
-export function manualDownload(dir) {
+export function manualDownload(dir, ref = 'main') {
   return [
     `mkdir -p ${dir} && cd ${dir}`,
-    `curl -fsSLO ${COMPOSE_URL}`,
-    `curl -fsSL -o .env.example ${ENV_EXAMPLE_URL}`,
+    `curl -fsSLO ${rawUrl(ref, 'compose.yaml')}`,
+    `curl -fsSL -o .env.example ${rawUrl(ref, '.env.example')}`,
   ].join('\n')
 }
 
-// 准备目录：建目录、下载 compose.yaml 与 .env.example、生成 .env。返回 { files, env }
-export async function prepareDir(dir, { fetchImpl, random } = {}) {
+// 准备目录：建目录、从 release.ref 下载 compose.yaml 与 .env.example、生成 .env（镜像固定在 release.imageTag）。
+// 返回 { files, env }
+export async function prepareDir(dir, release, { fetchImpl, random } = {}) {
   try {
     await mkdir(dir, { recursive: true })
   } catch (err) {
     throw new KiokuFailure(`无法创建目录 ${dir}（${errorKind(err)}）`)
   }
-  const compose = await download(COMPOSE_URL, join(dir, 'compose.yaml'), { fetchImpl })
-  const example = await download(ENV_EXAMPLE_URL, join(dir, '.env.example'), { fetchImpl })
+  const fetchFile = (name, file) => download(rawUrl(release.ref, name), file, { fetchImpl })
+  const compose = await fetchFile('compose.yaml', join(dir, 'compose.yaml'))
+  const example = await fetchFile('.env.example', join(dir, '.env.example'))
   const template = await readFile(join(dir, '.env.example'), 'utf8')
-  const env = await writeEnvFile(dir, template, { random })
+  const env = await writeEnvFile(dir, template, { random, imageTag: release.imageTag })
   return { files: { compose, example }, env }
+}
+
+// 这个目录里的 .env 写的初始化码；没有为 null
+export async function setupCodeIn(dir) {
+  const text = await readFile(join(dir, '.env'), 'utf8').catch(() => null)
+  return (text && envValue(text, 'KIOKU_SETUP_CODE')) || null
+}
+
+// 这个目录的 compose 项目里有没有 kioku 服务：'none'（没有 compose.yaml，或者没建过容器）、
+// 'stopped'（建过、没在运行）、'running'。查不了的按 'none' 算
+export async function composeState(dir, env) {
+  if (!(await stat(join(dir, 'compose.yaml')).catch(() => null))) return 'none'
+  const base = ['compose', '-f', join(dir, 'compose.yaml'), '--project-directory', dir, 'ps']
+  const services = async (args) => {
+    const result = await capture('docker', [...base, ...args], env, { timeout: 30_000 })
+    return result.found && result.ok ? result.stdout.split(/\r?\n/).map((line) => line.trim()) : []
+  }
+  if (!(await services(['-a', '--services'])).includes('kioku')) return 'none'
+  return (await services(['--services', '--status', 'running'])).includes('kioku')
+    ? 'running'
+    : 'stopped'
 }
 
 // docker compose 能不能用

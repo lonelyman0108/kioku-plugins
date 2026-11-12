@@ -17,6 +17,7 @@ import {
 } from './hermes.mjs'
 import { inspectOpenclaw, setupOpenclaw, statusOpenclaw } from './openclaw.mjs'
 import { inspectPi, piHome, setupPi, statusPi } from './pi.mjs'
+import { readSettings } from './files.mjs'
 import { readProfile } from './profile.mjs'
 
 // 真值的环境变量写法
@@ -41,29 +42,25 @@ function claudeHome(env) {
 // 向导的面板里各平台共有的几项：
 // - command、home：本机装没装这个平台，看命令在不在 PATH 里、配置目录在不在
 // - status：插件装没装（plugin：true、false，null 是查不了）与自带的长期记忆停没停（memory：'off'、'on'，
-//   'none' 是没有自带的，null 是查不了）
+//   'none' 是没有自带的，null 是查不了）；reenabledIn 是又启用了它、停用不了的那份设置
 // - install：插件要用户自己装：在哪里运行（where，默认终端）、可以直接复制的命令与之后要做的事；向导不替用户装
 // - source：kioku import 认得的本地记忆的来源
 const claudeCode = {
   name: 'Claude Code',
   command: () => 'claude',
   home: claudeHome,
+  // 项目的设置又启用了自动记忆时，停用用户设置也没用：reenabledIn 写明是哪份文件，向导据此不再提供停用
   status: async ({ env, cwd }) => {
     let settings
     try {
-      settings = JSON.parse(
-        (await readFile(claudeCode.settingsFile(env), 'utf8')).replace(/^\uFEFF/, ''),
-      )
-    } catch (err) {
-      if (err?.code !== 'ENOENT') return { plugin: null, memory: null }
-      settings = {}
+      ;({ settings } = await readSettings(claudeCode.settingsFile(env)))
+    } catch {
+      return { plugin: null, memory: null }
     }
-    const plugin = Object.entries(settings?.enabledPlugins ?? {}).some(
-      ([id, on]) => id.startsWith('kioku@') && on === true,
-    )
-    const off =
-      claudeCode.memory.disabledBy(settings, env) && !(await claudeCode.memory.enabledBy(env, cwd))
-    return { plugin, memory: off ? 'off' : 'on' }
+    const plugin = claudeCode.pluginActive(settings, env)
+    const reenabledIn = await claudeCode.memory.enabledIn(env, cwd)
+    if (reenabledIn) return { plugin, memory: 'on', reenabledIn }
+    return { plugin, memory: claudeCode.memory.disabledBy(settings, env) ? 'off' : 'on' }
   },
   install: {
     where: '在 Claude Code 里',
@@ -95,15 +92,19 @@ const claudeCode = {
       }
       return settings?.autoMemoryEnabled === false ? '用户设置' : null
     },
-    // 又在哪里启用了：当前项目的设置优先于用户设置。别处（托管的设置）查不到
-    enabledBy: async (env, cwd) => {
+    // 又在哪份项目设置里启用了（相对项目目录的路径）：当前项目的设置优先于用户设置。别处（托管的设置）查不到
+    enabledIn: async (env, cwd) => {
       // 环境变量停用着时，设置里写什么都不生效
       if (TRUTHY.test((env.CLAUDE_CODE_DISABLE_AUTO_MEMORY ?? '').trim())) return null
       for (const name of PROJECT_SETTINGS) {
-        if ((await settingOf(join(cwd, name), 'autoMemoryEnabled')) === true)
-          return `项目的 ${name} `
+        if ((await settingOf(join(cwd, name), 'autoMemoryEnabled')) === true) return name
       }
       return null
+    },
+    // 同上，给提示用的说法
+    enabledBy: async (env, cwd) => {
+      const name = await claudeCode.memory.enabledIn(env, cwd)
+      return name ? `项目的 ${name} ` : null
     },
   },
   // 插件是否在用：这个会话里钩子已经配好了访问密钥文件，或者用户设置的 enabledPlugins 里有以「kioku@」开头、

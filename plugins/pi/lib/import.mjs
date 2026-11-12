@@ -149,17 +149,29 @@ export async function countLocal(from, { env, path }) {
   return found ? entries.filter((item) => !item.skipped).length : null
 }
 
-// 本地的这个来源里还有几条没迁进 Kioku（Kioku 里同一个坐标还没有的）。一条一条地问，所以只问前 limit 条，
-// 超过时 capped 为真
-export async function countPending(config, from, { env, path, app, limit = 200 }) {
-  const { found, entries } = await SOURCES[from].read({ env, path, app })
-  if (!found) return null
-  const uris = [...new Set(entries.filter((item) => !item.skipped).map((item) => item.uri))]
-  let pending = 0
-  for (const uri of uris.slice(0, limit)) {
-    if ((await compare(config, { uri, content: '' })).state === 'new') pending++
+// 按顺序对每一项做 fn，同时最多 limit 个；结果的顺序和 items 一样
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await fn(items[index])
+    }
   }
-  return { pending, capped: uris.length > limit }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+// 和 Kioku 里比时同时发的请求数
+const COMPARE_CONCURRENCY = 8
+
+// 计划里还没迁进 Kioku 的条数（Kioku 里同一个坐标还没有的）。有比对失败的（不是 200、404）时
+// 说不准，pending 为 null，reason 写明几条读取失败
+export function pendingOf(plan) {
+  const failed = plan.compared.filter((item) => item.state === 'failed').length
+  if (failed) return { pending: null, reason: `${failed} 条读取失败` }
+  return { pending: plan.compared.filter((item) => item.state === 'new').length }
 }
 
 // 读本地的记忆、和 Kioku 里的比过，列出计划：每条放到哪个坐标、Kioku 里有没有。
@@ -193,8 +205,8 @@ export async function planImport(config, { from, path, overwrite = false }, { en
       usable.push(item)
     }
   }
-  const compared = []
-  for (const item of usable) compared.push(await compare(config, item))
+  // 一条一个请求：有界并发，几百条也不至于等太久
+  const compared = await mapLimit(usable, COMPARE_CONCURRENCY, (item) => compare(config, item))
 
   out.write('\n')
   for (const item of compared) {

@@ -2,22 +2,23 @@
 // 向导走浏览器授权，几个平台一起申请、只确认一次；服务端不认这种写法时逐个平台申请。
 // kioku install 的访问密钥从环境变量来，直接写下。插件不替用户装，只列出要运行的命令
 
-import { failureText, KiokuFailure } from './http.mjs'
-import { deviceLogin, deviceLoginMany, LegacyServer } from './login.mjs'
+import { KiokuFailure } from './http.mjs'
+import { deviceLogin, deviceLoginMany, LegacyServer, MAX_PLATFORMS } from './login.mjs'
 import { PLATFORMS } from './platforms.mjs'
 import { plain } from './text.mjs'
 
-// 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着
-function orphanHint(app) {
+// 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着。kioku login 也用它
+export function orphanHint(app) {
   const name = app?.name ? `（应用 ${plain(app.name)}）` : ''
   return `访问密钥已经签发、但没有写下：到管理界面的应用页吊销它${name}，解决上面的问题后重新运行`
 }
 
-// 用给定的地址与访问密钥配好一个平台。setup 的输出写到 out，接下来装插件的提示由调用方统一列出
-export function configure(id, { url, key }, { env, out, cwd }) {
+// 用给定的地址与访问密钥配好一个平台。setup 的输出写到 out；hints 为假时不打印「接下来装上」，
+// 由调用方统一列出（向导与 kioku install），kioku login 只配一个平台，照旧打印
+export function configure(id, { url, key }, { env, out, cwd }, { hints = false } = {}) {
   return PLATFORMS[id].setup(
     { serverUrl: url, dryRun: false, undo: false, check: true },
-    { env, out, cwd, readKey: async () => key, plain, login: null, hints: false },
+    { env, out, cwd, readKey: async () => key, plain, login: null, hints },
   )
 }
 
@@ -28,7 +29,9 @@ async function settle(id, key, app, io) {
     await configure(id, { url: io.url, key }, io)
     return { id, status: 'connected', app }
   } catch (err) {
-    return { id, status: 'failed', reason: `${failureText(err)}。${orphanHint(app)}` }
+    // 别的错误照旧抛出（由入口报内部错误），不当成一个平台的失败吞掉
+    if (!(err instanceof KiokuFailure)) throw err
+    return { id, status: 'failed', reason: `${err.message}。${orphanHint(app)}` }
   }
 }
 
@@ -52,46 +55,56 @@ export async function connectPlatforms(
       results.set(id, { id, status: 'failed', reason: err.message })
     }
   }
-  if (ready.length) {
-    const families = ready.map((id) => PLATFORMS[id].runtimeFamily)
-    let answers = null
-    let legacy = false
+  // 一次最多 MAX_PLATFORMS 个：多了分批，每批确认一次，前一批签发的先写下再申请下一批
+  const batches = []
+  for (let i = 0; i < ready.length; i += MAX_PLATFORMS) {
+    batches.push(ready.slice(i, i + MAX_PLATFORMS))
+  }
+  if (batches.length > 1) {
+    out.write(`一次最多申请 ${MAX_PLATFORMS} 个平台：分 ${batches.length} 批，每批确认一次\n`)
+  }
+  let legacy = false
+  for (const batch of batches) {
+    out.write(
+      `这次申请 ${batch.length} 个平台：${batch.map((id) => PLATFORMS[id].name).join('、')}\n`,
+    )
+    let answers
     try {
-      out.write(
-        `这次申请 ${ready.length} 个平台：${ready.map((id) => PLATFORMS[id].name).join('、')}\n`,
+      answers = await deviceLoginMany(
+        { url, runtimeFamilies: batch.map((id) => PLATFORMS[id].runtimeFamily) },
+        login,
       )
-      answers = await deviceLoginMany({ url, runtimeFamilies: families }, login)
     } catch (err) {
       if (err instanceof LegacyServer) {
         legacy = true
         out.write(`${err.message}\n`)
-      } else if (err instanceof KiokuFailure) {
-        for (const id of ready) results.set(id, { id, status: 'failed', reason: err.message })
-      } else throw err
+        break
+      }
+      if (!(err instanceof KiokuFailure)) throw err
+      for (const id of batch) results.set(id, { id, status: 'failed', reason: err.message })
+      continue
     }
-    if (answers) {
-      for (const [index, answer] of answers.entries()) {
-        const id = ready[index]
-        if (answer.status === 'issued')
-          results.set(id, await settle(id, answer.key, answer.app, io))
-        else if (answer.status === 'denied') {
-          results.set(id, { id, status: 'denied', reason: answer.reason || '没有签发' })
-        } else results.set(id, { id, status: 'skipped', reason: '确认页上没有勾选' })
+    for (const id of batch) {
+      const answer = answers.find((item) => item.runtimeFamily === PLATFORMS[id].runtimeFamily)
+      if (answer?.status === 'issued') results.set(id, await settle(id, answer.key, answer.app, io))
+      else if (answer?.status === 'denied') {
+        results.set(id, { id, status: 'denied', reason: answer.reason || '没有签发' })
+      } else results.set(id, { id, status: 'skipped', reason: '确认页上没有勾选' })
+    }
+  }
+  if (legacy) {
+    // 旧的服务端：还没有结果的平台逐个申请，每个确认一次；一个不成不影响下一个
+    for (const id of ready.filter((item) => !results.has(item))) {
+      out.write(`\n${PLATFORMS[id].name}：浏览器授权\n`)
+      let key
+      try {
+        key = await deviceLogin({ url, runtimeFamily: PLATFORMS[id].runtimeFamily }, login)
+      } catch (err) {
+        if (!(err instanceof KiokuFailure)) throw err
+        results.set(id, { id, status: 'failed', reason: err.message })
+        continue
       }
-    } else if (legacy) {
-      // 旧的服务端：逐个平台申请，每个确认一次；一个不成不影响下一个
-      for (const id of ready) {
-        out.write(`\n${PLATFORMS[id].name}：浏览器授权\n`)
-        let key
-        try {
-          key = await deviceLogin({ url, runtimeFamily: PLATFORMS[id].runtimeFamily }, login)
-        } catch (err) {
-          if (!(err instanceof KiokuFailure)) throw err
-          results.set(id, { id, status: 'failed', reason: err.message })
-          continue
-        }
-        results.set(id, await settle(id, key, null, io))
-      }
+      results.set(id, await settle(id, key, null, io))
     }
   }
   return ids.map((id) => results.get(id))
@@ -120,21 +133,19 @@ export function resultsText(results) {
   return lines.join('\n')
 }
 
-// 这几个平台里还要自己装插件的（查得到装好了的不列），每个平台一段：在哪里运行、可以直接复制的命令、之后要做的事
-export async function pluginSteps(ids, { env, cwd }) {
+// 这几个平台里还要自己装插件的（查得到装好了的不列），每个平台一段：在哪里运行、可以直接复制的命令、之后要做的事。
+// 访问密钥在插件配置里填的平台（Claude Code），给了 url 时写明要填的服务地址
+export async function pluginSteps(ids, { env, cwd, url }) {
   const blocks = []
   for (const id of ids) {
     const platform = PLATFORMS[id]
     const status = await platform.status({ env, cwd }).catch(() => ({ plugin: null }))
     if (status.plugin === true) continue
     const { where = '在终端里', commands, after } = platform.install
-    blocks.push(
-      [
-        `${platform.name}（${where}运行）`,
-        ...commands.map((line) => `  ${line}`),
-        `  然后：${after}`,
-      ].join('\n'),
-    )
+    const lines = [`${platform.name}（${where}运行）`, ...commands.map((line) => `  ${line}`)]
+    if (!platform.setup && url) lines.push(`  服务地址填：${url}`)
+    lines.push(`  然后：${after}`)
+    blocks.push(lines.join('\n'))
   }
   if (!blocks.length) return ''
   return `接下来自己装插件，装好之后再运行 kioku 看状态：\n\n${blocks.join('\n\n')}`
