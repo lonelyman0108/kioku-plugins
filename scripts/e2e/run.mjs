@@ -159,16 +159,9 @@ const PLATFORMS = {
     // 所以看它自己登记的清单里有没有
     async tools({ sh }) {
       const shown = await sh('openclaw', ['plugins', 'inspect', 'kioku', '--json'], { quiet: true })
-      let names = []
-      try {
-        const data = JSON.parse(shown.stdout.slice(shown.stdout.search(/^\{/m)))
-        names = [
-          ...(data.plugin?.toolNames ?? []),
-          ...(data.tools ?? []).map((tool) => tool?.name ?? tool),
-        ]
-      } catch {
-        names = []
-      }
+      // 诊断：先看它到底输出了什么
+      log(`-- inspect：${shown.stdout.replace(/\s+/g, ' ').slice(0, 4000)}`)
+      const names = shown.stdout
       check(names.includes('kioku_get'), 'OpenClaw 登记的工具里有 Kioku 的工具')
     },
     async prepare({ home, env, model }) {

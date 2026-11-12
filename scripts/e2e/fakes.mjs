@@ -194,6 +194,10 @@ function seen(raw, body) {
     toolNames: (Array.isArray(body?.tools) ? body.tools : [])
       .map((tool) => tool?.function?.name ?? tool?.name ?? tool?.type)
       .slice(0, 60),
+    // 诊断：按需搜索工具的那两个工具长什么样
+    search: (Array.isArray(body?.tools) ? body.tools : []).filter((tool) =>
+      /tool_(search|describe)/.test(JSON.stringify(tool).slice(0, 200)),
+    ),
   }
 }
 export const replyText = ({ boot, recall, tools }) =>
