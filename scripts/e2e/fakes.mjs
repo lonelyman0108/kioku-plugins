@@ -49,7 +49,12 @@ function listen(handler) {
     server.listen(0, '127.0.0.1', () => {
       resolve({
         url: `http://127.0.0.1:${server.address().port}`,
-        close: () => new Promise((done) => server.close(done)),
+        // 平台留在后台的进程可能还连着：先断开，否则 close 一直等
+        close: () =>
+          new Promise((done) => {
+            server.close(done)
+            server.closeAllConnections()
+          }),
       })
       // 平台留着的长连接不拦着关服务
       server.unref()
@@ -60,6 +65,26 @@ function listen(handler) {
 const json = (res, status, body) => {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+const text = (value, min, max) =>
+  typeof value === 'string' && value.length >= min && Array.from(value).length <= max
+
+// 一个生命周期事件哪里不合契约（contracts 的 SessionStartEvent、PromptSubmitEvent、TurnEndEvent）；合格为 null
+function eventProblem(body) {
+  if (!body || typeof body !== 'object') return '不是 JSON 对象'
+  const optionalId = body.sessionId === undefined || text(body.sessionId, 0, 200)
+  if (body.event === 'session.start') return optionalId ? null : 'sessionId 不对'
+  if (body.event === 'prompt.submit') {
+    if (!optionalId) return 'sessionId 不对'
+    return text(body.prompt, 1, 20_000) ? null : 'prompt 不对'
+  }
+  if (body.event === 'turn.end') {
+    if (!text(body.sessionId, 1, 200)) return 'turn.end 要带 sessionId'
+    if (!text(body.user, 1, 20_000)) return 'user 不对'
+    return text(body.reply, 0, 20_000) ? null : 'reply 不对'
+  }
+  return `不认识的事件 ${String(body.event)}`
 }
 
 // 假的 Kioku。runtimeFamily 决定生命周期输出的格式，和服务端的 hostOutput 一样
@@ -98,6 +123,12 @@ export async function startFakeKioku(runtimeFamily) {
       })
     }
     if (req.url === '/v1/lifecycle/event' && req.method === 'POST') {
+      // 照服务端的契约校验：不合格的事件服务端回 400，插件按设计不出声，不校验的话这里会当成收到了
+      const problem = eventProblem(body)
+      if (problem) {
+        requests.at(-1).rejected = problem
+        return json(res, 400, { error: problem })
+      }
       const context =
         body?.event === 'session.start'
           ? `${BOOT_MARK}：这是启动加载`
@@ -137,21 +168,28 @@ export async function startFakeKioku(runtimeFamily) {
     }
     return json(res, 404, { error: '接口不存在' })
   })
-  const events = () =>
+  // 收下的事件（带访问密钥、合格的）；from 是从第几个请求算起
+  const events = (from = 0) =>
     requests
-      .filter((r) => r.path === '/v1/lifecycle/event' && r.authorized)
+      .slice(from)
+      .filter((r) => r.path === '/v1/lifecycle/event' && r.authorized && !r.rejected)
       .map((r) => r.body ?? {})
-  const mcp = () =>
-    requests.filter((r) => r.path === '/v1/mcp' && r.authorized).map((r) => r.body?.method)
-  return { ...server, requests, events, mcp }
+  const rejected = () => requests.filter((r) => r.rejected).map((r) => r.rejected)
+  const mcp = (from = 0) =>
+    requests
+      .slice(from)
+      .filter((r) => r.path === '/v1/mcp' && r.authorized)
+      .map((r) => r.body?.method)
+  return { ...server, requests, events, rejected, mcp }
 }
 
-// 这次请求里模型看到了什么：注入的两个标记、Kioku 的工具
-function seen(raw) {
+// 这次请求里模型看到了什么：注入的两个标记，以及工具清单里有没有 Kioku 的工具
+// （只看 tools 字段：正文里提到工具名不算）
+function seen(raw, body) {
   return {
     boot: raw.includes(BOOT_MARK),
     recall: raw.includes(RECALL_MARK),
-    tools: raw.includes('kioku_get'),
+    tools: JSON.stringify(body?.tools ?? []).includes('kioku_get'),
   }
 }
 export const replyText = ({ boot, recall, tools }) =>
@@ -184,7 +222,7 @@ export async function startFakeModel() {
     } catch {
       body = {}
     }
-    const flags = seen(raw)
+    const flags = seen(raw, body)
     const text = replyText(flags)
     const id = `e2e-${++n}`
     const created = Math.floor(Date.now() / 1000)

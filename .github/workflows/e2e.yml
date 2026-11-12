@@ -1,17 +1,22 @@
 # 在 Linux 与 Windows 上装真实的平台，照安装说明走一遍（scripts/e2e/run.mjs）。模型与 Kioku 都是假的，不用任何密钥。
-# 不是必需检查：平台自己发新版本也会让它变红，红了要看原因。改到实测脚本的 PR 会跑，每周一也跑一次，也可以手动跑。
+# 不是必需检查：平台自己发新版本也会让它变红，红了要看原因。改到实测脚本、共用核心或插件的 PR 会跑，每周一也跑一次，也可以手动跑。
 # 判断和命令都在 scripts/e2e/，这里只做薄壳。
 name: E2E
 on:
   workflow_dispatch:
   pull_request:
+    # 实测走的是这些目录里的代码：改到它们才跑
     paths:
       - scripts/e2e/**
+      - packages/core/**
+      - plugins/**
+      - package.json
       - .github/workflows/e2e.yml
   schedule:
     - cron: '17 3 * * 1'
 concurrency:
-  group: e2e-${{ github.ref }}
+  # 按触发方式分组：定时的和手动的不互相取消
+  group: e2e-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read

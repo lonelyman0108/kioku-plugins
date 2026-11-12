@@ -5,9 +5,17 @@
 // 主目录换成临时目录，不碰这台机器上的配置。给 CI 在几种系统上跑，本机也能跑。
 
 import { spawn } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { killTree, launch } from '../../packages/core/lib/command.mjs'
@@ -17,7 +25,6 @@ import {
   MODEL,
   MODEL_KEY,
   RECALL_MARK,
-  replyText,
   startFakeKioku,
   startFakeModel,
 } from './fakes.mjs'
@@ -54,18 +61,21 @@ function run(name, args, { env, cwd, timeout = 180_000, quiet = false } = {}) {
       stderr += chunk
       show(chunk)
     })
+    let done = false
+    const finish = (result) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(result)
+    }
     const timer = setTimeout(() => {
       stderr += '\n超时'
       killTree(child, 'SIGKILL', { shell: how.shell })
+      // 它下面的进程可能还占着输出的管道，close 等不到：结束之后稍等一下就算完
+      setTimeout(() => finish({ code: 124, stdout, stderr }), 3000).unref()
     }, timeout)
-    child.on('error', (err) => {
-      clearTimeout(timer)
-      resolve({ code: 126, stdout, stderr: `${stderr}\n${err.message}` })
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ code: code ?? 1, stdout, stderr })
-    })
+    child.on('error', (err) => finish({ code: 126, stdout, stderr: `${stderr}\n${err.message}` }))
+    child.on('close', (code) => finish({ code: code ?? 1, stdout, stderr }))
   })
 }
 
@@ -84,6 +94,8 @@ async function must(result, what) {
 const PLATFORMS = {
   pi: {
     packages: ['@earendil-works/pi-coding-agent'],
+    // pi 按需才把 MCP 的工具交给模型：核对它这一轮向 Kioku 取过工具清单
+    tools: 'mcp',
     async prepare({ root, env, model }) {
       env.PI_CODING_AGENT_DIR = join(root, 'pi-agent')
       mkdirSync(env.PI_CODING_AGENT_DIR, { recursive: true })
@@ -262,12 +274,15 @@ const PLATFORMS = {
     },
     async install({ env }) {
       // 照 hermes plugins install 的结果放：插件目录下以 plugin.yaml 的 name 命名（它只从 GitHub 装，装不了这次的改动）
-      cpSync(join(repo, 'plugins', 'hermes'), join(env.HERMES_HOME, 'plugins', 'kioku'), {
+      const from = join(repo, 'plugins', 'hermes')
+      const to = join(env.HERMES_HOME, 'plugins', 'kioku')
+      const skipped = /(^|[\\/])(tests|\.venv|__pycache__|\.pytest_cache|\.ruff_cache)([\\/]|$)/
+      // 只看插件目录里面的相对路径：仓库放在哪个目录下不影响
+      cpSync(from, to, {
         recursive: true,
-        filter: (source) =>
-          !/[\\/](tests|\.venv|__pycache__|\.pytest_cache|\.ruff_cache)([\\/]|$)/.test(source),
+        filter: (source) => !skipped.test(relative(from, source)),
       })
-      check(true, '放好 Hermes 的 provider')
+      check(existsSync(join(to, 'plugin.yaml')), '放好 Hermes 的 provider')
     },
     turn: ({ sh, work }) => sh('hermes', ['-z', PROMPT], { cwd: work }),
   },
@@ -296,7 +311,6 @@ async function main(platform) {
     LOCALAPPDATA: join(home, 'AppData', 'Local'),
     XDG_CONFIG_HOME: join(home, '.config'),
     KIOKU_CONFIG_DIR: join(root, 'kioku-config'),
-    KIOKU_API_KEY: KEY,
     NO_COLOR: '1',
     CI: '1',
     [pathKey]: `${join(tools, 'node_modules', '.bin')}${delimiter}${process.env[pathKey] ?? ''}`,
@@ -304,7 +318,9 @@ async function main(platform) {
   // npm 的缓存留在原来的位置：换了主目录之后重新下载太慢
   const npmEnv = { ...process.env }
   const sh = (name, args, options = {}) => run(name, args, { env, cwd: root, ...options })
-  const cli = (args) => run(process.execPath, [kiokuBin, ...args], { env, cwd: root })
+  // 访问密钥只在 kioku setup 时给：之后平台只能从 setup 写下的地方读到它
+  const cli = (args, extra = {}) =>
+    run(process.execPath, [kiokuBin, ...args], { env: { ...env, ...extra }, cwd: root })
   const npm = (args, options = {}) => run('npm', args, { env: npmEnv, cwd: root, ...options })
   const ctx = { root, home, work, env, kioku, model, sh, cli, npm }
   try {
@@ -321,31 +337,44 @@ async function main(platform) {
       )
     }
     await spec.prepare?.(ctx)
-    await must(cli(['setup', platform, '--server-url', kioku.url]), `kioku setup ${platform}`)
+    await must(
+      cli(['setup', platform, '--server-url', kioku.url], { KIOKU_API_KEY: KEY }),
+      `kioku setup ${platform}`,
+    )
     await spec.install(ctx)
-    await must(cli(['doctor', platform]), `kioku doctor ${platform}`)
+    const doctor = await must(cli(['doctor', platform]), `kioku doctor ${platform}`)
+    // doctor 对大多数问题只提醒、照样以 0 退出：有提醒也算没过
+    check(!/^\s*[!✗]/m.test(doctor.stdout), 'kioku doctor 没有提醒')
 
+    // 只算这一轮开始之后的请求：setup、doctor 自己也会向 Kioku 取工具清单
+    const from = kioku.requests.length
     const turn = await spec.turn(ctx)
     check(turn.code === 0, `跑一轮（退出码 ${turn.code}）`)
-    const events = kioku.events()
-    const names = events.map((event) => event.event)
-    check(names.includes('session.start'), '假的 Kioku 收到 session.start')
-    check(names.includes('prompt.submit'), '假的 Kioku 收到 prompt.submit')
+    const events = kioku.events(from)
+    const count = (name) => events.filter((event) => event.event === name).length
+    check(
+      kioku.rejected().length === 0,
+      `事件都合契约（${kioku.rejected().join('；') || '没有被拒的'}）`,
+    )
+    check(count('session.start') === 1, `session.start 发了一次（${count('session.start')}）`)
+    check(count('prompt.submit') === 1, `prompt.submit 发了一次（${count('prompt.submit')}）`)
     const submit = events.find((event) => event.event === 'prompt.submit')
     check(String(submit?.prompt ?? '').includes(PROMPT), 'prompt.submit 带着这一轮的输入')
     const saw = (key) => model.requests.some((request) => request[key])
     check(saw('boot'), `模型的请求里有启动加载（${BOOT_MARK}）`)
     check(saw('recall'), `模型的请求里有召回（${RECALL_MARK}）`)
-    // 工具：平台向 Kioku 取过工具清单，或者模型的请求里已经带着工具（有的平台按需才把工具交给模型）
-    check(kioku.mcp().includes('tools/list') || saw('tools'), 'Kioku 的工具登记上了')
+    if (spec.tools === 'mcp') {
+      check(kioku.mcp(from).includes('tools/list'), '这一轮里平台向 Kioku 取过工具清单')
+    } else {
+      check(saw('tools'), '模型的请求的工具清单里有 Kioku 的工具')
+    }
+    check(count('turn.end') === 1, `turn.end 发了一次（${count('turn.end')}）`)
     const end = events.find((event) => event.event === 'turn.end')
-    check(Boolean(end), '假的 Kioku 收到 turn.end')
     check(String(end?.user ?? '').includes(PROMPT), 'turn.end 带着这一轮的输入')
-    check(String(end?.reply ?? '').includes('E2E-REPLY'), 'turn.end 带着模型的回复')
+    // 回复是假模型按它看到的写的：上报里带着它，同时说明注入到了模型手上、回复被上报了
     check(
-      String(end?.reply ?? '').includes(replyText({ boot: true, recall: true, tools: true })) ||
-        String(end?.reply ?? '').includes('boot=1 recall=1'),
-      '回复说明注入到了模型手上',
+      /E2E-REPLY boot=1 recall=1/.test(String(end?.reply ?? '')),
+      'turn.end 带着模型的回复，回复说明两处注入都到了',
     )
     check(
       kioku.requests.every((request) => request.authorized || request.path === '/v1/health'),
@@ -356,7 +385,7 @@ async function main(platform) {
   } catch (err) {
     if (!(err instanceof Failed)) log(`✗ 脚本出错：${err?.stack ?? err}`)
     log(
-      `-- 假的 Kioku 收到的：${JSON.stringify(kioku.requests.map((r) => [r.method, r.path, r.authorized, r.body?.event ?? r.body?.method])).slice(0, 2000)}`,
+      `-- 假的 Kioku 收到的：${JSON.stringify(kioku.requests.map((r) => [r.method, r.path, r.authorized, r.body?.event ?? r.body?.method, r.rejected])).slice(0, 2000)}`,
     )
     log(`-- 假的模型收到的：${JSON.stringify(model.requests).slice(0, 1000)}`)
     log(`== ${platform} 没有通过`)
