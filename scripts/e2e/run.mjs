@@ -43,7 +43,8 @@ function run(name, args, { env, cwd, timeout = 180_000, quiet = false } = {}) {
     let stdout = ''
     let stderr = ''
     const show = (chunk) => {
-      if (!quiet) process.stdout.write(String(chunk).replace(/^/gm, '    '))
+      // 只缩进有内容的行：块末尾的空串不缩进，否则下一行自己的输出会被带偏
+      if (!quiet) process.stdout.write(String(chunk).replace(/^(?=.)/gm, '    '))
     }
     child.stdout.on('data', (chunk) => {
       stdout += chunk
