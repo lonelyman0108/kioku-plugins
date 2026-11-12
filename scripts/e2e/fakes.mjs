@@ -190,6 +190,10 @@ function seen(raw, body) {
     boot: raw.includes(BOOT_MARK),
     recall: raw.includes(RECALL_MARK),
     tools: JSON.stringify(body?.tools ?? []).includes('kioku_get'),
+    // 工具的名字，出问题时看得到模型手上到底有什么
+    toolNames: (Array.isArray(body?.tools) ? body.tools : [])
+      .map((tool) => tool?.function?.name ?? tool?.name ?? tool?.type)
+      .slice(0, 60),
   }
 }
 export const replyText = ({ boot, recall, tools }) =>

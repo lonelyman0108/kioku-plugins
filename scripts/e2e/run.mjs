@@ -387,7 +387,7 @@ async function main(platform) {
     log(
       `-- 假的 Kioku 收到的：${JSON.stringify(kioku.requests.map((r) => [r.method, r.path, r.authorized, r.body?.event ?? r.body?.method, r.rejected])).slice(0, 2000)}`,
     )
-    log(`-- 假的模型收到的：${JSON.stringify(model.requests).slice(0, 1000)}`)
+    log(`-- 假的模型收到的：${JSON.stringify(model.requests).slice(0, 3000)}`)
     log(`== ${platform} 没有通过`)
     return 1
   } finally {
