@@ -19,7 +19,7 @@ gh api -X PATCH repos/{owner}/{repo} -F allow_squash_merge=true -F allow_merge_c
   -F allow_auto_merge=true -F delete_branch_on_merge=true -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
 ```
 
-`main` 的规则集（`gate` 是 `ci.yml` 里唯一 job 的检查名）：
+`main` 的规则集（必需检查只有 `ci.yml` 的 `gate`；`test-windows` 与 `E2E` 不设成必需的：平台自己发新版本也会让它们变红）。本仓库在 2026-11-12 照下面的写法设好了，和 Kioku 仓库的一致：
 
 ```bash
 gh api repos/{owner}/{repo}/rulesets -X POST --input - <<'JSON'
@@ -60,6 +60,9 @@ JSON
 | workflow | runs-on | 说明 |
 |---|---|---|
 | `ci.yml` | `ubuntu-24.04` | 必需检查 `gate` |
+| `ci.yml` | `windows-2025` | `test-windows`：在 Windows 上跑 JS 的用例，不是必需检查 |
+| `e2e.yml` | `ubuntu-24.04`、`windows-2025` | 装真实的平台做端到端实测，不是必需检查；改到插件、共用核心或实测脚本的 PR、每周一、手动触发时跑 |
+| `release.yml` | `ubuntu-24.04` | 推版本 tag 时发 npm、建 Release 页面 |
 
 ## 本机凭据
 
