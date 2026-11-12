@@ -8,12 +8,28 @@ npx @kioku-memory/cli doctor
 npm install -g @kioku-memory/cli
 ```
 
-Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bash 工具里直接用 `kioku`，不用另装。
+Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bash 工具里直接用 `kioku`，不用另装（插件里的那份没有向导）。
+
+## 向导
+
+在终端里不带参数运行 `kioku`，要 Node 20.12 或更新的版本。先扫描一遍现状：
+
+- 服务器：地址（取各平台已有的配置或 `KIOKU_SERVER_URL`，都没有就问）、连不连得上、版本、初始化了没有。
+- 每个平台一行：本机装没装（命令或配置目录在不在）、接到哪个应用和空间、访问密钥是否有效、插件装没装、自带的长期记忆停没停、本地有几条记忆。查不了的写「无法判断」。
+
+下面按缺什么列出动作，例如「接入 Codex、pi（2 个未接入）」「重新授权 Hermes（访问密钥已失效）」「接入 Claude Code」「迁移 Claude Code 的本地记忆（12 条）」「停用某个平台」「本机起一个 Kioku」「检查（doctor）」。每个动作先列计划、确认后才做，做完回到面板。
+
+- **接入几个平台只确认一次**：一次申请勾选的几个平台（最多 8 个，多了分批，每批确认一次），确认页上为每个平台选应用与权限；拿到的访问密钥照 `kioku setup` 写下。确认页上没勾的平台跳过；确认之后、取走之前不再符合签发规则的（例如确认人已停用、应用被删）列出原因。服务端版本较旧、不认这种申请时，逐个平台申请，每个确认一次。签发了却没能写下的，提示去管理界面吊销。
+- **迁移本地记忆**：面板上只数本地有几条；选了迁移才和 Kioku 逐条比对、列出计划，比出来的未迁移条数在这次向导里显示，写入之后重新算。比对失败的写「未迁移 无法判断」。
+- **插件不替你装**：做完列出每个平台要自己运行的安装命令与之后要做的事，装好之后再运行 `kioku`，面板上就是「已安装」。
+- **Claude Code**：访问密钥只认它的 `/plugin` 里填的，浏览器授权不给它发。「接入 Claude Code」停用自动记忆，再列出 `/plugin` 的安装命令与要填的服务地址；迁移本地记忆时问一次访问密钥。项目的 `.claude/settings.json` 又启用了自动记忆时，面板写明是哪份文件，不再提供停用（要在那里改）。
+- **本机起一个 Kioku**：没有服务器时可选。取 Kioku 最新的正式版，在一个目录（默认 `~/kioku`）里下载这个版本的 `compose.yaml` 与 `.env.example`，生成 `.env`（数据库密码、主密钥、初始化码随机生成，镜像固定在这个版本，只给本人读写，端口只开在本机，已有的 `.env` 不覆盖），`docker compose up -d`，等服务就绪后显示初始化码并打开管理界面，建好管理员就接着接入平台。取不到正式版时用 main 上的文件与 `edge` 镜像，并明说。主密钥在 `.env` 里，另外保存一份。目录里已经起过（上次中断、重跑）的接着启动或等它就绪；端口 18920 被别的程序占着时只说明，不动它。
 
 ## 子命令
 
 | 子命令 | 作用 |
 |---|---|
+| `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
 | `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、pi、Hermes、OpenClaw、DeepSeek Harness 再写下服务地址与访问密钥，Codex 还配好 MCP 服务 |
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好这个平台，不用手动复制 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
@@ -38,6 +54,18 @@ kioku login codex --server-url https://kioku.example.com
 `kioku setup codex`、`kioku setup pi` 第一次配置时，在终端里提示输入访问密钥的地方直接回车，走的是同一个流程。已经配过的再运行 `setup`，直接回车是沿用上次的访问密钥；要换一个就运行 `kioku login`。
 
 - 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的应用页吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
+
+## install
+
+```bash
+export KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=…
+kioku install --platforms codex,pi --server-url https://kioku.example.com -y
+```
+
+每个平台的访问密钥放在 `KIOKU_API_KEY_<平台>` 里（平台名大写、连字符换成下划线：`KIOKU_API_KEY_CLAUDE_CODE`、`KIOKU_API_KEY_CODEX`、`KIOKU_API_KEY_PI`、`KIOKU_API_KEY_HERMES`、`KIOKU_API_KEY_OPENCLAW`、`KIOKU_API_KEY_DSH`），没给的平台跳过并在结果里列出。各平台照 `kioku setup` 核对、写下配置、停用自带的长期记忆；Claude Code 只核对访问密钥、停用自动记忆，地址与访问密钥要在它的 `/plugin` 里填。
+
+- 在终端里运行、没带 `-y` 时先列计划再确认；`--dry-run` 只列计划。
+- 最后列出要自己运行的插件安装命令。有平台失败时退出码为 1。
 
 ## setup
 

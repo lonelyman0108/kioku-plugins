@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 
+import { configure, orphanHint } from './connect.mjs'
 import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
 import { platformNames, PLATFORMS } from './platforms.mjs'
 import { resolveServerUrl } from './target.mjs'
@@ -69,12 +70,33 @@ function seconds(value, fallback, min, max) {
   return Math.min(max, Math.max(min, number))
 }
 
-// 申请：返回设备码、确认码、确认页的地址与时限
-export async function requestGrant(url, { runtimeFamily, clientName }) {
+// 服务端不认一次申请几个平台的写法：退回逐个平台申请
+export class LegacyServer extends KiokuFailure {}
+
+// 旧的服务端只认单个平台的写法，收到 platforms 时按校验失败回 400，第一条问题是缺 runtimeFamily
+// （「runtimeFamily：…」）。别的 400 是申请本身有问题，照原样报
+function legacyRejection(data) {
+  return typeof data?.error === 'string' && /^runtimeFamily[：:]/.test(data.error)
+}
+
+// 一次申请最多几个平台，与服务端的上限一致
+export const MAX_PLATFORMS = 8
+
+// 申请：返回设备码、确认码、确认页的地址与时限。body 是单平台的 { runtimeFamily, clientName }，
+// 或几个平台的 { platforms: [{ runtimeFamily }], clientName }
+export async function requestGrant(url, body) {
+  const { clientName, ...rest } = body
   const { status, data } = await post(url, '/v1/device/authorize', {
-    runtimeFamily,
+    ...rest,
     ...(clientName ? { clientName } : {}),
   })
+  if (status === 400 && Array.isArray(body.platforms) && legacyRejection(data)) {
+    throw new LegacyServer('服务端版本较旧，需要逐个确认')
+  }
+  if (status === 400) {
+    const reason = typeof data?.error === 'string' ? plain(data.error) : ''
+    throw new KiokuFailure(`Kioku 拒绝了这次申请${reason ? `：${reason}` : ''}`)
+  }
   if (status === 404) {
     throw new KiokuFailure(
       '这个 Kioku 还不支持浏览器授权：升级服务端，或者用 kioku setup 手动填访问密钥',
@@ -100,9 +122,9 @@ export async function requestGrant(url, { runtimeFamily, clientName }) {
   }
 }
 
-// 等确认：按服务端给的间隔轮询，返回访问密钥与应用；被拒绝、过期时抛 KiokuFailure。
+// 等确认：按服务端给的间隔轮询，确认了返回服务端的整个回答；被拒绝、过期时抛 KiokuFailure。
 // sleep 与 now 可以换掉，给用例用；now 要是只往前走的钟，系统时间被改不影响什么时候停
-export async function waitForKey(
+async function waitForApproval(
   url,
   grant,
   {
@@ -146,9 +168,7 @@ export async function waitForKey(
     if (data?.status === 'denied') {
       throw new KiokuFailure('申请被拒绝了，或者确认之后确认人的权限变了：没有签发访问密钥')
     }
-    if (data?.status === 'approved' && typeof data.key === 'string' && data.key) {
-      return { key: data.key, app: data.app ?? {} }
-    }
+    if (data?.status === 'approved') return data
     if (data?.status === 'expired') break
     throw new KiokuFailure('Kioku 的响应格式不对')
   }
@@ -159,9 +179,46 @@ export async function waitForKey(
   )
 }
 
+// 等一个平台的申请被确认，返回访问密钥与应用
+export async function waitForKey(url, grant, options) {
+  const data = await waitForApproval(url, grant, options)
+  if (typeof data.key !== 'string' || !data.key) throw new KiokuFailure('Kioku 的响应格式不对')
+  return { key: data.key, app: data.app ?? {} }
+}
+
+// 几个平台一起的申请被确认之后，每个平台的结果：按申请的顺序，
+// { runtimeFamily, status: 'issued', key, app } | { runtimeFamily, status: 'skipped' } | { runtimeFamily, status: 'denied', reason }。
+// 服务端没提到的平台算跳过，不认识的平台、重复的项不收；签发了却不像访问密钥的算响应不对
+export async function waitForKeys(url, grant, families, options) {
+  const data = await waitForApproval(url, grant, options)
+  // 已经确认了：响应读不懂时，服务端可能已经签发了几个没人拿着的访问密钥
+  const malformed = () => new KiokuFailure(`Kioku 的响应格式不对。${ORPHAN_HINT}`)
+  if (!Array.isArray(data.keys)) throw malformed()
+  const byFamily = new Map()
+  for (const item of data.keys) {
+    const family = item?.runtimeFamily
+    if (!families.includes(family) || byFamily.has(family)) continue
+    if (item.status === 'issued') {
+      if (typeof item.key !== 'string' || !item.key) throw malformed()
+      byFamily.set(family, {
+        runtimeFamily: family,
+        status: 'issued',
+        key: item.key,
+        app: item.app ?? {},
+      })
+    } else if (item.status === 'denied') {
+      const reason = typeof item.reason === 'string' ? plain(item.reason) : ''
+      byFamily.set(family, { runtimeFamily: family, status: 'denied', reason })
+    } else byFamily.set(family, { runtimeFamily: family, status: 'skipped' })
+  }
+  return families.map(
+    (family) => byFamily.get(family) ?? { runtimeFamily: family, status: 'skipped' },
+  )
+}
+
 // 用系统默认的浏览器打开地址；打不开就算了，地址已经显示在终端里。都不经过 shell：
 // Windows 上用 rundll32，不用 cmd 的 start（它会把地址里的 & 这类符号当成命令）
-function openBrowser(address) {
+export function openBrowser(address) {
   const [command, args] =
     process.platform === 'darwin'
       ? ['open', [address]]
@@ -177,22 +234,60 @@ function openBrowser(address) {
   }
 }
 
-// 走一遍浏览器授权，返回访问密钥。提示写到 out，访问密钥不写
-export async function deviceLogin(
-  { url, runtimeFamily },
-  { out, open = openBrowser, browser = true, clientName = hostname(), sleep, now } = {},
-) {
-  // 机器名是自报的：去掉控制字符，太长就截断，服务端只把它显示在确认页上
-  const name = Array.from(plain(clientName)).slice(0, 64).join('')
-  const grant = await requestGrant(url, { runtimeFamily, clientName: name })
+// 本地网络给主机名加的后缀，不算机器的名字
+const HOST_SUFFIX = /\.(?:local|localdomain|lan|home|internal)$/i
+
+// 机器名是自报的：去掉控制字符与 .local 这类后缀，太长就截断；什么都不剩时用 kioku-cli。
+// 服务端把它显示在确认页上，新建的应用默认叫「平台名 · 机器名」
+export function machineName(clientName) {
+  const name = Array.from(plain(clientName).replace(HOST_SUFFIX, '').trim())
+    .slice(0, 64)
+    .join('')
+    .trim()
+  return name || 'kioku-cli'
+}
+
+// 显示确认码与确认页，打开浏览器
+function showGrant(grant, { out, open, browser }) {
   out.write(`确认码：${plain(grant.userCode)}\n`)
   // 显示的和打开的是同一个地址
   out.write(`在浏览器里打开 ${plain(grant.verificationUrl)}，登录后输入这个确认码\n`)
   out.write(`等待确认（${Math.ceil(grant.expiresIn / 60)} 分钟内有效）…\n`)
   if (browser) open(grant.verificationUrl)
+}
+
+// 走一遍浏览器授权，返回访问密钥。提示写到 out，访问密钥不写
+export async function deviceLogin(
+  { url, runtimeFamily },
+  { out, open = openBrowser, browser = true, clientName = hostname(), sleep, now } = {},
+) {
+  const grant = await requestGrant(url, { runtimeFamily, clientName: machineName(clientName) })
+  showGrant(grant, { out, open, browser })
   const { key, app } = await waitForKey(url, grant, { sleep, now })
   out.write(`✓ 已确认：应用 ${plain(app.name ?? '')}（${plain(app.slug ?? '')}）\n`)
   return key
+}
+
+// 几个平台一起申请，只确认一次。返回 waitForKeys 的结果（按去重后的顺序）；服务端不认这种写法时抛 LegacyServer。
+// 一次最多 MAX_PLATFORMS 个，多了由调用方分批（connect.mjs），这里不发超出上限的申请
+export async function deviceLoginMany(
+  { url, runtimeFamilies },
+  { out, open = openBrowser, browser = true, clientName = hostname(), sleep, now } = {},
+) {
+  const families = [...new Set(runtimeFamilies)]
+  if (!families.length || families.length > MAX_PLATFORMS) {
+    throw new KiokuFailure(`一次申请 1 到 ${MAX_PLATFORMS} 个平台`)
+  }
+  const grant = await requestGrant(url, {
+    platforms: families.map((runtimeFamily) => ({ runtimeFamily })),
+    clientName: machineName(clientName),
+  })
+  showGrant(grant, { out, open, browser })
+  const results = await waitForKeys(url, grant, families, { sleep, now })
+  // 确认了也可能一个都没签发：取走时照签发规则再核对，全都没过（例如确认人已停用）
+  const issued = results.filter((item) => item.status === 'issued').length
+  out.write(issued ? `✓ 已确认，签发了 ${issued} 个访问密钥\n` : '✗ 已确认，但没有签发访问密钥\n')
+  return results
 }
 
 export function parseLoginArgs(argv) {
@@ -243,15 +338,10 @@ export async function login(
   )
   // 拿到的访问密钥交给这个平台的 setup：核对、写文件都照它的规矩
   try {
-    return await platform.setup(
-      { serverUrl: url, dryRun: false, undo: false, check: true },
-      { env, out, cwd, readKey: async () => key, plain, login: null },
-    )
+    return await configure(options.platform, { url, key }, { env, out, cwd }, { hints: true })
   } catch (err) {
     if (!(err instanceof KiokuFailure)) throw err
     // 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着
-    throw new KiokuFailure(
-      `${err.message}。访问密钥已经签发、但没有写下：到管理界面的应用页吊销它，解决上面的问题后重新运行`,
-    )
+    throw new KiokuFailure(`${err.message}。${orphanHint()}`)
   }
 }

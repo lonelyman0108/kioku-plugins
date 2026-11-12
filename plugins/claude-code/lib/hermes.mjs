@@ -219,7 +219,7 @@ export async function setupHermes(options, io) {
     out.write('地址与访问密钥已经写下。\n')
     manual(out, SETTINGS, state)
   }
-  if (!(await installed(env))) {
+  if (!(await installed(env)) && io.hints !== false) {
     out.write(`接下来装上 provider：hermes plugins install ${SOURCE} --enable\n`)
   }
   return 0
@@ -258,4 +258,19 @@ export async function inspectHermes({ env }, { ok, warn, note }) {
     )
   } else ok('Hermes 内置的记忆文件已停用')
   note('只在本机的会话里生效；消息网关来的会话里不注入、不上报、不给工具')
+}
+
+// 给向导的面板：provider 装没装；自带的记忆停没停（选的是 kioku、内置的两份都关了才算停了；
+// 没有 hermes 命令、命令失败时为 null）
+export async function statusHermes({ env }) {
+  const plugin = await installed(env)
+  const provider = await configValue(env, 'memory.provider')
+  if (provider === null || provider === undefined) return { plugin, memory: null }
+  const flags = [
+    await configValue(env, 'memory.memory_enabled'),
+    await configValue(env, 'memory.user_profile_enabled'),
+  ]
+  if (flags.some((value) => value === null || value === undefined)) return { plugin, memory: null }
+  const off = provider === 'kioku' && flags.every((value) => !/^true$/i.test(value))
+  return { plugin, memory: off ? 'off' : 'on' }
 }

@@ -135,7 +135,7 @@ async function write(config, item) {
 const KINDS = { new: '新建', same: '已有，内容一样', differs: '已有，内容不一样' }
 
 // 问一句是或否；只认 y 开头的回答
-async function confirm(question, { stdin, out }) {
+export async function confirm(question, { stdin, out }) {
   out.write(question)
   for await (const chunk of stdin) {
     return /^\s*y/i.test(chunk.toString('utf8'))
@@ -143,38 +143,53 @@ async function confirm(question, { stdin, out }) {
   return false
 }
 
-export async function importMemories(
-  argv,
-  { env = process.env, out = process.stdout, stdin = process.stdin } = {},
-) {
-  const options = parseImportArgs(argv)
-  const source = SOURCES[options.from]
-  // 地址与访问密钥：指明了平台就用 kioku setup 给它写下的，否则读环境变量
-  let config
-  if (options.platform) {
-    config = await PLATFORMS[options.platform].readConfig(env)
-    if (!config) {
-      throw new KiokuFailure(
-        `还没有给 ${options.platform} 配过：先运行 kioku setup ${options.platform}`,
-      )
+// 本地的这个来源里有几条能迁的记忆（不和 Kioku 比）。来源的目录不在时为 null
+export async function countLocal(from, { env, path }) {
+  const { found, entries } = await SOURCES[from].read({ env, path, app: 'app' })
+  return found ? entries.filter((item) => !item.skipped).length : null
+}
+
+// 按顺序对每一项做 fn，同时最多 limit 个；结果的顺序和 items 一样
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await fn(items[index])
     }
-  } else config = await loadConfig(env)
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+// 和 Kioku 里比时同时发的请求数
+const COMPARE_CONCURRENCY = 8
+
+// 计划里还没迁进 Kioku 的条数（Kioku 里同一个坐标还没有的）。有比对失败的（不是 200、404）时
+// 说不准，pending 为 null，reason 写明几条读取失败
+export function pendingOf(plan) {
+  const failed = plan.compared.filter((item) => item.state === 'failed').length
+  if (failed) return { pending: null, reason: `${failed} 条读取失败` }
+  return { pending: plan.compared.filter((item) => item.state === 'new').length }
+}
+
+// 读本地的记忆、和 Kioku 里的比过，列出计划：每条放到哪个坐标、Kioku 里有没有。
+// 返回 { compared, skipped, todo }；没有可以迁的时 todo 是空的、empty 为真
+export async function planImport(config, { from, path, overwrite = false }, { env, out }) {
+  const source = SOURCES[from]
   const who = await whoami(config)
   out.write(
     `Kioku：${shownUrl(config.url)}，应用 ${plain(who.app.name)}（${plain(who.app.slug)}）\n`,
   )
 
-  const { root, found, entries } = await source.read({
-    env,
-    path: options.path,
-    app: who.app.slug,
-  })
+  const { root, found, entries } = await source.read({ env, path, app: who.app.slug })
   if (!found)
     throw new KiokuFailure(`没有找到${source.name}：${plain(root)} 不是目录，用 --path 指明位置`)
   out.write(`来源：${source.name}（${plain(root)}）\n`)
   if (!entries.length) {
     out.write('没有可以迁的记忆\n')
-    return 0
+    return { compared: [], skipped: [], todo: [], empty: true }
   }
 
   // 两条落到同一个坐标的（名字规整之后撞了）只留第一条
@@ -190,8 +205,8 @@ export async function importMemories(
       usable.push(item)
     }
   }
-  const compared = []
-  for (const item of usable) compared.push(await compare(config, item))
+  // 一条一个请求：有界并发，几百条也不至于等太久
+  const compared = await mapLimit(usable, COMPARE_CONCURRENCY, (item) => compare(config, item))
 
   out.write('\n')
   for (const item of compared) {
@@ -202,29 +217,17 @@ export async function importMemories(
 
   const count = (state) => compared.filter((item) => item.state === state).length
   const todo = compared.filter(
-    (item) => item.state === 'new' || (item.state === 'differs' && options.overwrite),
+    (item) => item.state === 'new' || (item.state === 'differs' && overwrite),
   )
   out.write(
     `\n新建 ${count('new')} 条，已有且一样 ${count('same')} 条，已有但不一样 ${count('differs')} 条` +
-      `（${options.overwrite ? '覆盖' : '跳过，要覆盖加 --overwrite'}），不迁 ${skipped.length} 条\n`,
+      `（${overwrite ? '覆盖' : '跳过，要覆盖加 --overwrite'}），不迁 ${skipped.length} 条\n`,
   )
-  if (options.dryRun) {
-    out.write('没有写入（--dry-run）\n')
-    return 0
-  }
-  if (!todo.length) {
-    out.write('没有要写的\n')
-    return compared.some((item) => item.state === 'failed') ? 1 : 0
-  }
-  if (!options.yes) {
-    if (!stdin.isTTY)
-      throw new KiokuFailure('不在终端里运行时要带 --yes 才写；先用 --dry-run 看计划')
-    if (!(await confirm(`写入这 ${todo.length} 条？[y/N] `, { stdin, out }))) {
-      out.write('没有写入\n')
-      return 0
-    }
-  }
+  return { compared, skipped, todo, empty: false }
+}
 
+// 按计划写入，返回退出码：有没写成的、读取失败的为 1
+export async function writeImport(config, { compared, todo }, { out }) {
   let written = 0
   const failed = []
   // 连不上、超时这类不是某一条的问题：停下来，把已经写了多少、还剩多少说清楚，不让它跳出整个命令
@@ -259,4 +262,40 @@ export async function importMemories(
   }
   out.write('本地的文件没有动。\n')
   return stopped || failed.length || compared.some((item) => item.state === 'failed') ? 1 : 0
+}
+
+export async function importMemories(
+  argv,
+  { env = process.env, out = process.stdout, stdin = process.stdin } = {},
+) {
+  const options = parseImportArgs(argv)
+  // 地址与访问密钥：指明了平台就用 kioku setup 给它写下的，否则读环境变量
+  let config
+  if (options.platform) {
+    config = await PLATFORMS[options.platform].readConfig(env)
+    if (!config) {
+      throw new KiokuFailure(
+        `还没有给 ${options.platform} 配过：先运行 kioku setup ${options.platform}`,
+      )
+    }
+  } else config = await loadConfig(env)
+  const plan = await planImport(config, options, { env, out })
+  if (plan.empty) return 0
+  if (options.dryRun) {
+    out.write('没有写入（--dry-run）\n')
+    return 0
+  }
+  if (!plan.todo.length) {
+    out.write('没有要写的\n')
+    return plan.compared.some((item) => item.state === 'failed') ? 1 : 0
+  }
+  if (!options.yes) {
+    if (!stdin.isTTY)
+      throw new KiokuFailure('不在终端里运行时要带 --yes 才写；先用 --dry-run 看计划')
+    if (!(await confirm(`写入这 ${plan.todo.length} 条？[y/N] `, { stdin, out }))) {
+      out.write('没有写入\n')
+      return 0
+    }
+  }
+  return writeImport(config, plan, { out })
 }

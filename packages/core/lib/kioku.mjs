@@ -10,6 +10,7 @@ import { isatty } from 'node:tty'
 import { killTree, launch } from './command.mjs'
 import { loadConfig } from './config.mjs'
 import { IMPORT_USAGE, importMemories } from './import.mjs'
+import { install, INSTALL_USAGE } from './install.mjs'
 import { login, LOGIN_USAGE } from './login.mjs'
 import { doctor, DOCTOR_USAGE } from './doctor.mjs'
 import {
@@ -20,6 +21,7 @@ import {
   KiokuFailure,
   redirectError,
 } from './http.mjs'
+import { loadPrompts } from './prompts.mjs'
 import { setup, SETUP_USAGE } from './setup.mjs'
 import { UsageError } from './usage.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
@@ -378,14 +380,30 @@ async function run(argv) {
 // 入口：返回退出码
 const OVERVIEW = `用法：kioku <子命令> [参数…]
 
-  run     向 Kioku 取凭据的值，放进环境变量交给命令
-  login   用浏览器授权签发访问密钥并配好这个平台
-  setup   停用平台自带的长期记忆，由 Kioku 接管
-  doctor  检查地址、访问密钥与平台的配置
-  import  把平台自带的本地长期记忆迁进 Kioku
+  run      向 Kioku 取凭据的值，放进环境变量交给命令
+  login    用浏览器授权签发访问密钥并配好这个平台
+  setup    停用平台自带的长期记忆，由 Kioku 接管
+  install  几个平台一起接入，访问密钥从环境变量读（给脚本用）
+  doctor   检查地址、访问密钥与平台的配置
+  import   把平台自带的本地长期记忆迁进 Kioku
 
+在终端里不带参数运行 kioku 是交互式的向导：看各平台接到哪一步，按缺的一步步接上。
 各子命令的说明：kioku <子命令> --help
 `
+
+const NO_WIZARD =
+  '交互式的向导要 npm 上的 kioku（Node 20.12 以上）：npm install -g @kioku-memory/cli\n'
+
+// 交互式的向导。插件目录里的 kioku 带不了交互库，装不到时打印用法并说明
+async function startWizard() {
+  const ui = await loadPrompts()
+  if (!ui) {
+    process.stderr.write(`${OVERVIEW}\n${NO_WIZARD}`)
+    return 2
+  }
+  const { barOut, wizard } = await import('./wizard.mjs')
+  return wizard({ ui, env: process.env, cwd: process.cwd(), out: barOut(process.stdout) })
+}
 
 // 说明类的子命令：参数写错时打印原因与说明，以 2 退出；别的失败原因写到标准错误
 async function guarded(name, usage, fn, argv) {
@@ -408,8 +426,13 @@ async function guarded(name, usage, fn, argv) {
   }
 }
 
-export async function main(argv) {
+// interactive：标准输入与输出都是终端时才进向导；管道、agent 的命令里照旧打印用法
+export async function main(
+  argv,
+  { interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY), wizard = startWizard } = {},
+) {
   const [sub, ...rest] = argv
+  if (sub === undefined && interactive) return wizard()
   if (sub === '-h' || sub === '--help') {
     process.stdout.write(OVERVIEW)
     return 0
@@ -417,6 +440,7 @@ export async function main(argv) {
   if (sub === 'run') return run(rest)
   if (sub === 'login') return guarded('login', LOGIN_USAGE, login, rest)
   if (sub === 'setup') return guarded('setup', SETUP_USAGE, setup, rest)
+  if (sub === 'install') return guarded('install', INSTALL_USAGE, install, rest)
   if (sub === 'doctor') return guarded('doctor', DOCTOR_USAGE, doctor, rest)
   if (sub === 'import') return guarded('import', IMPORT_USAGE, importMemories, rest)
   process.stderr.write(sub === undefined ? OVERVIEW : `kioku：不认识的子命令 ${sub}\n\n${OVERVIEW}`)

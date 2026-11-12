@@ -262,7 +262,7 @@ export async function setupCodex(options, io) {
       `! ${file} 里 features 的写法认不出来，没有核对 Memories：运行 codex features disable memories 关掉它\n`,
     )
   }
-  out.write(`Codex 已配好，新开会话生效。\n${found.plugin ? '' : NEXT_STEPS}`)
+  out.write(`Codex 已配好，新开会话生效。\n${found.plugin || io.hints === false ? '' : NEXT_STEPS}`)
   return 0
 }
 
@@ -306,4 +306,15 @@ export async function inspectCodex({ env }, { ok, warn, bad, note }) {
   } else if (found.memories?.value) {
     warn('Codex 自带的 Memories 开着，会和 Kioku 各记一份：运行 kioku setup codex 关掉它')
   } else ok('Codex 自带的 Memories 没有启用')
+}
+
+// 给向导的面板：插件启用没有、自带的 Memories 关了没有（null 是认不出）
+export async function statusCodex({ env }) {
+  const found = scanConfig(await readText(join(codexHome(env), 'config.toml')))
+  const memory = found.memories?.value
+    ? 'on'
+    : found.memoriesUnknown && !found.memories
+      ? null
+      : 'off'
+  return { plugin: found.plugin, memory }
 }

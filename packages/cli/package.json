@@ -1,7 +1,7 @@
 {
   "name": "@kioku-memory/cli",
   "version": "0.1.0",
-  "description": "Kioku 的命令行：把凭据交给命令（kioku run）、停用各平台自带的长期记忆（kioku setup）、检查配置（kioku doctor）",
+  "description": "Kioku 的命令行：接入各平台的向导、把凭据交给命令（kioku run）、停用各平台自带的长期记忆（kioku setup）、检查配置（kioku doctor）",
   "license": "Apache-2.0",
   "homepage": "https://github.com/lonelyman0108/kioku-plugins/tree/main/packages/cli",
   "repository": {
@@ -22,6 +22,9 @@
     "lib",
     "NOTICE"
   ],
+  "dependencies": {
+    "@clack/prompts": "1.9.0"
+  },
   "engines": {
     "node": ">=18"
   },

@@ -16,10 +16,19 @@
 ## 一条命令接入
 
 ```bash
-npx @kioku-memory/cli login <平台> --server-url https://kioku.example.com
+npx @kioku-memory/cli
 ```
 
-终端给出确认码，在 Kioku 的确认页输入、选好权限，访问密钥直接写进本机配置，全程不显示。平台自带的长期记忆一并停用，免得两边各记一份。认得 `codex`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
+在终端里不带参数运行是一个向导：先列出服务器与本机各平台接到了哪一步（接入、访问密钥、插件、自带记忆、本地记忆），再按缺的列出动作。几个平台一起接入时浏览器里只确认一次，访问密钥直接写进本机配置，全程不显示；平台自带的长期记忆一并停用，本地记忆可以顺带迁进来。还没有服务器的，可以在本机用 Docker 起一个。向导要 Node 20.12 以上。
+
+只接一个平台、或者在脚本里用：
+
+```bash
+npx @kioku-memory/cli login <平台> --server-url https://kioku.example.com
+KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --platforms codex,pi --server-url https://kioku.example.com -y
+```
+
+`login` 认得 `codex`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
 
 ## 平台
 

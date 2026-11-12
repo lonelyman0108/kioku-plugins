@@ -201,7 +201,7 @@ export async function setupOpenclaw(options, io) {
     out.write(
       '插件装了没有、记忆槽位选的是什么没有查出来（openclaw plugins inspect 失败了）：用 kioku doctor openclaw 再看一次\n',
     )
-  } else if (!state) {
+  } else if (!state && io.hints !== false) {
     out.write(`接下来装上插件：openclaw plugins install ${SOURCE}\n`)
     if (todo.length) out.write('装好之后再运行一次 kioku setup openclaw。\n')
   }
@@ -245,4 +245,12 @@ export async function inspectOpenclaw({ env }, { ok, warn, note }) {
   note(
     '工作区里的 MEMORY.md 有内容时 OpenClaw 仍会放进提示：用 kioku import --from openclaw 迁走后清空它',
   )
+}
+
+// 给向导的面板：插件装没装、记忆槽位选的是不是 kioku。没有 openclaw 命令、没查出来时为 null
+export async function statusOpenclaw({ env }) {
+  const state = await pluginState(env)
+  if (state === null || state === undefined) return { plugin: null, memory: null }
+  if (!state) return { plugin: false, memory: 'on' }
+  return { plugin: state.enabled && state.loaded, memory: state.slot ? 'off' : 'on' }
 }
