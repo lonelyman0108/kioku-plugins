@@ -9,7 +9,7 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -671,8 +671,15 @@ describe('本机起一个 Kioku 的 .env', () => {
 if (args.includes('--status')) console.log(${JSON.stringify(running)})
 else console.log('db\\nkioku')`,
       )
-    // 假命令是 Node 脚本：PATH 里还要有 node
-    const dockerEnv = { ...env, PATH: [bin, dirname(process.execPath)].join(delimiter) }
+    // 假的 docker 放在 PATH 最前面，其余照本机的环境：Windows 上经 cmd.exe 起 .cmd，
+    // 要找得到 cmd.exe（System32）与 node。Windows 上 PATH 的写法可能是 Path
+    const key = Object.keys(process.env).find((item) => item.toLowerCase() === 'path') ?? 'PATH'
+    const dockerEnv = {
+      ...process.env,
+      ...env,
+      [key]: `${bin}${delimiter}${process.env[key] ?? ''}`,
+    }
+    if (key !== 'PATH') delete dockerEnv.PATH
     run('db\nkioku')
     expect(await composeState(project, dockerEnv)).toBe('none')
     writeFileSync(join(project, 'compose.yaml'), 'name: kioku\n')
