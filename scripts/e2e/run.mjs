@@ -155,16 +155,9 @@ const PLATFORMS = {
 
   openclaw: {
     packages: ['openclaw'],
-    // 新一些的 OpenClaw 把插件的工具放在按需搜索后面（模型的请求里只有 tool_search），
-    // 所以看它自己登记的清单里有没有
-    async tools({ sh, model: ctx_model }) {
-      const shown = await sh('openclaw', ['plugins', 'inspect', 'kioku', '--json'], { quiet: true })
-      // 诊断：先看它到底输出了什么
-      log(`-- inspect：${shown.stdout.replace(/\s+/g, ' ').slice(0, 4000)}`)
-      const names = shown.stdout
-      log(`-- 诊断，假的模型收到的：${JSON.stringify(ctx_model.requests).slice(0, 6000)}`)
-      check(names.includes('kioku_get'), 'OpenClaw 登记的工具里有 Kioku 的工具')
-    },
+    // 新一些的 OpenClaw 把插件的工具放在按需搜索后面（模型的请求里只有 tool_search）：
+    // 假的模型会搜一次 kioku，看搜索结果里有没有
+    tools: 'search',
     async prepare({ home, env, model }) {
       env.OPENCLAW_HOME = home
       env.E2E_MODEL_KEY = MODEL_KEY
@@ -373,8 +366,8 @@ async function main(platform) {
     const saw = (key) => model.requests.some((request) => request[key])
     check(saw('boot'), `模型的请求里有启动加载（${BOOT_MARK}）`)
     check(saw('recall'), `模型的请求里有召回（${RECALL_MARK}）`)
-    if (typeof spec.tools === 'function') {
-      await spec.tools(ctx)
+    if (spec.tools === 'search') {
+      check(saw('found'), '模型搜工具的结果里有 Kioku 的工具')
     } else if (spec.tools === 'mcp') {
       check(kioku.mcp(from).includes('tools/list'), '这一轮里平台向 Kioku 取过工具清单')
     } else {

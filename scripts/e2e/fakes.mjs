@@ -194,10 +194,8 @@ function seen(raw, body) {
     toolNames: (Array.isArray(body?.tools) ? body.tools : [])
       .map((tool) => tool?.function?.name ?? tool?.name ?? tool?.type)
       .slice(0, 60),
-    // 诊断：按需搜索工具的那两个工具长什么样
-    search: (Array.isArray(body?.tools) ? body.tools : []).filter((tool) =>
-      /tool_(search|describe)/.test(JSON.stringify(tool).slice(0, 200)),
-    ),
+    // 对话里（工具的结果）有没有出现 Kioku 的工具：按需搜索工具的平台靠它核对
+    found: JSON.stringify(body?.messages ?? body?.input ?? []).includes('kioku_get'),
   }
 }
 export const replyText = ({ boot, recall, tools }) =>
@@ -237,6 +235,53 @@ export async function startFakeModel() {
     const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
     if (/\/chat\/completions$/.test(path)) {
       requests.push({ api: 'chat', ...flags })
+      // 平台把工具放在按需搜索后面时（请求里有 tool_search、还没有工具的结果）：先让模型搜一次 kioku，
+      // 下一个请求里带着搜索结果，从里面看 Kioku 的工具登记上没有
+      const searchable = (Array.isArray(body.tools) ? body.tools : []).some(
+        (tool) => tool?.function?.name === 'tool_search',
+      )
+      const searched = (Array.isArray(body.messages) ? body.messages : []).some(
+        (message) => message?.role === 'tool',
+      )
+      if (searchable && !searched) {
+        const call = {
+          id: `call_${id}`,
+          type: 'function',
+          function: { name: 'tool_search', arguments: JSON.stringify({ query: 'kioku' }) },
+        }
+        if (!body.stream) {
+          return json(res, 200, {
+            id,
+            object: 'chat.completion',
+            created,
+            model: body.model ?? MODEL,
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: null, tool_calls: [call] },
+                finish_reason: 'tool_calls',
+              },
+            ],
+            usage,
+          })
+        }
+        const send = sse(res)
+        const chunk = (delta, finish) => ({
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model: body.model ?? MODEL,
+          choices: [{ index: 0, delta, finish_reason: finish }],
+        })
+        send(
+          null,
+          chunk({ role: 'assistant', content: null, tool_calls: [{ index: 0, ...call }] }, null),
+        )
+        send(null, chunk({}, 'tool_calls'))
+        send(null, { ...chunk({}, null), choices: [], usage })
+        send(null, '[DONE]')
+        return res.end()
+      }
       if (!body.stream) {
         return json(res, 200, {
           id,
