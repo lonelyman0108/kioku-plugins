@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2025]
-        platform: [pi]
+        platform: [pi, codex, openclaw, dsh, hermes]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -33,5 +33,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # Hermes 是 Python 的，用 uv 装；setup-uv 没有浮动的大版本标签，按提交钉住（和 ci.yml 一样）
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        if: matrix.platform == 'hermes'
+        with:
+          version: 0.13.5
       - name: 实测
         run: node scripts/e2e/run.mjs ${{ matrix.platform }}
