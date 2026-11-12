@@ -223,9 +223,14 @@ export function openBrowser(address) {
   }
 }
 
-// 机器名是自报的：去掉控制字符，太长就截断，服务端只把它显示在确认页上
-function machineName(clientName) {
-  return Array.from(plain(clientName)).slice(0, 64).join('')
+// 本地网络给主机名加的后缀，不算机器的名字
+const HOST_SUFFIX = /\.(?:local|localdomain|lan|home|internal)$/i
+
+// 机器名是自报的：去掉控制字符与 .local 这类后缀，太长就截断。服务端把它显示在确认页上，
+// 新建的应用默认叫「平台名 · 机器名」
+export function machineName(clientName) {
+  const name = plain(clientName).replace(HOST_SUFFIX, '')
+  return Array.from(name).slice(0, 64).join('')
 }
 
 // 显示确认码与确认页，打开浏览器
@@ -260,7 +265,9 @@ export async function deviceLoginMany(
   })
   showGrant(grant, { out, open, browser })
   const results = await waitForKeys(url, grant, runtimeFamilies, { sleep, now })
-  out.write('✓ 已确认\n')
+  // 确认了也可能一个都没签发：取走时照签发规则再核对，全都没过（例如确认人已停用）
+  const issued = results.filter((item) => item.status === 'issued').length
+  out.write(issued ? `✓ 已确认，签发了 ${issued} 个访问密钥\n` : '✗ 已确认，但没有签发访问密钥\n')
   return results
 }
 

@@ -130,8 +130,11 @@ async function connect(ctx, rows, { reauth = false } = {}) {
   const ok = await ui.confirm({ message: '开始？' })
   if (cancelled(ui, ok) || !ok) return
   const results = await deps.connectPlatforms({ url: ctx.url, ids: picked }, { env, out, cwd })
-  ui.note(resultsText(results), '结果')
   const done = results.filter((item) => item.status === 'connected').map((item) => item.id)
+  ui.note(
+    done.length ? resultsText(results) : `一个平台都没有接上\n${resultsText(results)}`,
+    '结果',
+  )
   const steps = await deps.pluginSteps(done, { env, cwd })
   if (steps) ui.note(steps, '装插件')
 }

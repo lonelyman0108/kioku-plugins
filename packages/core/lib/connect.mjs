@@ -76,7 +76,7 @@ export async function connectPlatforms(
           results.set(id, await settle(id, answer.key, answer.app, io))
         else if (answer.status === 'denied') {
           results.set(id, { id, status: 'denied', reason: answer.reason || '没有签发' })
-        } else results.set(id, { id, status: 'skipped' })
+        } else results.set(id, { id, status: 'skipped', reason: '确认页上没有勾选' })
       }
     } else if (legacy) {
       // 旧的服务端：逐个平台申请，每个确认一次；一个不成不影响下一个

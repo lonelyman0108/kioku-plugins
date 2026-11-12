@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.mjs'
 import { install, installPlan, keyVariable, parseInstallArgs } from '../install.mjs'
 import { main } from '../kioku.mjs'
+import { machineName } from '../login.mjs'
 import { fillEnv, generateSecrets, LOCAL_SETTINGS, portBusy, writeEnvFile } from '../local.mjs'
 import { actionsFor, renderPanel, scan } from '../panel.mjs'
 import { readProfile } from '../profile.mjs'
@@ -234,6 +235,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect((await readProfile('pi', env)).key).toBe('key-pi')
     expect((await readProfile('dsh', env)).key).toBe('key-dsh')
     expect(text).toContain('确认码：BCDF-GHJK')
+    expect(text).toContain('✓ 已确认，签发了 2 个访问密钥')
     expect(text).not.toContain('key-pi')
     expect(resultsText(results)).toBe(
       '已接入：pi（应用 pi 应用）、DeepSeek Harness（应用 dsh 应用）',
@@ -260,12 +262,44 @@ describe('几个平台一起的浏览器授权', () => {
     const { results } = await connect(['pi', 'dsh', 'codex', 'openclaw'])
     expect(results).toEqual([
       { id: 'pi', status: 'connected', app: app('pi') },
-      { id: 'dsh', status: 'skipped' },
+      { id: 'dsh', status: 'skipped', reason: '确认页上没有勾选' },
       { id: 'codex', status: 'denied', reason: '应用 不可用' },
-      { id: 'openclaw', status: 'skipped' },
+      { id: 'openclaw', status: 'skipped', reason: '确认页上没有勾选' },
     ])
     expect(await readProfile('dsh', env)).toBeNull()
     expect(existsSync(join(dir, 'hermes', '.env'))).toBe(false)
+  })
+
+  it('确认了却一个都没签发（例如确认人已停用）：每个平台都是被拒绝，不算接上', async () => {
+    const reason = '确认人已不在空间或已停用'
+    answers = [
+      {
+        status: 200,
+        body: {
+          status: 'approved',
+          keys: [
+            { runtimeFamily: 'pi', status: 'denied', reason },
+            { runtimeFamily: 'dsh', status: 'denied', reason },
+          ],
+        },
+      },
+    ]
+    const { results, text } = await connect(['pi', 'dsh'])
+    expect(results).toEqual([
+      { id: 'pi', status: 'denied', reason },
+      { id: 'dsh', status: 'denied', reason },
+    ])
+    expect(text).toContain('✗ 已确认，但没有签发访问密钥')
+    expect(text).not.toContain('✓ 已确认')
+    expect(await readProfile('pi', env)).toBeNull()
+    expect(resultsText(results)).toBe(`被拒绝：pi（${reason}）、DeepSeek Harness（${reason}）`)
+  })
+
+  it('机器名去掉 .local 这类后缀与控制字符', () => {
+    expect(machineName('mac-mini.local')).toBe('mac-mini')
+    expect(machineName('box.LAN')).toBe('box')
+    expect(machineName('dev\nbox')).toBe('dev box')
+    expect(machineName('a'.repeat(80))).toHaveLength(64)
   })
 
   it('整个申请被拒绝时每个平台都算失败', async () => {
@@ -583,6 +617,26 @@ describe('向导', () => {
     // 第二次的面板上 pi 已接入，不再给接入 pi
     const menus = ui.shown.filter((item) => item.kind === 'select')
     expect(menus[1].options.map((o) => o.label)).not.toContain('接入 pi（1 个未接入）')
+  })
+
+  it('一个平台都没接上时结果里写明', async () => {
+    const reason = '确认人已不在空间或已停用'
+    const ui = fakeUi(['connect', ['pi'], true, 'exit'])
+    await wizard({
+      ui,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => base,
+        scan: async () => state('none'),
+        connectPlatforms: async () => [{ id: 'pi', status: 'denied', reason }],
+        pluginSteps: vi.fn(async () => ''),
+      },
+    })
+    expect(ui.shown.find((item) => item.title === '结果').text).toBe(
+      `一个平台都没有接上\n被拒绝：pi（${reason}）`,
+    )
   })
 
   it('计划没有确认就不做，取消时退出', async () => {
