@@ -157,11 +157,12 @@ const PLATFORMS = {
     packages: ['openclaw'],
     // 新一些的 OpenClaw 把插件的工具放在按需搜索后面（模型的请求里只有 tool_search），
     // 所以看它自己登记的清单里有没有
-    async tools({ sh }) {
+    async tools({ sh, model: ctx_model }) {
       const shown = await sh('openclaw', ['plugins', 'inspect', 'kioku', '--json'], { quiet: true })
       // 诊断：先看它到底输出了什么
       log(`-- inspect：${shown.stdout.replace(/\s+/g, ' ').slice(0, 4000)}`)
       const names = shown.stdout
+      log(`-- 诊断，假的模型收到的：${JSON.stringify(ctx_model.requests).slice(0, 6000)}`)
       check(names.includes('kioku_get'), 'OpenClaw 登记的工具里有 Kioku 的工具')
     },
     async prepare({ home, env, model }) {
