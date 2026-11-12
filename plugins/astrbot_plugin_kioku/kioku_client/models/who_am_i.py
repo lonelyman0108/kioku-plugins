@@ -26,11 +26,15 @@ class WhoAmI:
         space_id (UUID):
         app (AppInfo):
         scopes (WhoAmIScopes):
+        space_name (str | Unset):
+        account_name (str | Unset):
     """
 
     space_id: UUID
     app: AppInfo
     scopes: WhoAmIScopes
+    space_name: str | Unset = UNSET
+    account_name: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +47,10 @@ class WhoAmI:
 
         scopes = self.scopes.to_dict()
 
+        space_name = self.space_name
+
+        account_name = self.account_name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -52,6 +60,10 @@ class WhoAmI:
                 "scopes": scopes,
             }
         )
+        if space_name is not UNSET:
+            field_dict["spaceName"] = space_name
+        if account_name is not UNSET:
+            field_dict["accountName"] = account_name
 
         return field_dict
 
@@ -67,10 +79,16 @@ class WhoAmI:
 
         scopes = WhoAmIScopes.from_dict(d.pop("scopes"))
 
+        space_name = d.pop("spaceName", UNSET)
+
+        account_name = d.pop("accountName", UNSET)
+
         who_am_i = cls(
             space_id=space_id,
             app=app,
             scopes=scopes,
+            space_name=space_name,
+            account_name=account_name,
         )
 
         who_am_i.additional_properties = d

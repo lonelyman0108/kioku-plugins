@@ -12,7 +12,6 @@ from ..models.who_am_i_scopes_credentials import WhoAmIScopesCredentials
 from ..models.who_am_i_scopes_max_sensitivity import WhoAmIScopesMaxSensitivity
 from ..models.who_am_i_scopes_read_layers_item import WhoAmIScopesReadLayersItem
 from ..models.who_am_i_scopes_write_layers_item import WhoAmIScopesWriteLayersItem
-from ..types import UNSET, Unset
 from typing import cast
 
 

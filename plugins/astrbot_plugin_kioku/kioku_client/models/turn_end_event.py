@@ -9,7 +9,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..models.turn_end_event_event import TurnEndEventEvent
-from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:

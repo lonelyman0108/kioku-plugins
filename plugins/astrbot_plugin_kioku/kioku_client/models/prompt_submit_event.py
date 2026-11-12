@@ -9,7 +9,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..models.prompt_submit_event_event import PromptSubmitEventEvent
-from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
