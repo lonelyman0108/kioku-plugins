@@ -15,6 +15,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { doctor } from '../doctor.mjs'
 import { setup } from '../setup.mjs'
+import { mode } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
@@ -78,7 +79,7 @@ describe('kioku setup dsh', () => {
     expect(result.code).toBe(0)
     expect(requests).toEqual(['/v1/whoami'])
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
     expect(result.text).toContain('重启 dsh 后生效')
     expect(result.text).toContain(
       'dsh plugin --profile <profile> add github:lonelyman0108/kioku-plugins',

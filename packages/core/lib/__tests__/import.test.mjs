@@ -10,6 +10,7 @@ import { KiokuFailure } from '../http.mjs'
 import { importMemories } from '../import.mjs'
 import { claudeProjectName, frontmatter, sections, segment, titleOf } from '../sources.mjs'
 import { UsageError } from '../usage.mjs'
+import { posixOnly } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 
@@ -443,7 +444,7 @@ describe('kioku import：读文件与写入的边界', () => {
     }
   })
 
-  it('路径里的控制字符不原样打印', async () => {
+  posixOnly('路径里的控制字符不原样打印', async () => {
     file(
       'claude/projects/-x-code-kioku/memory/a\n新建  伪造的一行.md',
       '---\nname: weird\nmetadata:\n  type: user\n---\n正文',

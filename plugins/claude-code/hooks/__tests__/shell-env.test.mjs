@@ -11,10 +11,13 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
 
 const script = fileURLToPath(new URL('../shell-env.mjs', import.meta.url))
 const KEY = 'kioku_test_key'
@@ -85,14 +88,15 @@ describe('会话开始时给 kioku 命令配好地址与访问密钥', () => {
 
     const keyFile = join(data, `api-key.${SESSION}`)
     expect(readFileSync(keyFile, 'utf8')).toBe(KEY)
-    expect(statSync(keyFile).mode & 0o777).toBe(0o600)
+    expect(statSync(keyFile).mode & 0o777).toBe(mode(0o600))
     const lines = readFileSync(envFile, 'utf8')
+    // 路径里的单引号换成 '"'"'；路径本身按这个系统的写法（Windows 上带反斜杠）
     expect(lines).toBe(
       "export KIOKU_SERVER_URL='https://kioku.example.com'\n" +
-        `export KIOKU_API_KEY_FILE='${join(dir, 'it')}'"'"'s data/api-key.${SESSION}'\n`,
+        `export KIOKU_API_KEY_FILE='${keyFile.replaceAll("'", `'"'"'`)}'\n`,
     )
-    // 每一行都只由引号串拼成，不用反斜杠
-    expect(lines).not.toContain('\\')
+    // 每一行都只由引号串拼成，转义不靠反斜杠（Windows 的路径自己带着的不算）
+    if (sep === '/') expect(lines).not.toContain('\\')
     expect(lines).not.toContain(KEY)
     expect(sourced(envFile)).toEqual(['https://kioku.example.com', keyFile])
   })

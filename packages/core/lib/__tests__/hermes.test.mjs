@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -15,6 +14,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { doctor } from '../doctor.mjs'
+import { fakeCommand, mode } from './fakeCommand.mjs'
 import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
 
@@ -57,11 +57,10 @@ beforeEach(() => {
   mkdirSync(home)
   dotenv = join(home, '.env')
   // 假的 hermes 命令：config set 把值记进一个 JSON 文件，config get 读它
-  const bin = join(dir, 'hermes-bin')
-  writeFileSync(
-    bin,
-    `#!/usr/bin/env node
-const fs = require('node:fs')
+  const bin = fakeCommand(
+    dir,
+    'hermes-bin',
+    `const fs = require('node:fs')
 const file = ${JSON.stringify(join(dir, 'config.json'))}
 const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
 const [group, action, key, value] = process.argv.slice(2)
@@ -73,7 +72,6 @@ if (action === 'set') { data[key] = value; fs.writeFileSync(file, JSON.stringify
 else if (action === 'get') console.log('some banner\\n' + (data[key] ?? ''))
 `,
   )
-  chmodSync(bin, 0o755)
   env = { HERMES_HOME: home, KIOKU_HERMES_BIN: bin, PATH: process.env.PATH }
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -101,7 +99,7 @@ describe('kioku setup hermes', () => {
     expect(readFileSync(dotenv, 'utf8')).toBe(
       `# 别的密钥\nOPENROUTER_API_KEY=sk-other\nKIOKU_SERVER_URL=${base}\nKIOKU_API_KEY=${KEY}\n`,
     )
-    expect(statSync(dotenv).mode & 0o777).toBe(0o600)
+    expect(statSync(dotenv).mode & 0o777).toBe(mode(0o600))
     // .env 里都是密钥，不留备份
     expect(readdirSync(home)).toEqual(['.env'])
     expect(settings()).toEqual({
@@ -119,7 +117,7 @@ describe('kioku setup hermes', () => {
 
   it('没有 .env 时新建，只给本人读写；换访问密钥时换掉原来的那一行；再运行一次不用改', async () => {
     await run(setup, ['hermes', '--server-url', base])
-    expect(statSync(dotenv).mode & 0o777).toBe(0o600)
+    expect(statSync(dotenv).mode & 0o777).toBe(mode(0o600))
     writeFileSync(dotenv, `export KIOKU_API_KEY="old_key"\nA=1\nKIOKU_SERVER_URL='${base}'\n`)
     await run(setup, ['hermes'], { key: 'new_key' })
     expect(readFileSync(dotenv, 'utf8')).toBe(

@@ -16,6 +16,7 @@ import {
   toolsOf,
   writeToolCache,
 } from '../mcp.mjs'
+import { mode } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 let server
@@ -160,7 +161,7 @@ describe('本机留的工具清单', () => {
     expect(await writeToolCache('openclaw', { url: base, tools, at: 123 }, env)).toBe(true)
     const file = toolCacheFile('openclaw', env)
     expect(file).toBe(join(dir, 'kioku', 'openclaw-tools.json'))
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(statSync(file).mode & 0o777).toBe(mode(0o600))
     expect(readToolCacheSync('openclaw', env)).toEqual({ url: base, at: 123, tools })
     await removeToolCache('openclaw', env)
     expect(readToolCacheSync('openclaw', env)).toBeNull()

@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { KiokuFailure } from '../http.mjs'
 import { setup, writeSettings } from '../setup.mjs'
 import { UsageError } from '../usage.mjs'
+import { mode, posixOnly } from './fakeCommand.mjs'
 
 let dir
 let file
@@ -46,7 +47,7 @@ describe('kioku setup claude-code', () => {
     expect(result.text).toContain(`${file}.kioku-backup`)
     expect(saved()).toEqual({ model: 'x', hooks: { Stop: [] }, autoMemoryEnabled: false })
     expect(readFileSync(file, 'utf8')).toContain('\n    "model"')
-    expect(statSync(file).mode & 0o777).toBe(0o640)
+    expect(statSync(file).mode & 0o777).toBe(mode(0o640))
     expect(readFileSync(`${file}.kioku-backup`, 'utf8')).toBe(original)
     // 临时文件不留下
     expect(readdirSync(dir).sort()).toEqual(['settings.json', 'settings.json.kioku-backup'])
@@ -56,7 +57,7 @@ describe('kioku setup claude-code', () => {
     const result = await run(['claude-code'])
     expect(result.code).toBe(0)
     expect(saved()).toEqual({ autoMemoryEnabled: false })
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(statSync(file).mode & 0o777).toBe(mode(0o600))
     expect(readdirSync(dir)).toEqual(['settings.json'])
   })
 
@@ -155,7 +156,7 @@ describe('kioku setup claude-code', () => {
     expect(readdirSync(dir)).toEqual(['settings.json'])
   })
 
-  it('写不进去时报无法写入，原文件不变', async () => {
+  posixOnly('写不进去时报无法写入，原文件不变', async () => {
     writeFileSync(file, '{}')
     // 目录只读：临时文件建不出来
     chmodSync(dir, 0o500)

@@ -17,6 +17,7 @@ import { doctor } from '../doctor.mjs'
 import { KiokuFailure } from '../http.mjs'
 import { setup } from '../setup.mjs'
 import { UsageError } from '../usage.mjs'
+import { mode } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
@@ -96,11 +97,11 @@ describe('kioku setup codex', () => {
     expect(result.text).toContain('codex plugin add kioku@kioku')
     expect(result.text).not.toContain(KEY)
     expect(readFileSync(toml, 'utf8')).toBe(`${original}\n${block(base)}`)
-    expect(statSync(toml).mode & 0o777).toBe(0o640)
+    expect(statSync(toml).mode & 0o777).toBe(mode(0o640))
     expect(readFileSync(`${toml}.kioku-backup`, 'utf8')).toBe(original)
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
-    expect(statSync(join(dir, 'kioku')).mode & 0o777).toBe(0o700)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
+    expect(statSync(join(dir, 'kioku')).mode & 0o777).toBe(mode(0o700))
   })
 
   it('没有 config.toml 时新建；再运行一次什么都不改', async () => {

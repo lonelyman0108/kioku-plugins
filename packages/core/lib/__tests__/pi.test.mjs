@@ -15,6 +15,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { doctor } from '../doctor.mjs'
 import { setup } from '../setup.mjs'
+import { mode } from './fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
@@ -77,7 +78,7 @@ describe('kioku setup pi', () => {
     expect(result.text).toContain('pi install git:github.com/lonelyman0108/kioku-plugins')
     expect(result.text).not.toContain(KEY)
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
     expect(readdirSync(join(dir, 'pi'))).toEqual([])
     // 再运行一次：不用改；已经装了扩展时不再提示
     writeFileSync(

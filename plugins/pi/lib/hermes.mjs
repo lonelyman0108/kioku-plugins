@@ -3,11 +3,11 @@
 // （不另放一份）；选 provider、关掉内置的两份记忆文件是 config.yaml 里的三项，交给 Hermes 自己的 hermes config set 去改，
 // 不自己动它的 YAML
 
-import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { capture } from './command.mjs'
 import { readText, safeWrite } from './files.mjs'
 import { keyFormatError, KiokuFailure } from './http.mjs'
 import { serverUrlProblem } from './profile.mjs'
@@ -90,16 +90,12 @@ function withEnv(text, values) {
   return lines.length ? `${lines.join(eol)}${eol}` : ''
 }
 
-// 调 hermes 命令。找不到这个命令时返回 null；失败时抛 KiokuFailure（不带输出：里面可能有别的配置）
-function hermes(env, args) {
-  const bin = env.KIOKU_HERMES_BIN || 'hermes'
-  return new Promise((resolve, reject) => {
-    execFile(bin, args, { env, timeout: 30_000 }, (err, stdout) => {
-      if (err?.code === 'ENOENT') resolve(null)
-      else if (err) reject(new KiokuFailure(`hermes ${args.slice(0, 3).join(' ')} 没有成功`))
-      else resolve(stdout)
-    })
-  })
+// 调 hermes 命令。找不到这个命令时返回 null；失败（含超时）时抛 KiokuFailure（不带输出：里面可能有别的配置）
+async function hermes(env, args) {
+  const result = await capture(env.KIOKU_HERMES_BIN || 'hermes', args, env, { timeout: 30_000 })
+  if (!result.found) return null
+  if (!result.ok) throw new KiokuFailure(`hermes ${args.slice(0, 3).join(' ')} 没有成功`)
+  return result.stdout
 }
 
 // 读 Hermes 的一项配置：null 是没有 hermes 命令，undefined 是没读出来（命令失败），否则是值（没设时是空字符串）

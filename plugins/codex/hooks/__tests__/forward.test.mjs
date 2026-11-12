@@ -12,10 +12,13 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+// Windows 没有这套权限位：文件一律是 666，「只给本人」靠用户目录自己的访问控制
+const mode = (posix) => (process.platform === 'win32' ? 0o666 : posix)
 
 const script = fileURLToPath(new URL('../forward.mjs', import.meta.url))
 const KEY = 'kioku_test_key'
@@ -118,7 +121,7 @@ describe('Codex 钩子转发', () => {
     expect(requests[0].body).toEqual({
       event: 'session.start',
       sessionId: 's1',
-      project: { dirName: dir.split('/').pop() },
+      project: { dirName: basename(dir) },
     })
   })
 
@@ -139,7 +142,7 @@ describe('Codex 钩子转发', () => {
       prompt: '办公室的网络怎么配的',
     })
     expect(turns()).toEqual(['turn.s1.t1.json'])
-    expect(statSync(join(data, 'turns', 'turn.s1.t1.json')).mode & 0o777).toBe(0o600)
+    expect(statSync(join(data, 'turns', 'turn.s1.t1.json')).mode & 0o777).toBe(mode(0o600))
   })
 
   it('一轮结束：用提交时记下的输入与最后的回复转发 turn.end，不写标准输出，记下的输入删掉', async () => {

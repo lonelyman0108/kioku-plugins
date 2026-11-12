@@ -54,3 +54,17 @@ jobs:
       - name: 完整检查
         if: steps.kind.outputs.code == 'true'
         run: scripts/check.sh --full
+
+  # Windows 上跑 JS 的用例。不是必需检查（必需的只有 gate）：红了不挡合并，但合并前要看一眼
+  test-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: 测试
+        run: scripts/ci/test-windows.sh

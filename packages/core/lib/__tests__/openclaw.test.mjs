@@ -1,12 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +6,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { doctor } from '../doctor.mjs'
+import { fakeCommand, mode } from './fakeCommand.mjs'
 import { setup } from '../setup.mjs'
 
 const KEY = 'kioku_test_key'
@@ -60,11 +53,10 @@ beforeEach(() => {
   profile = join(dir, 'kioku', 'openclaw.json')
   // 假的 openclaw 命令，照实测到的样子：config set 记进一个 JSON 文件（槽位选没装的插件时失败），
   // config get --json 打印 JSON 的值、没设过时以 1 退出，plugins inspect 没装时以 1 退出
-  const bin = join(dir, 'openclaw-bin')
-  writeFileSync(
-    bin,
-    `#!/usr/bin/env node
-const fs = require('node:fs')
+  const bin = fakeCommand(
+    dir,
+    'openclaw-bin',
+    `const fs = require('node:fs')
 const file = ${JSON.stringify(join(dir, 'config.json'))}
 const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
 const args = process.argv.slice(2)
@@ -92,7 +84,6 @@ if (args[0] === 'config' && args[1] === 'set') {
 } else process.exit(3)
 `,
   )
-  chmodSync(bin, 0o755)
   env = { KIOKU_CONFIG_DIR: join(dir, 'kioku'), KIOKU_OPENCLAW_BIN: bin, PATH: process.env.PATH }
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -125,7 +116,7 @@ describe('kioku setup openclaw', () => {
     expect(result.code).toBe(0)
     expect(requests).toEqual(['/v1/whoami', '/v1/mcp'])
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
-    expect(statSync(profile).mode & 0o777).toBe(0o600)
+    expect(statSync(profile).mode & 0o777).toBe(mode(0o600))
     expect(JSON.parse(readFileSync(cache(), 'utf8'))).toMatchObject({ url: base, tools: TOOLS })
     expect(settings()).toEqual({ [ACCESS]: true, [SLOT]: 'kioku' })
     expect(result.text).toContain('OpenClaw 已配好，重启网关')

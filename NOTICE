@@ -2,3 +2,6 @@ kioku-plugins
 Copyright 2026 lonelyman0108
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+packages/core/lib/command.mjs 里给 cmd.exe 转义参数的规则改写自 cross-spawn
+（https://github.com/moxystudio/node-cross-spawn），MIT License，Copyright (c) 2018 Made With MOXY Lda。
