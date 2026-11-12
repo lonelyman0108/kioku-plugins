@@ -132,6 +132,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - `bin/kioku` 在输出被提前关掉（`| head`）时不抛堆栈，但不提前退出：手上的事做完、按它的结果退出（中途以 0 退出的话，写了一半的导入会被当成成功）。`run` 自己处理这种情况。
   - 本机起 Linux 容器实测：非交互的会话里 docker 会去找钥匙串，换 `DOCKER_CONFIG` 还不够，要把 `docker-credential-osxkeychain` 所在的目录也从 PATH 里去掉；容器里用普通用户跑，经 `host.docker.internal` 连本机的 Kioku（转发要听 `0.0.0.0`）。
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
+- 用例不靠等一段固定时间来判断请求发出去没有、后台的事做完没有：测取消要等请求到了假的服务端（在 `reply` 里记下）再取消；OpenClaw 插件在后台取工具清单、写回本机，用例等它的 `idle()`，`afterEach` 也先等它再删临时目录。原因：门禁并行跑各包的测试，负载下几十毫秒不够，请求还没到时 `release` 是空的，没写完的清单让删目录报 `ENOTEMPTY`，迟到的请求落进下一个用例。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
 - 向导（不带参数的 `kioku`）用 `@clack/prompts`，它只是 `packages/cli` 的依赖：核心复制进插件目录时带不了依赖，所以只在 `prompts.mjs` 里按需动态 `import`，装不到（插件目录里的那几份、Node 低于 20.12）时打印用法并说明怎么装；别的模块不要静态引用它，否则插件里的 `kioku` 整个起不来。交互都经 `ui` 这一层（接口照 `@clack/prompts`，`prompts.mjs` 的 `localized` 把它自带的英文换掉），用例里换成假的。各平台给面板的信息（命令名、配置目录、`status`、装插件的命令）登记在 `platforms.mjs`；向导与 `kioku install` 调各平台的 `setup` 时传 `hints: false`，「接下来装上」由 `connect.mjs` 的 `pluginSteps` 统一列出，新平台的 `setup` 也要照这个开关。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行，早一些的 Node 18、20 不认 `"type": "module"` 下没有扩展名的文件。`bin/kioku` 本身只用动态 `import`，按两种模块执行都能跑；实现都写在 `.mjs` 里。

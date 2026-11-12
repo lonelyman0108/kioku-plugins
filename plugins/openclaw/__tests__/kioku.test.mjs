@@ -58,8 +58,11 @@ const contexts = (event) => ({
 let dir
 let env
 let clock
+// 这个用例建的插件：结束时等它们后台的事做完，再删临时目录
+let instances
 beforeEach(() => {
   requests = []
+  instances = []
   clock = 1_000_000
   lifecycle = contexts
   mcp = (body) =>
@@ -77,7 +80,10 @@ beforeEach(() => {
   env = { KIOKU_CONFIG_DIR: join(dir, 'kioku') }
   profile({ serverUrl: `${base}/`, apiKey: KEY })
 })
-afterEach(() => rmSync(dir, { recursive: true, force: true }))
+afterEach(async () => {
+  await Promise.all(instances.map((kioku) => kioku.idle()))
+  rmSync(dir, { recursive: true, force: true })
+})
 
 function profile(value) {
   writeFileSync(join(dir, 'kioku', 'openclaw.json'), JSON.stringify(value))
@@ -99,6 +105,7 @@ function start() {
     },
   }
   const kioku = createKioku({ env, now: () => clock })
+  instances.push(kioku)
   kioku.register(api)
   return { api, kioku, warnings, emit: (name, event, ctx) => handlers[name](event, ctx) }
 }
@@ -106,8 +113,7 @@ function start() {
 const MAIN = { sessionKey: 'agent:main:main' }
 async function settled(kioku) {
   kioku.toolsFor(MAIN)
-  await kioku.ready()
-  await new Promise((resolve) => setTimeout(resolve, 50))
+  await kioku.idle()
 }
 // 本机一次性运行、经网关的命令行、外部渠道的上下文，都照实测到的样子写
 const cli = (extra = {}) => ({
@@ -375,6 +381,9 @@ describe('OpenClaw 插件：注入与上报', () => {
 
 describe('OpenClaw 插件：工具', () => {
   it('取到清单后只给清单文件里声明过的工具，并留一份在本机；外部渠道的运行不给', async () => {
+    // 清单回来得慢一些也一样：等的是后台取完、写回本机，不是等一会儿
+    const list = mcp
+    mcp = (body) => ({ ...list(body), wait: new Promise((resolve) => setTimeout(resolve, 100)) })
     const { api, kioku } = start()
     await settled(kioku)
     const tools = api.registered.factory({ sessionKey: 'agent:main:main' })
