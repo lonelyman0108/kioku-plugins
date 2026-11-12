@@ -1,0 +1,47 @@
+# 在 Linux 与 Windows 上装真实的平台，照安装说明走一遍（scripts/e2e/run.mjs）。模型与 Kioku 都是假的，不用任何密钥。
+# 不是必需检查：平台自己发新版本也会让它变红，红了要看原因。改到实测脚本、共用核心或插件的 PR 会跑，每周一也跑一次，也可以手动跑。
+# 判断和命令都在 scripts/e2e/，这里只做薄壳。
+name: E2E
+on:
+  workflow_dispatch:
+  pull_request:
+    # 实测走的是这些目录里的代码：改到它们才跑
+    paths:
+      - scripts/e2e/**
+      - packages/core/**
+      - plugins/**
+      - package.json
+      - .github/workflows/e2e.yml
+  schedule:
+    - cron: '17 3 * * 1'
+concurrency:
+  # 按触发方式分组：定时的和手动的不互相取消
+  group: e2e-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        platform: [pi, codex, openclaw, dsh, hermes]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # 平台要的 Node 比仓库自己的新（OpenClaw 要 24.16 以上）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Hermes 是 Python 的，用 uv 装；setup-uv 没有浮动的大版本标签，按提交钉住（和 ci.yml 一样）
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        if: matrix.platform == 'hermes'
+        with:
+          version: 0.13.5
+      - name: 实测
+        run: node scripts/e2e/run.mjs ${{ matrix.platform }}

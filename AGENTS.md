@@ -112,7 +112,15 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **MCP 的地址与访问密钥在补丁的表达式里读本机的文件**（`!!js`，用 `process.getBuiltinModule` 取 `node:fs`）：表达式引用不到插件的代码，找文件的规则在补丁里又写了一遍，`plugins/dsh/__tests__/patch.test.mjs` 拿 `profile.mjs` 写出来的文件核对。改 `profileDir` 的规则要同步改补丁；地址与访问密钥的规整（去空白、去结尾的斜杠、只收可见的 ASCII）也照着 `readProfile` 写了一遍，手改的文件两边读出来要一样。正则里用 `[/]` 不用反斜杠（YAML 的双引号里反斜杠要转义）。表达式里只用单引号（用例按双引号截取）。
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
-- 跨系统（CI 里 `test-windows` 在真的 Windows 上跑 JS 的用例；五个平台在 Linux 容器里各实测过一遍）：
+- 端到端实测（`scripts/e2e/`，workflow `E2E`）：`node scripts/e2e/run.mjs <平台>` 在这台机器上装真实的平台，照安装说明走一遍（`kioku setup` → 装插件 → `kioku doctor` → 跑一轮），模型与 Kioku 都是假的（`fakes.mjs`），不用密钥。CI 在 Linux 与 Windows 上各跑五个平台，不是必需检查，每周一也跑一次：平台自己发新版本会让它变红，红了先看是平台变了还是这边坏了。要守住的几条：
+  - 假的 Kioku 照服务端的格式回答（`hostOutput` 按运行时分、MCP 的握手与工具清单），服务端的接口变了要跟着改，否则它测的是旧格式。
+  - 假的模型不生成内容，只把「请求里有没有注入的两个标记、有没有 Kioku 的工具」写成一句回答；上报里带着这句回答，就同时说明注入到了模型手上、回复被上报了。
+  - **断言要在该失败的时候失败**（第一版太松，审查指出来的）：只算这一轮开始之后的请求（`kioku setup`、`kioku doctor` 自己也会取工具清单）；假的 Kioku 照契约校验事件，不合格的回 400；三个事件各要正好一次；`kioku doctor` 有提醒（`!`）也算没过；访问密钥只在 `kioku setup` 时给，平台只能从 setup 写下的地方读到。改断言之后故意改坏插件跑一次，确认抓得到。
+  - 工具怎么核对按平台分（`tools`）：Codex、dsh、Hermes 直接把工具放进模型的请求；pi 按需才给，看它这一轮向 Kioku 取过清单；新一些的 OpenClaw（2026.11.3）把插件的工具放在 `tool_search` 后面，假的模型会搜一次 kioku，看搜索结果。`openclaw plugins inspect` 不装载插件，看不出运行时登记了什么，不能拿它核对。
+  - 主目录、各平台的配置目录都换成临时目录，起命令经 `command.mjs` 的 `launch`（平台装在 `node_modules/.bin`，Windows 上是 `.cmd`）。
+  - 改了插件的加载、注入或安装方式，本机跑一遍对应的平台；本机到 npm 慢，装 Codex、dsh 这类大包可能要十几分钟，CI 上快得多。
+  - Hermes 的 `hermes plugins install` 只从 GitHub 装，装不了没合并的改动，脚本里是把目录复制到 `$HERMES_HOME/plugins/kioku`。
+- 跨系统（CI 里 `test-windows` 在真的 Windows 上跑 JS 的用例；五个平台在 Linux 容器里用真实的模型各实测过一遍）：
   - **起 npm 装的那类命令（`openclaw`、`hermes`、`kioku run` 要跑的命令）经 `command.mjs`**（`launch` 算怎么起，`capture` 跑到结束并收输出，`killTree` 结束）：Windows 上它们是 `.cmd`，直接 `execFile`、`spawn` 起不来，经 `cmd.exe` 时参数要转义（规则改写自 cross-spawn，登记在 `NOTICE`）。`git`、`rundll32` 这类本来就是 `.exe` 的照旧直接起。要守住的几条：
     - 只在 Windows 上介入，别的系统原样交给系统（自己在 PATH 里找的话，会选中前面目录里不能执行的同名文件）。
     - 名字没写扩展名时不找原样的名字：npm 在 `.cmd` 旁边放着一个同名、没有扩展名的 sh 脚本。

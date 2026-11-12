@@ -134,7 +134,7 @@ kioku import --from claude-code             # 列出计划，确认后写入
 
 ## 各系统
 
-macOS 与 Linux 上各平台都实测过。Windows 上只跑过单元用例（CI），没有在真实的平台里跑过端到端：
+macOS 与 Linux 上各平台都用真实的模型实测过。Windows 上跑过单元用例，也在 CI 的 Windows 机器上装真实的平台走过一遍（pi、Codex、OpenClaw、Hermes、DeepSeek Harness；模型是假的，核对的是装插件、注入、上报与工具登记），交互界面没有看过：
 
 - 配置文件在 `%USERPROFILE%\.config\kioku\`（和别的系统一样的相对位置，可以用 `KIOKU_CONFIG_DIR` 改）。Windows 没有 600 这种权限位，文件靠用户目录自己的访问控制保护。
 - npm 装的命令是 `.cmd`：`kioku setup openclaw`、`kioku run -- npm …` 会经 `cmd.exe` 起它们，参数里的 `&`、`|`、`%` 这类字符照原样交给命令。
