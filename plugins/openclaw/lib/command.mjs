@@ -5,8 +5,8 @@
 // 转义的规则照 cross-spawn 的做法写（MIT，来源登记在 NOTICE）
 
 import { execFile, spawn } from 'node:child_process'
-import { statSync } from 'node:fs'
-import { win32 } from 'node:path'
+import { accessSync, constants, statSync } from 'node:fs'
+import { join, win32 } from 'node:path'
 
 import { KiokuFailure } from './http.mjs'
 
@@ -48,6 +48,23 @@ export function findCommand(name, env, { exists = isFile } = {}) {
     }
   }
   return null
+}
+
+// PATH 里有没有这个命令（向导的面板用来看平台装没装）。Windows 上照 findCommand 的规则找；
+// 别的系统上找能执行的普通文件
+export function hasCommand(name, env, { platform = process.platform } = {}) {
+  if (platform === 'win32') return findCommand(name, env) !== null
+  if (typeof name !== 'string' || !name) return false
+  const dirs = /\//.test(name) ? [''] : (envValue(env, 'PATH') ?? '').split(':').filter(Boolean)
+  return dirs.some((dir) => {
+    const file = dir ? join(dir, name) : name
+    try {
+      accessSync(file, constants.X_OK)
+      return statSync(file).isFile()
+    } catch {
+      return false
+    }
+  })
 }
 
 // cmd.exe 认作有特殊含义的字符

@@ -59,7 +59,9 @@ export async function setupDsh(options, io) {
   const profiles = await installedProfiles(env)
   out.write('DeepSeek Harness 已配好，重启 dsh 后生效（读写记忆的工具在启动时连上）。\n')
   if (profiles.length) out.write(`装了插件的 profile：${profiles.map(plain).join('、')}\n`)
-  else out.write(`接下来给要用的 profile 装上插件（web、tui 这些各装一次）：${installHint}\n`)
+  else if (io.hints !== false) {
+    out.write(`接下来给要用的 profile 装上插件（web、tui 这些各装一次）：${installHint}\n`)
+  }
   return 0
 }
 
@@ -72,4 +74,9 @@ export async function inspectDsh({ env }, { ok, warn, note }) {
   else warn(`没有哪个 profile 装了 kioku 的插件：${installHint}`)
   note('插件按 profile 装：没装的 profile 里没有长期记忆')
   ok('DeepSeek Harness 没有自带的长期记忆要停用')
+}
+
+// 给向导的面板：有没有哪个 profile 装了插件，dsh 没有自带的长期记忆
+export async function statusDsh({ env }) {
+  return { plugin: (await installedProfiles(env)).length > 0, memory: 'none' }
 }

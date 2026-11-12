@@ -45,7 +45,9 @@ export async function setupPi(options, io) {
   if (!same) await writeProfile('pi', { url, key }, env)
   const { settings } = await readSettings(join(piHome(env), 'settings.json')).catch(() => ({}))
   out.write('pi 已配好，新开会话（或 /reload）生效。\n')
-  if (!installed(settings)) out.write(`接下来装上扩展：pi install ${SOURCE}\n`)
+  if (!installed(settings) && io.hints !== false) {
+    out.write(`接下来装上扩展：pi install ${SOURCE}\n`)
+  }
   return 0
 }
 
@@ -78,4 +80,11 @@ export async function inspectPi({ env, cwd }, { ok, warn }) {
     warn(`${shadowing.join('、')} 里有一个叫 kioku 的 MCP 服务，它会盖过扩展注册的那个：去掉它`)
   } else ok('MCP 服务由扩展在会话开始时注册')
   ok('pi 没有自带的长期记忆要停用')
+}
+
+// 给向导的面板：扩展装没装（用户级或当前项目里），pi 没有自带的长期记忆
+export async function statusPi({ env, cwd }) {
+  const user = await readSettings(join(piHome(env), 'settings.json')).catch(() => ({}))
+  const local = await readSettings(join(cwd, '.pi', 'settings.json')).catch(() => ({}))
+  return { plugin: installed(user.settings) || installed(local.settings), memory: 'none' }
 }
