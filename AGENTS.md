@@ -115,6 +115,8 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - 端到端实测（`scripts/e2e/`，workflow `E2E`）：`node scripts/e2e/run.mjs <平台>` 在这台机器上装真实的平台，照安装说明走一遍（`kioku setup` → 装插件 → `kioku doctor` → 跑一轮），模型与 Kioku 都是假的（`fakes.mjs`），不用密钥。CI 在 Linux 与 Windows 上各跑五个平台，不是必需检查，每周一也跑一次：平台自己发新版本会让它变红，红了先看是平台变了还是这边坏了。要守住的几条：
   - 假的 Kioku 照服务端的格式回答（`hostOutput` 按运行时分、MCP 的握手与工具清单），服务端的接口变了要跟着改，否则它测的是旧格式。
   - 假的模型不生成内容，只把「请求里有没有注入的两个标记、有没有 Kioku 的工具」写成一句回答；上报里带着这句回答，就同时说明注入到了模型手上、回复被上报了。
+  - **断言要在该失败的时候失败**（第一版太松，审查指出来的）：只算这一轮开始之后的请求（`kioku setup`、`kioku doctor` 自己也会取工具清单）；假的 Kioku 照契约校验事件，不合格的回 400；三个事件各要正好一次；`kioku doctor` 有提醒（`!`）也算没过；访问密钥只在 `kioku setup` 时给，平台只能从 setup 写下的地方读到。改断言之后故意改坏插件跑一次，确认抓得到。
+  - 工具怎么核对按平台分（`tools`）：Codex、dsh、Hermes 直接把工具放进模型的请求；pi 按需才给，看它这一轮向 Kioku 取过清单；新一些的 OpenClaw（2026.11.3）把插件的工具放在 `tool_search` 后面，假的模型会搜一次 kioku，看搜索结果。`openclaw plugins inspect` 不装载插件，看不出运行时登记了什么，不能拿它核对。
   - 主目录、各平台的配置目录都换成临时目录，起命令经 `command.mjs` 的 `launch`（平台装在 `node_modules/.bin`，Windows 上是 `.cmd`）。
   - 改了插件的加载、注入或安装方式，本机跑一遍对应的平台；本机到 npm 慢，装 Codex、dsh 这类大包可能要十几分钟，CI 上快得多。
   - Hermes 的 `hermes plugins install` 只从 GitHub 装，装不了没合并的改动，脚本里是把目录复制到 `$HERMES_HOME/plugins/kioku`。
