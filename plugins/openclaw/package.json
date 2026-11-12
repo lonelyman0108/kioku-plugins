@@ -1,6 +1,6 @@
 {
   "name": "@kioku-memory/openclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenClaw 的 Kioku 记忆插件：启动加载、每轮召回、会话摘要与记忆工具",
   "license": "Apache-2.0",
   "homepage": "https://github.com/lonelyman0108/kioku-plugins/tree/main/plugins/openclaw",
