@@ -139,6 +139,22 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   const runs = new Map()
   // 正在跑用户从本机入口发起的一轮的会话：会话键 → 运行 id。工具只在这样的运行里调得动
   const approved = new Map()
+  // 在后台跑、谁也不等的事：工具工厂里读配置，取工具清单并写回本机
+  const background = new Set()
+
+  function detach(promise) {
+    const tracked = promise.then(
+      () => background.delete(tracked),
+      () => background.delete(tracked),
+    )
+    background.add(tracked)
+  }
+
+  // 等后台的事都落定，包括做的过程中又起的。给用例用：不等的话用例结束、删掉临时目录时
+  // 清单可能还在往里写，请求也会落进下一个用例
+  async function idle() {
+    while (background.size) await Promise.all(background)
+  }
 
   function tell(text) {
     if (told.has(text)) return
@@ -208,6 +224,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       .finally(() => {
         refreshing = null
       })
+    detach(refreshing)
   }
 
   // 把一个事件交给服务端，返回要注入的文本（没有时为空字符串）；失败时说一次原因，返回 undefined
@@ -324,7 +341,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   function toolsFor(ctx) {
     if (!localTools(ctx)) return null
     // 顺便把配置读上、看清单要不要重新取；都不等
-    ready().then(refreshTools, () => {})
+    detach(ready().then(refreshTools, () => {}))
     const list = tools.filter((tool) => TOOL_NAMES.includes(tool.name))
     return list.length ? list.map((tool) => toTool(tool, ctx.sessionKey)) : null
   }
@@ -361,5 +378,5 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
     )
   }
 
-  return { register, beforePrompt, agentEnd, toolsFor, ready }
+  return { register, beforePrompt, agentEnd, toolsFor, ready, idle }
 }

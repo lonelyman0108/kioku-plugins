@@ -250,10 +250,17 @@ describe('pi 扩展', () => {
     const controller = new AbortController()
     const { emit, notices } = await start({ signal: controller.signal })
     await emit('session_start')
+    // 启动加载与召回两个请求都到了服务端、还在等回答时取消
+    let arrived
+    const received = new Promise((resolve) => (arrived = resolve))
     let release
-    reply = (event) => ({ ...contexts(event), wait: new Promise((resolve) => (release = resolve)) })
+    const held = new Promise((resolve) => (release = resolve))
+    reply = (event) => {
+      if (requests.length === 2) arrived()
+      return { ...contexts(event), wait: held }
+    }
     const waiting = emit('before_agent_start', user('问'))
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await received
     controller.abort()
     expect(await waiting).toBeUndefined()
     release()

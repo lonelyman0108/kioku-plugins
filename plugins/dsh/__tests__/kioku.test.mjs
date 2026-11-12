@@ -293,17 +293,42 @@ describe('DeepSeek Harness 插件：输入前', () => {
     const kioku = start()
     const agent = agentOf()
     const controller = new AbortController()
+    // 请求到了服务端、还在等回答时取消
+    let arrived
+    const received = new Promise((resolve) => (arrived = resolve))
     let release
-    reply = () => ({ ...contexts('prompt.submit'), wait: new Promise((r) => (release = r)) })
+    const held = new Promise((resolve) => (release = resolve))
+    reply = () => {
+      arrived()
+      return { ...contexts('prompt.submit'), wait: held }
+    }
     const input = [userMessage('甲')]
     const pending = kioku.preStep(step(agent, input, { signal: controller.signal }), enter(input))
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await received
     controller.abort()
     expect((await pending).messages).toEqual(input)
     release()
     expect(warnings).toEqual([])
     reply = contexts
     expect((await kioku.preStep(step(agent, input), enter(input))).messages).toHaveLength(2)
+  })
+
+  it('发请求之前就取消了：不发请求，也不算失败', async () => {
+    const kioku = start()
+    const agent = agentOf()
+    kioku.created({ agent, source: 'startup' })
+    const input = [userMessage('甲')]
+    const canceled = step(agent, input, { signal: AbortSignal.abort() })
+    expect((await kioku.preStep(canceled, enter(input))).messages).toEqual(input)
+    expect(requests).toEqual([])
+    expect(warnings).toEqual([])
+    // 启动加载没取到，下一次输入再取
+    const next = await kioku.preStep(step(agent, input), enter(input))
+    expect(next.messages.map((m) => m.source.part ?? m.source.kind)).toEqual([
+      'user',
+      'boot',
+      'recall',
+    ])
   })
 
   it('没有配置：不发请求，说一次怎么配；中途配好了，过一分钟就认到。换了访问密钥也一样', async () => {
