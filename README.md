@@ -28,7 +28,7 @@ npx @kioku-memory/cli login <平台> --server-url https://kioku.example.com
 KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --platforms codex,pi --server-url https://kioku.example.com -y
 ```
 
-`login` 认得 `codex`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
+`login` 认得 `codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
 
 ## 平台
 
@@ -36,6 +36,9 @@ KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --pla
 |---|---|:-:|:-:|:-:|:-:|
 | [Claude Code](plugins/claude-code/README.md) | 插件市场 | ● | ● | ● | MCP |
 | [Codex](plugins/codex/README.md) | 插件市场 | ● | ● | ● | MCP |
+| [Gemini CLI](plugins/gemini/README.md) | 扩展 | ● | ● | ● | MCP |
+| [Antigravity](plugins/agy/README.md) | 插件 | ● | ● | ● | MCP |
+| [OpenCode](plugins/opencode/README.md) | npm 插件 | ● | ● | ● | MCP |
 | [pi](plugins/pi/README.md) | 扩展 | ● | ● | ● | MCP |
 | [Hermes](plugins/hermes/README.md) | 记忆 provider | ● | ● | ● | ● |
 | [OpenClaw](plugins/openclaw/README.md) | 记忆槽位 | ● | ● | ● | ● |
@@ -49,6 +52,9 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 
 - **Claude Code**：`/plugin install kioku --marketplace lonelyman0108/kioku-plugins`，在 `/plugin` 里填地址与访问密钥。之前从 kioku 仓库添加过插件市场的，先 `/plugin marketplace remove kioku` 再添加本仓库。
 - **Codex**：`kioku login codex` → `codex plugin marketplace add lonelyman0108/kioku-plugins` → `codex plugin add kioku@kioku` → 在 `/hooks` 里信任钩子。
+- **Gemini CLI**：`kioku login gemini` → `git clone https://github.com/lonelyman0108/kioku-plugins` → `gemini extensions link kioku-plugins/plugins/gemini` → 重启 Gemini CLI。
+- **Antigravity**：`kioku login agy` → `git clone https://github.com/lonelyman0108/kioku-plugins` → `mkdir -p ~/.gemini/config/plugins && cp -r kioku-plugins/plugins/agy ~/.gemini/config/plugins/kioku` → 新开会话。
+- **OpenCode**：`kioku login opencode` → 打开 `opencode`，确认 `~/.config/opencode/opencode.json` 的 `plugin` 里已有 `@kioku-memory/plugin-opencode`。
 - **pi**：`kioku login pi` → `pi install git:github.com/lonelyman0108/kioku-plugins`。
 - **Hermes**：`kioku login hermes` → `hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable`。
 - **OpenClaw**：`kioku login openclaw` → `openclaw plugins install npm:@kioku-memory/openclaw` → 重启网关。
@@ -63,8 +69,10 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 
 | 子命令 | 作用 |
 |---|---|
+| `kioku`（不带参数） | 交互式向导：扫描现状并分步接入多个平台 |
 | `kioku login <平台>` | 浏览器授权，签发访问密钥并写好配置 |
 | `kioku setup <平台>` | 停用平台自带的记忆，手动填地址与访问密钥 |
+| `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台配置 |
 | `kioku import --from <来源>` | 把平台本地的记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 取凭据的值放进环境变量交给命令，agent 看不到明文 |

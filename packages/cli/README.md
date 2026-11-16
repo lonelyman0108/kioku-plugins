@@ -3,8 +3,9 @@
 [Kioku](https://github.com/lonelyman0108/kioku) 是自托管的长期记忆服务。这个包提供 `kioku` 命令，要 Node 18 或更新的版本：
 
 ```bash
+npx @kioku-memory/cli
+# 检查已有配置，或装到全局
 npx @kioku-memory/cli doctor
-# 或者装到全局
 npm install -g @kioku-memory/cli
 ```
 
@@ -30,13 +31,13 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 | 子命令 | 作用 |
 |---|---|
 | `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
-| `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、pi、Hermes、OpenClaw、DeepSeek Harness 再写下服务地址与访问密钥，Codex 还配好 MCP 服务 |
+| `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、Gemini CLI、Antigravity、OpenCode、pi、Hermes、OpenClaw、DeepSeek Harness 再写下服务地址与访问密钥，其中 Codex、Gemini CLI、Antigravity 还配好 MCP 服务 |
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好这个平台，不用手动复制 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
 | `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
-每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`、`pi`、`hermes`、`openclaw`、`dsh`。
+每个子命令的完整说明：`kioku <子命令> --help`。现在认得的平台：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
 
 ## login
 
@@ -44,7 +45,7 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 kioku login codex --server-url https://kioku.example.com
 ```
 
-终端显示一个确认码并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选空间、应用与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。认得 `codex`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
+终端显示一个确认码并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选空间、应用与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。认得 `codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
 
 - 确认码不在打开的地址里，要照着终端输入：只在自己刚运行了这条命令时确认。别人发来一个确认码让你去确认的，不要确认，那样对方的机器会拿到能读写你的记忆的访问密钥。
 - 申请 10 分钟内有效。被拒绝、过期，或者确认之后确认人的角色变了，都拿不到访问密钥，重新运行即可。
@@ -62,7 +63,7 @@ export KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=…
 kioku install --platforms codex,pi --server-url https://kioku.example.com -y
 ```
 
-每个平台的访问密钥放在 `KIOKU_API_KEY_<平台>` 里（平台名大写、连字符换成下划线：`KIOKU_API_KEY_CLAUDE_CODE`、`KIOKU_API_KEY_CODEX`、`KIOKU_API_KEY_PI`、`KIOKU_API_KEY_HERMES`、`KIOKU_API_KEY_OPENCLAW`、`KIOKU_API_KEY_DSH`），没给的平台跳过并在结果里列出。各平台照 `kioku setup` 核对、写下配置、停用自带的长期记忆；Claude Code 只核对访问密钥、停用自动记忆，地址与访问密钥要在它的 `/plugin` 里填。
+每个平台的访问密钥放在 `KIOKU_API_KEY_<平台>` 里（平台名大写、连字符换成下划线：`KIOKU_API_KEY_CLAUDE_CODE`、`KIOKU_API_KEY_CODEX`、`KIOKU_API_KEY_GEMINI`、`KIOKU_API_KEY_AGY`、`KIOKU_API_KEY_OPENCODE`、`KIOKU_API_KEY_PI`、`KIOKU_API_KEY_HERMES`、`KIOKU_API_KEY_OPENCLAW`、`KIOKU_API_KEY_DSH`），没给的平台跳过并在结果里列出。各平台照 `kioku setup` 核对、写下配置、停用自带的长期记忆；Claude Code 只核对访问密钥、停用自动记忆，地址与访问密钥要在它的 `/plugin` 里填。
 
 - 在终端里运行、没带 `-y` 时先列计划再确认；`--dry-run` 只列计划。
 - 最后列出要自己运行的插件安装命令。有平台失败时退出码为 1。
@@ -122,6 +123,30 @@ kioku setup dsh --server-url https://kioku.example.com
 
 核对后写下 `~/.config/kioku/dsh.json`，不改 dsh 的设置（它没有自带的长期记忆）。插件按 profile 装：`dsh plugin --profile <profile> add github:lonelyman0108/kioku-plugins`，装完重启 dsh。
 
+### Gemini CLI
+
+```bash
+kioku setup gemini --server-url https://kioku.example.com
+```
+
+核对后写下 `~/.config/kioku/gemini.json`，在 `~/.gemini/settings.json` 里加上 `mcpServers.kioku` 并把自带的 `save_memory` 加入 `excludeTools`。扩展按源码链接：`git clone https://github.com/lonelyman0108/kioku-plugins` 后 `gemini extensions link kioku-plugins/plugins/gemini`。
+
+### Antigravity
+
+```bash
+kioku setup agy --server-url https://kioku.example.com
+```
+
+核对后写下 `~/.config/kioku/agy.json`，并在 `~/.gemini/config/mcp_config.json` 里加上 `mcpServers.kioku`（Antigravity 没有自带的长期记忆）。插件放到 `~/.gemini/config/plugins/kioku` 后新开会话生效。
+
+### OpenCode
+
+```bash
+kioku setup opencode --server-url https://kioku.example.com
+```
+
+核对后写下 `~/.config/kioku/opencode.json`，并在 `~/.config/opencode/opencode.json` 的 `plugin` 列表里加上 `@kioku-memory/plugin-opencode`（原文件备份成 `opencode.json.kioku-backup`；OpenCode 没有自带的长期记忆，MCP 由插件在 `config` 钩子里注册）。
+
 ## doctor
 
 ```bash
@@ -155,7 +180,7 @@ kioku import --from claude-code             # 列出计划，确认后写入
 - 只读普通的文本文件：符号链接不跟（它可以指到记忆目录之外的文件），太大的、不是文本的不读。
 - 写到一半连不上时停下来，说明写了多少、还剩多少；重新运行会接着写。
 - 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
-- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。记忆迁进这个访问密钥所属的应用。
+- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。记忆迁进这个访问密钥所属的应用。
 - 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
@@ -170,7 +195,7 @@ macOS 与 Linux 上各平台都用真实的模型实测过。Windows 上跑过�
 
 ## 地址与访问密钥
 
-`kioku doctor codex`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
+`kioku doctor codex`、`kioku doctor gemini`、`kioku doctor agy`、`kioku doctor opencode`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
 - `KIOKU_API_KEY`：在 Kioku 管理界面的「应用」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件
