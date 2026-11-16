@@ -24,6 +24,9 @@ export const TARGETS = [
   'plugins/pi',
   'plugins/openclaw',
   'plugins/dsh',
+  'plugins/opencode',
+  'plugins/gemini',
+  'plugins/agy',
   'packages/cli',
 ]
 

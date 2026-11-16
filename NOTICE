@@ -5,3 +5,6 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 packages/core/lib/command.mjs 里给 cmd.exe 转义参数的规则改写自 cross-spawn
 （https://github.com/moxystudio/node-cross-spawn），MIT License，Copyright (c) 2018 Made With MOXY Lda。
+
+plugins/opencode/index.js 里的对话事件映射与系统提示标记做法参考自 Lore
+（opencode-plugin），MIT License，Copyright (c) Lore contributors。

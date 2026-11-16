@@ -1,0 +1,25 @@
+{
+  "kioku": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ./hooks/forward.mjs session.start",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./hooks/forward.mjs prompt.submit",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./hooks/forward.mjs turn.end",
+        "timeout": 10
+      }
+    ]
+  }
+}

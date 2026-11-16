@@ -1,0 +1,7 @@
+{
+  "name": "@kioku-memory/plugin-agy",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  }
+}

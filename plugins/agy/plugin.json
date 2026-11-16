@@ -1,0 +1,6 @@
+{
+  "name": "kioku",
+  "description": "Kioku 长期记忆：会话开始注入启动加载，每轮输入注入召回候选，每轮结束后写入会话摘要",
+  "homepage": "https://github.com/lonelyman0108/kioku",
+  "repository": "https://github.com/lonelyman0108/kioku-plugins"
+}

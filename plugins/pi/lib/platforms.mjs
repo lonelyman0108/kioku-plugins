@@ -5,8 +5,10 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { agyHome, inspectAgy, preflightAgy, setupAgy, statusAgy } from './agy.mjs'
 import { codexHome, inspectCodex, preflightCodex, setupCodex, statusCodex } from './codex.mjs'
 import { dshHome, inspectDsh, setupDsh, statusDsh } from './dsh.mjs'
+import { geminiHome, inspectGemini, preflightGemini, setupGemini, statusGemini } from './gemini.mjs'
 import {
   hermesHome,
   inspectHermes,
@@ -16,6 +18,13 @@ import {
   statusHermes,
 } from './hermes.mjs'
 import { inspectOpenclaw, setupOpenclaw, statusOpenclaw } from './openclaw.mjs'
+import {
+  inspectOpenCode,
+  opencodeHome,
+  preflightOpenCode,
+  setupOpenCode,
+  statusOpenCode,
+} from './opencode.mjs'
 import { inspectPi, piHome, setupPi, statusPi } from './pi.mjs'
 import { readSettings } from './files.mjs'
 import { readProfile } from './profile.mjs'
@@ -208,7 +217,75 @@ const dsh = {
   inspect: inspectDsh,
 }
 
-export const PLATFORMS = { 'claude-code': claudeCode, codex, pi, hermes, openclaw, dsh }
+const opencode = {
+  name: 'OpenCode',
+  runtimeFamily: 'opencode',
+  command: () => 'opencode',
+  home: opencodeHome,
+  status: statusOpenCode,
+  install: {
+    commands: ['opencode'],
+    after:
+      '确认 opencode.json 的 plugin 已包含 @kioku-memory/plugin-opencode（kioku setup opencode 会写入），新开会话生效',
+  },
+  detect: (env) => Boolean(env.OPENCODE),
+  readConfig: (env) => readProfile('opencode', env),
+  preflight: preflightOpenCode,
+  setup: setupOpenCode,
+  inspect: inspectOpenCode,
+}
+
+const gemini = {
+  name: 'Gemini CLI',
+  runtimeFamily: 'gemini',
+  command: () => 'gemini',
+  home: geminiHome,
+  status: statusGemini,
+  install: {
+    commands: [
+      'git clone https://github.com/lonelyman0108/kioku-plugins',
+      'gemini extensions link kioku-plugins/plugins/gemini',
+    ],
+    after: '重启 Gemini CLI 生效（MCP 与停用 save_memory 已由 kioku setup gemini 配好）',
+  },
+  detect: (env) => Boolean(env.GEMINI_CLI),
+  readConfig: (env) => readProfile('gemini', env),
+  preflight: preflightGemini,
+  setup: setupGemini,
+  inspect: inspectGemini,
+}
+
+const agy = {
+  name: 'Antigravity',
+  runtimeFamily: 'agy',
+  command: () => 'agy',
+  home: agyHome,
+  status: statusAgy,
+  install: {
+    commands: [
+      'git clone https://github.com/lonelyman0108/kioku-plugins',
+      'mkdir -p ~/.gemini/config/plugins && cp -r kioku-plugins/plugins/agy ~/.gemini/config/plugins/kioku',
+    ],
+    after: '新开会话生效（MCP 服务已由 kioku setup agy 写进 mcp_config.json）',
+  },
+  detect: (env) => Boolean(env.ANTIGRAVITY_AGENT || env.AGY_SESSION_ID),
+  readConfig: (env) => readProfile('agy', env),
+  preflight: preflightAgy,
+  setup: setupAgy,
+  inspect: inspectAgy,
+}
+
+export const PLATFORMS = {
+  'claude-code': claudeCode,
+  codex,
+  pi,
+  hermes,
+  openclaw,
+  dsh,
+  opencode,
+  gemini,
+  agy,
+}
 
 export function platformNames() {
   return Object.keys(PLATFORMS).join('、')
