@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "kioku-session-start",
+            "type": "command",
+            "command": "node \"${extensionPath}/hooks/forward.mjs\" session.start",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "kioku-before-agent",
+            "type": "command",
+            "command": "node \"${extensionPath}/hooks/forward.mjs\" prompt.submit",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "kioku-after-agent",
+            "type": "command",
+            "command": "node \"${extensionPath}/hooks/forward.mjs\" turn.end",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

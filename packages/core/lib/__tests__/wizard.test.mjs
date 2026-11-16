@@ -104,6 +104,9 @@ beforeEach(() => {
     HERMES_HOME: join(dir, 'hermes'),
     OPENCLAW_HOME: join(dir, 'home'),
     CLAUDE_CONFIG_DIR: join(dir, 'claude'),
+    OPENCODE_CONFIG_DIR: join(dir, 'home', '.config', 'opencode'),
+    GEMINI_CLI_HOME: join(dir, 'home'),
+    AGY_HOME: join(dir, 'home', '.gemini', 'config'),
   }
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))

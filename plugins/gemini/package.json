@@ -1,0 +1,7 @@
+{
+  "name": "@kioku-memory/plugin-gemini",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  }
+}

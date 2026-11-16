@@ -48,13 +48,16 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `docs/adr/` | 长期决策记录 |
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场 |
-| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，OpenClaw 的在 `openclaw.mjs`，DeepSeek Harness 的在 `dsh.mjs`，向 Kioku 的 MCP 端点取工具清单、调用工具与本机留的那份清单在 `mcp.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`（一次申请几个平台的也在这里），拿到访问密钥之后配好几个平台、列出装插件的命令在 `connect.mjs`，`kioku install` 在 `install.mjs`，向导在 `wizard.mjs`（面板的扫描与动作在 `panel.mjs`，本机起一个 Kioku 在 `local.mjs`，交互库的装载在 `prompts.mjs`），本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
+| `packages/core` | 各 JS 插件共用的实现：`lib/` 里是 `kioku` 命令（`kioku.mjs` 分发子命令并实现 `run`，`setup.mjs`、`doctor.mjs`，各平台在 `platforms.mjs` 登记，Codex 的那一套在 `codex.mjs`，pi 的在 `pi.mjs`，Hermes 的在 `hermes.mjs`，OpenClaw 的在 `openclaw.mjs`，DeepSeek Harness 的在 `dsh.mjs`，OpenCode 的在 `opencode.mjs`，Gemini CLI 的在 `gemini.mjs`，Antigravity 的在 `agy.mjs`，向 Kioku 的 MCP 端点取工具清单、调用工具与本机留的那份清单在 `mcp.mjs`，定地址与访问密钥的共用步骤在 `target.mjs`，浏览器授权在 `login.mjs`（一次申请几个平台的也在这里），拿到访问密钥之后配好几个平台、列出装插件的命令在 `connect.mjs`，`kioku install` 在 `install.mjs`，向导在 `wizard.mjs`（面板的扫描与动作在 `panel.mjs`，本机起一个 Kioku 在 `local.mjs`，交互库的装载在 `prompts.mjs`），本地记忆的迁移在 `import.mjs`（各来源的位置、格式与去处在 `sources.mjs`），读写平台设置文件的共用部分在 `files.mjs`，没有密钥存储的平台放地址与访问密钥的文件在 `profile.mjs`）、访问密钥检查与报错（`http.mjs`）、打码（`redact.mjs`）、生命周期转发（`lifecycle.mjs`），`bin/kioku` 是命令的入口；测试也在这里 |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
 | `plugins/hermes` | Hermes 的记忆 provider：`kioku_bridge.py` 是不依赖 Hermes 的那一层（请求、会话状态），`__init__.py` 把 Hermes 的回调接过去；`plugin.yaml` 里的 `name` 就是装好之后的目录名与 `memory.provider` 的值。不收核心的副本（Python） |
 | `plugins/openclaw` | OpenClaw 的记忆插件，发到 npm 的 `@kioku-memory/openclaw`：清单 `openclaw.plugin.json`（`kind: "memory"`，工具名要在 `contracts.tools` 里声明），入口 `index.js` 只把状态挂到进程上，`kioku.js` 的 `createKioku` 是可以单测的那一层；`lib/` 同样是副本 |
 | `plugins/dsh` | DeepSeek Harness 的插件：`cordis.patch.yml` 是补丁（装上插件、挂 MCP 客户端），根 `package.json` 的 `dsh` 键把本仓库登记成它的 bundle；入口 `index.js`，`kioku.js` 的 `createKioku` 是可以单测的那一层；`lib/` 同样是副本 |
+| `plugins/opencode` | OpenCode 的插件：在 `config` 钩子自动注册远程 MCP 服务并在 `experimental.chat.system.transform`、`chat.message` 与 `session.idle` 转发生命周期；`lib/` 同样是副本 |
+| `plugins/gemini` | Gemini CLI 扩展：清单 `gemini-extension.json`，钩子 `hooks/hooks.json` 与 `hooks/forward.mjs`；`lib/` 同样是副本 |
+| `plugins/agy` | Antigravity 插件：清单 `plugin.json`，钩子 `hooks.json` 与 `hooks/forward.mjs`（单轮工具调用按 transcript 步骤去重）；`lib/` 同样是副本 |
 | `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：只有 `package.json` 与说明，`bin/`、`lib/` 同样是 `packages/core` 的副本 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |

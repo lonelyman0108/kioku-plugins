@@ -35,13 +35,19 @@ importers:
 
   packages/core: {}
 
+  plugins/agy: {}
+
   plugins/claude-code: {}
 
   plugins/codex: {}
 
   plugins/dsh: {}
 
+  plugins/gemini: {}
+
   plugins/openclaw: {}
+
+  plugins/opencode: {}
 
   plugins/pi: {}
 

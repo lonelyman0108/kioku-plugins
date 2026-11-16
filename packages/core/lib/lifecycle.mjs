@@ -84,11 +84,21 @@ export function projectOfAsync(cwd) {
 // 服务端要注入的上下文文本；没有时为 undefined。只取文本，输出里的其他字段一律不用：
 // 记忆服务能决定注入什么内容，但不能挡住用户的输入或改变会话
 export function contextOf(hostOutput) {
-  if (hostOutput?.mode === 'stdout_json')
-    return hostOutput.value?.hookSpecificOutput?.additionalContext
+  if (hostOutput?.mode === 'stdout_json') {
+    return (
+      hostOutput.value?.hookSpecificOutput?.additionalContext ??
+      hostOutput.value?.injectSteps?.[0]?.systemMessage?.systemMessage
+    )
+  }
   if (hostOutput?.mode === 'stdout_text') return hostOutput.value
   // 没有专门输出格式的运行时：服务端直接给文本
-  if (hostOutput?.mode === 'return_value') return hostOutput.value?.context
+  if (hostOutput?.mode === 'return_value') {
+    return (
+      hostOutput.value?.systemContext ??
+      hostOutput.value?.promptContext ??
+      hostOutput.value?.context
+    )
+  }
   return undefined
 }
 
