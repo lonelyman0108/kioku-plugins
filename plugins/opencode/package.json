@@ -1,6 +1,6 @@
 {
   "name": "@kioku-memory/plugin-opencode",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Kioku 长期记忆的 OpenCode 插件：会话开始注入启动加载，每轮输入注入召回候选，并自动注册 Kioku MCP 服务",
   "license": "Apache-2.0",
   "type": "module",
