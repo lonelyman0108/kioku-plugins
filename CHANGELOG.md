@@ -2,6 +2,19 @@
 
 ## [未发布]
 
+## [0.3.0] - 2026-11-17
+
+本版起 `@kioku-memory/plugin-opencode` 一并随 `kioku` 命令行与 OpenClaw 插件发到 npm。
+
+### 新功能
+
+- **新增 OpenCode、Gemini CLI 与 Antigravity 支持**：`kioku` 向导、`kioku login`、`kioku setup` 与 `kioku doctor` 现已覆盖 `opencode`、`gemini` 与 `agy`；三个插件均支持会话启动加载、每轮召回、对话结束写会话摘要并接上 Kioku MCP 记忆工具
+- **新增 `kioku clean` 与冲突记忆工具检测**：支持检测并安全卸载 9 个平台上的 Lore 及常见记忆 MCP（Mem0、Supermemory、MCP Memory、Cipher、Claude-Mem）；`setup`、`login`、`install`、`doctor` 与向导会在接入前提示冲突，可通过 `--remove-conflicts` 或向导确认后先清理再接入
+
+### 同步
+
+- AstrBot 插件自带的 Kioku Python 客户端同步到最新（补齐明文检测敏感类别枚举）
+
 ## [0.2.0] - 2026-11-12
 
 ### 新功能
