@@ -74,6 +74,7 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku setup <平台>` | 停用平台自带的记忆，手动填地址与访问密钥 |
 | `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台配置 |
+| `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
 | `kioku import --from <来源>` | 把平台本地的记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 取凭据的值放进环境变量交给命令，agent 看不到明文 |
 

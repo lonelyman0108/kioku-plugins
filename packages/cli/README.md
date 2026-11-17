@@ -34,6 +34,7 @@ Claude Code 的 kioku 插件自带同一个命令，启用插件后在它的 Bas
 | `kioku setup <平台>` | 把平台交给 Kioku 接管：停用平台自带的长期记忆；Codex、Gemini CLI、Antigravity、OpenCode、pi、Hermes、OpenClaw、DeepSeek Harness 再写下服务地址与访问密钥，其中 Codex、Gemini CLI、Antigravity 还配好 MCP 服务 |
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好这个平台，不用手动复制 |
 | `kioku doctor [平台]` | 检查地址、访问密钥与平台的配置 |
+| `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
 | `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
@@ -153,7 +154,21 @@ kioku setup opencode --server-url https://kioku.example.com
 kioku doctor claude-code
 ```
 
-每项一行：`✓` 正常，`!` 要留意，`✗` 有问题（这时退出码为 1）。查的是：地址连不连得上、访问密钥是否有效、它属于哪个应用、能读写哪些归属、最高敏感级与凭据能力，以及平台这一边插件是否启用、自带的长期记忆是否已停用。不写平台时按当前所在的会话认。
+每项一行：`✓` 正常，`!` 要留意，`✗` 有问题（这时退出码为 1）。查的是：地址连不连得上、访问密钥是否有效、它属于哪个应用、能读写哪些归属、最高敏感级与凭据能力，以及平台这一边插件是否启用、自带的长期记忆是否已停用、是否有冲突的记忆工具（如 Lore）。不写平台时按当前所在的会话认。
+
+## clean
+
+```bash
+kioku clean --dry-run          # 扫描全部平台，只列发现的冲突
+kioku clean agy                # 清理 Antigravity 上的冲突（交互确认）
+kioku clean agy --tool lore -y # 非交互下只清理 Lore
+```
+
+检测并卸载与 Kioku 冲突的记忆工具（完整覆盖 Lore 的插件、MCP、钩子、环境变量与兼容状态，以及 Mem0、Supermemory、MCP 官方 Memory Server、Cipher、Claude-Mem 等常见记忆 MCP）：
+
+- **只清理目标平台侧的配置与插件挂载**：不会跨平台清理，也不会删除 `~/.lore/docker`、`~/.lore/config.json` 等服务端或用户本地数据。
+- **接入前自动检查**：`kioku setup`、`kioku login`、`kioku install` 与交互向导在发现冲突时都会先提示。交互模式下询问是否先卸载；非交互模式下默认阻断，传入 `--remove-conflicts` 后先卸载再继续接入。
+- **保守处理非托管文件**：非符号链接或缺少托管标记的插件目录、泛用名称 `memory` 但特征不明的 MCP 条目、`CLAUDE.md` 里的手写指引只告警提示、不自动删改（仅精确移除 Lore 托管的 `@~/.claude/lore-guidance.md` 导入行与 `lore-guidance.md`）。
 
 ## import
 

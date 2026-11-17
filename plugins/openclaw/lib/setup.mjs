@@ -2,6 +2,7 @@
 // 停用平台自带的长期记忆，只改平台的用户设置里的那几项，
 // 改之前显示要改什么、留一份备份；--undo 只把这几项改回去，不动设置里的其他内容（文件会按 JSON 重新排版）
 
+import { ensureNoConflicts } from './conflicts.mjs'
 import { readSettings, writeSettings } from './files.mjs'
 import { deviceLogin } from './login.mjs'
 import { plain } from './text.mjs'
@@ -16,7 +17,7 @@ const setupPlatformNames = () =>
     .filter((id) => PLATFORMS[id].setup)
     .join('、')
 
-export const SETUP_USAGE = `用法：kioku setup <平台> [--dry-run] [--undo] [--server-url <地址>] [--no-check]
+export const SETUP_USAGE = `用法：kioku setup <平台> [--dry-run] [--undo] [--server-url <地址>] [--no-check] [--remove-conflicts]
 
 把平台交给 Kioku 接管：停用平台自带的长期记忆；没有自己的密钥存储的平台（${setupPlatformNames()}）再写下服务地址与访问密钥。
 
@@ -25,6 +26,7 @@ export const SETUP_USAGE = `用法：kioku setup <平台> [--dry-run] [--undo] [
   --undo               改回去：重新启用平台自带的长期记忆，删掉写下的地址与访问密钥
   --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（${setupPlatformNames()} 用；也可以用 KIOKU_SERVER_URL）
   --no-check           不先连一次 Kioku 核对地址与访问密钥（${setupPlatformNames()} 用）
+  --remove-conflicts   先卸载平台上已有的冲突记忆工具（Lore 及常见记忆 MCP）再继续
 
 访问密钥不写在命令行上：从 KIOKU_API_KEY 读，或者从标准输入读；在终端里运行时会提示输入（不回显），
 直接回车就改用浏览器授权（同 kioku login）。
@@ -38,13 +40,20 @@ function browserLogin(out) {
 }
 
 export function parseSetupArgs(argv) {
-  const options = { dryRun: false, undo: false, check: true, serverUrl: undefined }
+  const options = {
+    dryRun: false,
+    undo: false,
+    check: true,
+    serverUrl: undefined,
+    removeConflicts: false,
+  }
   const names = []
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dry-run') options.dryRun = true
     else if (arg === '--undo') options.undo = true
     else if (arg === '--no-check') options.check = false
+    else if (arg === '--remove-conflicts') options.removeConflicts = true
     else if (arg === '--server-url') {
       options.serverUrl = argv[++i]
       if (!options.serverUrl) throw new UsageError('--server-url 后面要写地址')
@@ -74,14 +83,27 @@ export async function setup(
     env = process.env,
     out = process.stdout,
     cwd = process.cwd(),
+    stdin = process.stdin,
     readKey = readSecret,
+    skipConflicts = false,
     // 在终端里运行、没给访问密钥时可以改用浏览器授权；不在终端里（管道、agent 的命令）时没有；传 null 是明说不要
     login = process.stdin.isTTY ? browserLogin(out) : null,
   } = {},
 ) {
   const options = parseSetupArgs(argv)
-  const { platform: id, dryRun, undo } = options
+  const { platform: id, dryRun, undo, removeConflicts } = options
   const platform = PLATFORMS[id]
+  if (!undo && !skipConflicts) {
+    const status = await ensureNoConflicts(id, platform.name, {
+      env,
+      cwd,
+      out,
+      stdin,
+      remove: removeConflicts,
+      dryRun,
+    })
+    if (status === 'cancelled') return 0
+  }
   // 有自己的一套步骤的平台
   if (platform.setup) return platform.setup(options, { env, out, cwd, readKey, plain, login })
   const { memory } = platform

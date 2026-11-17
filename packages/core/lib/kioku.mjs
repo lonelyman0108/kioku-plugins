@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { constants } from 'node:os'
 import { isatty } from 'node:tty'
 
+import { clean, CLEAN_USAGE } from './clean.mjs'
 import { killTree, launch } from './command.mjs'
 import { loadConfig } from './config.mjs'
 import { IMPORT_USAGE, importMemories } from './import.mjs'
@@ -385,6 +386,7 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
   setup    停用平台自带的长期记忆，由 Kioku 接管
   install  几个平台一起接入，访问密钥从环境变量读（给脚本用）
   doctor   检查地址、访问密钥与平台的配置
+  clean    检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP）
   import   把平台自带的本地长期记忆迁进 Kioku
 
 在终端里不带参数运行 kioku 是交互式的向导：看各平台接到哪一步，按缺的一步步接上。
@@ -442,6 +444,7 @@ export async function main(
   if (sub === 'setup') return guarded('setup', SETUP_USAGE, setup, rest)
   if (sub === 'install') return guarded('install', INSTALL_USAGE, install, rest)
   if (sub === 'doctor') return guarded('doctor', DOCTOR_USAGE, doctor, rest)
+  if (sub === 'clean') return guarded('clean', CLEAN_USAGE, clean, rest)
   if (sub === 'import') return guarded('import', IMPORT_USAGE, importMemories, rest)
   process.stderr.write(sub === undefined ? OVERVIEW : `kioku：不认识的子命令 ${sub}\n\n${OVERVIEW}`)
   return 2

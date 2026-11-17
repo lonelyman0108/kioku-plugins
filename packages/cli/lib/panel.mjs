@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises'
 
 import { KeyRejected, whoami } from './api.mjs'
 import { hasCommand } from './command.mjs'
+import { conflictToolsText, scanConflicts } from './conflicts.mjs'
 import { failureText, fetchFailure, isRedirect, KiokuFailure } from './http.mjs'
 import { countLocal } from './import.mjs'
 import { PLATFORMS } from './platforms.mjs'
@@ -110,6 +111,8 @@ export async function scanPlatform(id, { env, cwd, url }) {
 
   // 只数本地有几条；和 Kioku 比（没迁的有几条）要一条一条地问，选了迁移再比
   if (platform.source) row.local = await countLocal(platform.source, { env }).catch(() => null)
+  const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
+  if (conflicts.length) row.conflicts = conflicts
   return row
 }
 
@@ -174,8 +177,8 @@ function platformLines(row) {
   if (row.otherServer) facts.push(shownUrl(row.url))
   if (row.reason) facts.push(row.reason)
   const first = [`${row.name}：${head}`, ...facts].join(' · ')
-  // 没装、也没配过的平台只写一行
-  if (!row.present && row.connection === 'none') return [first]
+  // 没装、也没配过且没有冲突的平台只写一行
+  if (!row.present && row.connection === 'none' && !row.conflicts?.length) return [first]
   const details = []
   if (row.connection === 'manual') details.push('访问密钥 无法判断（在 /plugin 里填）')
   details.push(`插件 ${PLUGIN_NAMES.get(row.plugin) ?? '无法判断'}`)
@@ -189,6 +192,9 @@ function platformLines(row) {
         ? '（未迁移 无法判断）'
         : `（未迁移 ${row.pending.pending} 条）`
     details.push(`本地记忆 ${row.local} 条${pending}`)
+  }
+  if (row.conflicts?.length) {
+    details.push(`冲突 ${conflictToolsText(row.conflicts)}`)
   }
   return [first, `  ${details.join(' · ')}`]
 }
@@ -283,6 +289,16 @@ export function actionsFor(state) {
           : `${row.local} 条`
       actions.push({ value: `import:${row.id}`, label: `迁移 ${row.name} 的本地记忆（${count}）` })
     }
+  }
+  const conflicted = state.platforms.filter((row) => row.conflicts?.some((c) => c.removable))
+  if (conflicted.length) {
+    actions.push({
+      value: 'clean',
+      label: '清理冲突的记忆工具',
+      hint: conflictToolsText(
+        conflicted.flatMap((row) => row.conflicts.filter((c) => c.removable)),
+      ),
+    })
   }
   if (state.platforms.some(canDisable)) {
     actions.push({ value: 'disable', label: '停用某个平台', hint: '恢复自带记忆、清掉配置' })

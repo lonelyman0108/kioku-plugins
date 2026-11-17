@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 
+import { ensureNoConflicts } from './conflicts.mjs'
 import { configure, orphanHint } from './connect.mjs'
 import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
 import { platformNames, PLATFORMS } from './platforms.mjs'
@@ -13,7 +14,7 @@ import { resolveServerUrl } from './target.mjs'
 import { plain } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
-export const LOGIN_USAGE = `用法：kioku login <平台> [--server-url <地址>] [--no-browser]
+export const LOGIN_USAGE = `用法：kioku login <平台> [--server-url <地址>] [--no-browser] [--remove-conflicts]
 
 用浏览器授权给这个平台签发一个访问密钥并配好，不用手动复制：终端显示一个确认码，
 在 Kioku 管理界面的确认页输入它，选好空间与权限后确认。
@@ -21,6 +22,7 @@ export const LOGIN_USAGE = `用法：kioku login <平台> [--server-url <地址>
   <平台>               ${platformNames()}（Claude Code 的访问密钥在它的 /plugin 里填，不走这里）
   --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（也可以用 KIOKU_SERVER_URL；配过的沿用上次的）
   --no-browser         不自动打开浏览器，只显示地址
+  --remove-conflicts   先卸载平台上已有的冲突记忆工具（Lore 及常见记忆 MCP）再继续
 
 只在自己刚运行了这条命令时确认：确认之后，这台机器会拿到一个能按所选权限读写记忆的访问密钥。
 `
@@ -291,11 +293,12 @@ export async function deviceLoginMany(
 }
 
 export function parseLoginArgs(argv) {
-  const options = { serverUrl: undefined, browser: true }
+  const options = { serverUrl: undefined, browser: true, removeConflicts: false }
   const names = []
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--no-browser') options.browser = false
+    else if (arg === '--remove-conflicts') options.removeConflicts = true
     else if (arg === '--server-url') {
       options.serverUrl = argv[++i]
       if (!options.serverUrl) throw new UsageError('--server-url 后面要写地址')
@@ -320,6 +323,7 @@ export async function login(
     env = process.env,
     out = process.stdout,
     cwd = process.cwd(),
+    stdin = process.stdin,
     open,
     sleep,
     now,
@@ -330,8 +334,16 @@ export async function login(
   const platform = PLATFORMS[options.platform]
   const saved = await Promise.resolve(platform.readConfig?.(env)).catch(() => null)
   const url = resolveServerUrl(options, env, saved)
-  // 申请之前先看这个平台的配置写不写得进去：访问密钥只在签发时给一次
+  // 申请之前先看这个平台的配置写不写得进去、有没有冲突：访问密钥只在签发时给一次
   await platform.preflight?.({ env, cwd })
+  const conflictStatus = await ensureNoConflicts(options.platform, platform.name, {
+    env,
+    cwd,
+    out,
+    stdin,
+    remove: options.removeConflicts,
+  })
+  if (conflictStatus === 'cancelled') return 0
   const key = await deviceLogin(
     { url, runtimeFamily: platform.runtimeFamily },
     { out, open, browser: options.browser, sleep, now, ...(clientName ? { clientName } : {}) },

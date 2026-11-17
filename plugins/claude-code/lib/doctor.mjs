@@ -3,6 +3,7 @@
 
 import { loadConfig, NotConfigured } from './config.mjs'
 import { whoami } from './api.mjs'
+import { scanConflicts } from './conflicts.mjs'
 import { failureText, KiokuFailure } from './http.mjs'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.mjs'
 import { readSettings } from './files.mjs'
@@ -108,12 +109,23 @@ export async function doctor(
     out.write(`没有认出平台，只查了地址与访问密钥；要查平台的配置，写上平台：${platformNames()}\n`)
     return failed ? 1 : 0
   }
+  const note = (text) => out.write(`  ${text}\n`)
+  const checkConflicts = async () => {
+    const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
+    if (!conflicts.length) return
+    for (const item of conflicts) {
+      const hint = item.hint ? `（${item.hint}）` : ''
+      warn(`发现冲突的记忆工具（${item.toolName}）：${item.summary}${hint}`)
+    }
+    if (conflicts.some((item) => item.removable)) {
+      note(`清理冲突：运行 kioku clean ${id}`)
+    }
+  }
+
   if (platform.inspect) {
     try {
-      await platform.inspect(
-        { env, cwd },
-        { ok, warn, bad, note: (text) => out.write(`  ${text}\n`) },
-      )
+      await platform.inspect({ env, cwd }, { ok, warn, bad, note })
+      await checkConflicts()
     } catch (err) {
       bad(failureText(err))
     }
@@ -141,5 +153,6 @@ export async function doctor(
       )
     }
   }
+  await checkConflicts()
   return failed ? 1 : 0
 }
