@@ -84,7 +84,13 @@ if (args[0] === 'config' && args[1] === 'set') {
 } else process.exit(3)
 `,
   )
-  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku'), KIOKU_OPENCLAW_BIN: bin, PATH: process.env.PATH }
+  env = {
+    HOME: join(dir, 'home'),
+    OPENCLAW_HOME: join(dir, 'home'),
+    KIOKU_CONFIG_DIR: join(dir, 'kioku'),
+    KIOKU_OPENCLAW_BIN: bin,
+    PATH: process.env.PATH,
+  }
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 

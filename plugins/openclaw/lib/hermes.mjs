@@ -59,7 +59,7 @@ export async function readHermesConfig(env) {
 
 // 把这几项写进 .env 的全文：同名的行只留一处（换成新值），没有的加在最后；values 里为 null 的全都去掉。
 // 别的行不动；没有要改的时候原样返回，不顺手整理空行与换行符
-function withEnv(text, values) {
+export function withEnv(text, values) {
   const eol = text?.includes('\r\n') ? '\r\n' : '\n'
   const written = new Set()
   let touched = false

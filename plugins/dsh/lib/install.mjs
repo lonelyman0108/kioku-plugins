@@ -2,6 +2,7 @@
 // 没给的平台跳过并列出来。插件不替用户装，最后列出要运行的命令
 
 import { whoami } from './api.mjs'
+import { conflictToolsText, formatConflicts, removeConflicts, scanConflicts } from './conflicts.mjs'
 import { configure, pluginSteps, resultsText } from './connect.mjs'
 import { failureText, keyFormatError, KiokuFailure } from './http.mjs'
 import { confirm } from './import.mjs'
@@ -29,6 +30,7 @@ ${Object.keys(PLATFORMS)
   --server-url <地址>   Kioku 的服务地址（也可以用 KIOKU_SERVER_URL）
   -y, --yes             不问，直接写（在终端里运行时默认先列计划再确认）
   --dry-run             只列计划，不写
+  --remove-conflicts    接入前先卸载各平台上已有的冲突记忆工具（Lore 及常见记忆 MCP）
 
 各平台照 kioku setup 写下地址与访问密钥、停用自带的长期记忆。
 Claude Code 的访问密钥在它的 /plugin 里填：这里只核对访问密钥、停用自动记忆。
@@ -36,12 +38,19 @@ Claude Code 的访问密钥在它的 /plugin 里填：这里只核对访问密�
 `
 
 export function parseInstallArgs(argv) {
-  const options = { platforms: [], serverUrl: undefined, yes: false, dryRun: false }
+  const options = {
+    platforms: [],
+    serverUrl: undefined,
+    yes: false,
+    dryRun: false,
+    removeConflicts: false,
+  }
   let given = false
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '-y' || arg === '--yes') options.yes = true
     else if (arg === '--dry-run') options.dryRun = true
+    else if (arg === '--remove-conflicts') options.removeConflicts = true
     else if (arg === '--server-url' || arg === '--platforms') {
       const value = argv[++i]
       if (!value) throw new UsageError(`${arg} 后面要写值`)
@@ -81,7 +90,7 @@ async function installClaudeCode(url, key, { env, out, cwd }) {
   if (who.app.runtimeFamily !== PLATFORMS['claude-code'].runtimeFamily) {
     out.write('! 这个应用的运行时不是 claudecode：在管理界面为 Claude Code 另建一个应用\n')
   }
-  const code = await setup(['claude-code'], { env, out, cwd, login: null })
+  const code = await setup(['claude-code'], { env, out, cwd, login: null, skipConflicts: true })
   if (code !== 0) throw new KiokuFailure('停用自动记忆没有成功')
   out.write('地址与访问密钥要在 Claude Code 的 /plugin 里填（启用插件时会问）\n')
 }
@@ -93,14 +102,36 @@ export async function install(
   const options = parseInstallArgs(argv)
   const url = resolveServerUrl(options, env, null)
   const plan = installPlan(options.platforms, env)
+  const todo = plan.filter((item) => item.key)
+  const conflictsByPlatform = new Map()
+  for (const { id } of todo) {
+    const found = await scanConflicts(id, { env, cwd })
+    conflictsByPlatform.set(id, {
+      removable: found.filter((c) => c.removable),
+      warnings: found.filter((c) => !c.removable),
+    })
+  }
+  const canPromptRemove = !options.yes && stdin.isTTY
+  const willRemove = options.removeConflicts || canPromptRemove
+
   out.write(`Kioku：${shownUrl(url)}\n`)
   for (const item of plan) {
     const name = PLATFORMS[item.id].name
     if (item.skip) out.write(`  跳过  ${name}（${item.skip}）\n`)
     else if (item.id === 'claude-code') out.write(`  核对  ${name}：核对访问密钥，停用自动记忆\n`)
     else out.write(`  接入  ${name}：写下地址与访问密钥，停用自带的长期记忆\n`)
+    const entry = conflictsByPlatform.get(item.id)
+    if (entry?.removable.length) {
+      const action = willRemove
+        ? '先卸载再接入'
+        : `需先清理：运行 kioku clean ${item.id} 或加 --remove-conflicts`
+      out.write(`  冲突  ${name}：发现 ${conflictToolsText(entry.removable)}（${action}）\n`)
+      out.write(`${formatConflicts(entry.removable, PLATFORMS).join('\n')}\n`)
+    }
+    for (const w of entry?.warnings ?? []) {
+      out.write(`  提示  ${name}：${w.toolName} ${w.summary}\n`)
+    }
   }
-  const todo = plan.filter((item) => item.key)
   if (options.dryRun) {
     out.write('没有写入（--dry-run）\n')
     return 0
@@ -109,11 +140,17 @@ export async function install(
     out.write('没有要接入的平台：按上面的变量名给出访问密钥\n')
     return 1
   }
-  if (!options.yes && stdin.isTTY) {
-    if (!(await confirm(`接入这 ${todo.length} 个平台？[y/N] `, { stdin, out }))) {
+  let removeApproved = options.removeConflicts
+  if (canPromptRemove) {
+    const hasConflicts = todo.some(({ id }) => conflictsByPlatform.get(id)?.removable.length)
+    const prompt = hasConflicts
+      ? `先卸载发现的冲突并接入这 ${todo.length} 个平台？[y/N] `
+      : `接入这 ${todo.length} 个平台？[y/N] `
+    if (!(await confirm(prompt, { stdin, out }))) {
       out.write('没有写入\n')
       return 0
     }
+    if (hasConflicts) removeApproved = true
   }
 
   const results = plan
@@ -121,6 +158,19 @@ export async function install(
     .map((item) => ({ ...item, status: 'skipped', reason: item.skip }))
   for (const { id, key } of todo) {
     out.write(`\n${PLATFORMS[id].name}\n`)
+    const entry = conflictsByPlatform.get(id)
+    if (entry?.removable.length) {
+      if (!removeApproved) {
+        const reason = `存在冲突（${conflictToolsText(entry.removable)}）：运行 kioku clean ${id}，或加 --remove-conflicts`
+        results.push({ id, status: 'failed', reason })
+        continue
+      }
+      const cleanResults = await removeConflicts(entry.removable, { env, cwd, out })
+      if (cleanResults.some((r) => !r.ok)) {
+        results.push({ id, status: 'failed', reason: '清理冲突没有全部成功' })
+        continue
+      }
+    }
     try {
       if (id === 'claude-code') {
         await installClaudeCode(url, key, { env, out, cwd })

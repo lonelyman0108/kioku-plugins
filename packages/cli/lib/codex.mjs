@@ -50,7 +50,7 @@ const HEADER = new RegExp(
 
 // 段的标题：[a.b] 或 [[a.b]]，返回里面的名字；不是标题时为 null。
 // 名字规整成一种写法再比：点两边的空白去掉，只含普通字符的那一段去掉引号
-function headerOf(line) {
+export function headerOf(line) {
   const name = HEADER.exec(line)?.[1]
   if (name === undefined) return null
   return name
@@ -59,7 +59,7 @@ function headerOf(line) {
 }
 
 // 这一行让没有合上的方括号多了几层：多行的数组里，单独成行的 [1, 2] 不是标题。引号里的不算
-function bracketDelta(line) {
+export function bracketDelta(line) {
   const bare = line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '').replace(/#.*$/, '')
   return (bare.match(/\[/g)?.length ?? 0) - (bare.match(/\]/g)?.length ?? 0)
 }

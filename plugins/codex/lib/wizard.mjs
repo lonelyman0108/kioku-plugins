@@ -4,6 +4,7 @@
 // 各动作的实际步骤都是别的子命令已有的那一套（setup、login、import、doctor）
 
 import { loadConfig } from './config.mjs'
+import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts.mjs'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.mjs'
 import { doctor } from './doctor.mjs'
 import { keyFormatError, KiokuFailure } from './http.mjs'
@@ -79,6 +80,7 @@ const DEPS = {
   doctor,
   planImport,
   writeImport,
+  removeConflicts,
   loadConfig,
   open: openBrowser,
   local: {
@@ -135,8 +137,10 @@ async function connect(ctx, rows, { reauth = false } = {}) {
   const plan = picked.map((id) => {
     const row = rows.find((item) => item.id === id)
     const memory = row.memory === 'none' ? '' : '，停用自带的长期记忆'
+    const conflicts = row.conflicts?.filter((c) => c.removable) ?? []
+    const clean = conflicts.length ? `，先清理 ${conflictToolsText(conflicts)}` : ''
     const moved = row.otherServer ? `；原来接到 ${shownUrl(row.url)}` : ''
-    return `${PLATFORMS[id].name}：签发访问密钥，写下配置${memory}${moved}`
+    return `${PLATFORMS[id].name}：签发访问密钥，写下配置${memory}${clean}${moved}`
   })
   ui.note(
     [`服务器 ${shownUrl(ctx.url)}`, ...plan, '', '浏览器里确认一次，访问密钥不显示'].join('\n'),
@@ -144,10 +148,30 @@ async function connect(ctx, rows, { reauth = false } = {}) {
   )
   const ok = await ui.confirm({ message: '开始？' })
   if (cancelled(ui, ok) || !ok) return
-  const results = await deps.connectPlatforms({ url: ctx.url, ids: picked }, { env, out, cwd })
-  const done = results.filter((item) => item.status === 'connected').map((item) => item.id)
+
+  const readyIds = []
+  const preFailed = []
+  for (const id of picked) {
+    const row = rows.find((item) => item.id === id)
+    const conflicts = row.conflicts?.filter((c) => c.removable) ?? []
+    if (!conflicts.length) {
+      readyIds.push(id)
+      continue
+    }
+    const cleanRes = await deps.removeConflicts(conflicts, { env, cwd, out })
+    if (cleanRes.some((r) => !r.ok)) {
+      preFailed.push({ id, status: 'failed', reason: '清理冲突没有全部成功' })
+    } else {
+      readyIds.push(id)
+    }
+  }
+  const results = readyIds.length
+    ? await deps.connectPlatforms({ url: ctx.url, ids: readyIds }, { env, out, cwd })
+    : []
+  const allResults = [...preFailed, ...results]
+  const done = allResults.filter((item) => item.status === 'connected').map((item) => item.id)
   ui.note(
-    done.length ? resultsText(results) : `一个平台都没有接上\n${resultsText(results)}`,
+    done.length ? resultsText(allResults) : `一个平台都没有接上\n${resultsText(allResults)}`,
     '结果',
   )
   const steps = await deps.pluginSteps(done, { env, cwd })
@@ -157,29 +181,54 @@ async function connect(ctx, rows, { reauth = false } = {}) {
 // 接入 Claude Code：它的访问密钥只认 /plugin 里填的，浏览器授权不给它发。列出安装命令与要填的服务地址，
 // 顺带停用自动记忆（项目设置又启用了的，说明要在那里改）
 async function connectClaude(ctx, row) {
-  const { ui, deps, env, cwd } = ctx
+  const { ui, deps, env, cwd, out } = ctx
   const steps = await deps.pluginSteps(['claude-code'], { env, cwd, url: ctx.url })
   const memory = row.memory === 'on' && !row.reenabledIn
+  const conflicts = row.conflicts?.filter((c) => c.removable) ?? []
   if (row.reenabledIn) {
     ui.log.warn(
       `Claude Code 的自动记忆被 ./${row.reenabledIn} 重新启用：要在那里把 autoMemoryEnabled 去掉`,
     )
   }
-  if (memory) {
+  if (memory || conflicts.length) {
     const preview = bufferOut()
-    await deps.setup(['claude-code', '--dry-run'], { env, out: preview, cwd, login: null })
-    ui.note(
-      [
-        '停用自动记忆',
-        preview.text().replace(/\n?没有写入（--dry-run）$/, ''),
-        '',
-        '插件与访问密钥在 Claude Code 的 /plugin 里装、填（浏览器授权不给它发访问密钥），做完列出步骤',
-      ].join('\n'),
-      '计划',
+    if (memory) {
+      await deps.setup(['claude-code', '--dry-run'], {
+        env,
+        out: preview,
+        cwd,
+        login: null,
+        skipConflicts: true,
+      })
+    }
+    const lines = []
+    if (conflicts.length) {
+      lines.push('清理冲突的记忆工具', ...formatConflicts(conflicts, PLATFORMS), '')
+    }
+    if (memory) {
+      lines.push('停用自动记忆', preview.text().replace(/\n?没有写入（--dry-run）$/, ''), '')
+    }
+    lines.push(
+      '插件与访问密钥在 Claude Code 的 /plugin 里装、填（浏览器授权不给它发访问密钥），做完列出步骤',
     )
+    ui.note(lines.join('\n'), '计划')
     const ok = await ui.confirm({ message: '开始？' })
     if (cancelled(ui, ok) || !ok) return
-    await deps.setup(['claude-code'], { env, out: ctx.out, cwd, login: null })
+    if (conflicts.length) {
+      const cleanRes = await deps.removeConflicts(conflicts, { env, cwd, out })
+      if (cleanRes.some((r) => !r.ok)) {
+        throw new KiokuFailure('清理 Claude Code 上的冲突没有全部成功，已停下')
+      }
+    }
+    if (memory) {
+      await deps.setup(['claude-code'], {
+        env,
+        out: ctx.out,
+        cwd,
+        login: null,
+        skipConflicts: true,
+      })
+    }
   }
   if (steps) ui.note(steps, '装插件')
 }
@@ -188,11 +237,17 @@ async function connectClaude(ctx, row) {
 async function previewThenRun(ctx, args, question) {
   const { ui, deps, env, cwd } = ctx
   const preview = bufferOut()
-  await deps.setup([...args, '--dry-run'], { env, out: preview, cwd, login: null })
+  await deps.setup([...args, '--dry-run'], {
+    env,
+    out: preview,
+    cwd,
+    login: null,
+    skipConflicts: true,
+  })
   ui.note(preview.text().replace(/\n?没有写入（--dry-run）$/, ''), '计划')
   const ok = await ui.confirm({ message: question })
   if (cancelled(ui, ok) || !ok) return
-  await deps.setup(args, { env, out: ctx.out, cwd, login: null })
+  await deps.setup(args, { env, out: ctx.out, cwd, login: null, skipConflicts: true })
 }
 
 // 迁移一个平台的本地记忆：照 kioku import 列计划（这时才和 Kioku 逐条比对）、确认后写入。
@@ -229,6 +284,37 @@ async function migrate(ctx, id) {
   if (cancelled(ui, ok) || !ok) return
   ctx.pending.delete(id)
   await deps.writeImport(config, plan, { out })
+}
+
+async function cleanConflictsAction(ctx, state) {
+  const { ui, deps, env, cwd, out } = ctx
+  const rows = state.platforms.filter((row) => row.conflicts?.some((c) => c.removable))
+  if (!rows.length) return
+  let ids = rows.map((row) => row.id)
+  if (rows.length > 1) {
+    const picked = await ui.multiselect({
+      message: '清理哪些平台上的冲突记忆工具',
+      options: rows.map((row) => ({
+        value: row.id,
+        label: row.name,
+        hint: conflictToolsText(row.conflicts.filter((c) => c.removable)),
+      })),
+      initialValues: ids,
+    })
+    if (cancelled(ui, picked) || !picked.length) return
+    ids = picked
+  }
+  const items = rows
+    .filter((row) => ids.includes(row.id))
+    .flatMap((row) => row.conflicts.filter((c) => c.removable))
+  ui.note(formatConflicts(items, PLATFORMS).join('\n'), '计划')
+  const ok = await ui.confirm({ message: `清理这 ${items.length} 项冲突？` })
+  if (cancelled(ui, ok) || !ok) return
+  const results = await deps.removeConflicts(items, { env, cwd, out })
+  if (results.some((r) => !r.ok)) {
+    throw new KiokuFailure('部分冲突没有清理成功，请查看上面的输出')
+  }
+  ui.log.success('冲突已清理，重启对应平台后生效')
 }
 
 async function disable(ctx, state) {
@@ -410,6 +496,7 @@ async function perform(ctx, choice, state) {
     return previewThenRun(ctx, ['claude-code'], '停用 Claude Code 的自动记忆？')
   }
   if (choice.startsWith('import:')) return migrate(ctx, choice.slice('import:'.length))
+  if (choice === 'clean') return cleanConflictsAction(ctx, state)
   if (choice === 'disable') return disable(ctx, state)
   if (choice === 'doctor') return check(ctx)
 }
