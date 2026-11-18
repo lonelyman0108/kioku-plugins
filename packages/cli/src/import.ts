@@ -14,11 +14,13 @@ import {
   redirectError,
   shownUrl,
 } from './core.ts'
+import { isInteractiveTty } from './identity.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
+import { isCancel, loadPrompts } from './prompts.ts'
 import { sourceNames, type SourceEntry, SOURCES, UNSUPPORTED_SOURCES } from './sources.ts'
 import type { Env, Reader, TargetConfig, Writer } from './types.ts'
 
-export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--dry-run] [--yes] [--overwrite]
+export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--dry-run] [-y|--yes] [--select] [--overwrite]
 
 把平台自带的本地长期记忆迁进 Kioku：先列出每条会放到哪个坐标，确认之后才写。
 
@@ -26,7 +28,8 @@ export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目�
   --path <目录>  不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
   --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（${platformNames()}）；不写时读环境变量
   --dry-run      只列出计划，不写
-  --yes          不问，直接写（不在终端里运行时要带上）
+  -y, --yes      不问，直接写（不在终端里运行时要带上）
+  --select       在交互式终端里逐条勾选本次要写入的记忆子集
   --overwrite    Kioku 里同一个坐标已经有、内容不一样的也覆盖（默认跳过）
 
 本地的文件不删、不改。重复运行不会重复写：已经迁过、内容没变的会跳过。
@@ -44,6 +47,7 @@ export interface ImportOptions {
   platform?: string
   dryRun: boolean
   yes: boolean
+  select: boolean
   overwrite: boolean
 }
 
@@ -76,6 +80,7 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     platform: string | undefined
     dryRun: boolean
     yes: boolean
+    select: boolean
     overwrite: boolean
   } = {
     from: undefined,
@@ -83,12 +88,14 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     platform: undefined,
     dryRun: false,
     yes: false,
+    select: false,
     overwrite: false,
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dry-run') options.dryRun = true
-    else if (arg === '--yes') options.yes = true
+    else if (arg === '--yes' || arg === '-y') options.yes = true
+    else if (arg === '--select') options.select = true
     else if (arg === '--overwrite') options.overwrite = true
     else if (arg === '--from' || arg === '--path' || arg === '--platform') {
       const value = argv[++i]
@@ -385,13 +392,37 @@ export async function importMemories(
     out.write('没有要写的\n')
     return plan.compared.some((item) => item.state === 'failed') ? 1 : 0
   }
+  let selectedTodo = plan.todo
   if (!options.yes) {
-    if (!stdin.isTTY)
-      throw new KiokuFailure('不在终端里运行时要带 --yes 才写；先用 --dry-run 看计划')
-    if (!(await confirm(`写入这 ${plan.todo.length} 条？[y/N] `, { stdin, out }))) {
-      out.write('没有写入\n')
-      return 0
+    if (options.select) {
+      if (!isInteractiveTty(stdin, out as Writer & { isTTY?: boolean })) {
+        throw new KiokuFailure('--select 需要在交互式终端中运行')
+      }
+      const ui = await loadPrompts({ input: stdin, output: out })
+      if (!ui) throw new KiokuFailure('--select 需要 Node.js 20.12 以上版本')
+      const picked = await ui.multiselect({
+        message: '选择本次要写入的记忆',
+        options: plan.todo.map((item, idx) => ({
+          value: idx,
+          label: plain(item.title),
+          hint: item.uri,
+        })),
+        initialValues: plan.todo.map((_, idx) => idx),
+      })
+      if (isCancel(picked) || !Array.isArray(picked) || !picked.length) {
+        out.write('没有写入\n')
+        return 0
+      }
+      const chosenSet = new Set(picked)
+      selectedTodo = plan.todo.filter((_, idx) => chosenSet.has(idx))
+    } else {
+      if (!stdin.isTTY)
+        throw new KiokuFailure('不在终端里运行时要带 --yes 才写；先用 --dry-run 看计划')
+      if (!(await confirm(`写入这 ${plan.todo.length} 条？[y/N] `, { stdin, out }))) {
+        out.write('没有写入\n')
+        return 0
+      }
     }
   }
-  return writeImport(config, plan, { out })
+  return writeImport(config, { compared: plan.compared, todo: selectedTodo }, { out })
 }
