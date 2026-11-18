@@ -94,7 +94,7 @@ JSON
 | 项 | 值 |
 |---|---|
 | 组织 | `kioku-memory`（scope `@kioku-memory`），公开包 |
-| 包 | `@kioku-memory/cli`（目录 `packages/cli`）、`@kioku-memory/openclaw`（目录 `plugins/openclaw`） |
+| 包 | `@kioku-memory/cli`（目录 `packages/cli`）、`@kioku-memory/openclaw`（目录 `plugins/openclaw`）、`@kioku-memory/plugin-opencode`（目录 `plugins/opencode`） |
 | 认证 | 受信发布（OIDC），没有 npm 令牌，仓库里也没有对应的 secret |
 
 每个包在 npmjs.com 的 Settings › Trusted Publisher 里配一个 GitHub Actions 发布者：
