@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { fakeCommand } from '../../../core/lib/__tests__/fakeCommand.mjs'
 import { readToolCacheSync } from '../core.ts'
+import { manualDownload } from '../local.ts'
 import {
   CLI_VERSION,
   formatHandshakeLines,
@@ -176,6 +177,35 @@ describe('installer', () => {
     const res = await installPlugin('gemini', { env, cwd: dir })
     expect(res.status).toBe('installed')
     expect(readFileSync(logFile, 'utf8')).toMatch(/extensions link .*gemini/)
+
+    const ocLog = `${logFile}.oc`
+    const ocPathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+    const ocSep = process.platform === 'win32' ? ';' : ':'
+    fakeCommand(
+      bin,
+      'openclaw',
+      [
+        "const fs = require('node:fs');",
+        'const args = process.argv.slice(2);',
+        "fs.appendFileSync(process.env.KIOKU_OC_LOG, JSON.stringify(args) + '\\n');",
+        "if (args[0] === 'gateway' && args[1] === 'restart') process.exit(1);",
+      ].join('\n'),
+    )
+    const ocRes = await installPlugin('openclaw', {
+      env: {
+        ...env,
+        [ocPathKey]: `${bin}${ocSep}${env[ocPathKey] ?? ''}`,
+        KIOKU_OC_LOG: ocLog,
+      },
+      cwd: dir,
+    })
+    expect(ocRes.status).toBe('installed')
+    expect(ocRes.message).toContain('gateway restart')
+    expect(readFileSync(ocLog, 'utf8')).toContain('npm:@kioku-memory/openclaw')
+
+    const psDownload = manualDownload('C:\\Users\\LM\\.kioku', 'main', 'win32')
+    expect(psDownload).toContain('New-Item -ItemType Directory')
+    expect(psDownload).toContain('curl.exe')
   })
 
   it('verifyConnectionHandshake：验证 whoami 与 MCP tools/list 并写入 OpenClaw 本地缓存', async () => {

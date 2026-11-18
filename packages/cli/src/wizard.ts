@@ -5,6 +5,7 @@ import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts
 import { connectPlatforms, pluginSteps, resultsText } from './connect.ts'
 import { KiokuFailure, keyFormatError, loadConfig, serverUrlProblem, shownUrl } from './core.ts'
 import { doctor } from './doctor.ts'
+import { rememberServerUrl } from './identity.ts'
 import { pendingOf, planImport, writeImport } from './import.ts'
 import { formatHandshakeLines, installPlugin, verifyConnectionHandshake } from './installer.ts'
 import {
@@ -132,6 +133,7 @@ async function chooseServer(ctx: WizardContext): Promise<void> {
     if (cancelled(ui, keep) || !keep) return
   }
   ctx.url = url
+  await rememberServerUrl(url, ctx.env).catch(() => {})
 }
 
 // 接入（或重新授权）几个平台：浏览器确认一次，签发的访问密钥照 kioku setup 写下；默认尝试自动安装插件并握手测试
@@ -432,6 +434,7 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
   if (await local.healthy(LOCAL_URL)) {
     ui.log.info(`本机 ${LOCAL_PORT} 端口上已经有 Kioku 在运行，直接用它`)
     ctx.url = LOCAL_URL
+    await rememberServerUrl(LOCAL_URL, env).catch(() => {})
     return
   }
   if (!(await local.hasCompose(env))) {
@@ -461,8 +464,12 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
     code = await local.setupCodeIn(dir)
   } else {
     if (await local.portBusy(LOCAL_PORT)) {
+      const busyCmd =
+        process.platform === 'win32'
+          ? `netstat -ano | findstr :${LOCAL_PORT}`
+          : `lsof -i :${LOCAL_PORT}`
       throw new KiokuFailure(
-        `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它（lsof -i :${LOCAL_PORT} 看是哪个），或者改 compose.yaml 里的端口后自己启动`,
+        `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它（${busyCmd} 看是哪个），或者改 compose.yaml 里的端口后自己启动`,
       )
     }
     const release = await local.latestRelease()
@@ -501,6 +508,7 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
     code = prepared.env.setupCode
   }
   ctx.url = LOCAL_URL
+  await rememberServerUrl(LOCAL_URL, env).catch(() => {})
   if (await local.setupDone(LOCAL_URL)) return 'connect'
   if (!code) ui.log.info(`初始化码看日志：cd ${dir} && docker compose logs kioku`)
   if (await awaitSetup(ctx, LOCAL_URL, code)) return 'connect'

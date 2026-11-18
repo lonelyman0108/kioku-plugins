@@ -4,7 +4,7 @@
 
 import { join } from 'node:path'
 
-import { KiokuFailure, UsageError, loadConfig, profileDir } from './core.ts'
+import { KiokuFailure, UsageError, loadConfig, profileDir, serverUrlProblem } from './core.ts'
 import { readText, safeWrite } from './files.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
 import { isCancel, loadPrompts } from './prompts.ts'
@@ -12,6 +12,7 @@ import type { Env, Reader, SavedProfile, TargetConfig, Writer } from './types.ts
 
 export interface CliPreferences {
   defaultPlatform?: string
+  serverUrl?: string
 }
 
 export interface ResolvedIdentity {
@@ -36,7 +37,15 @@ export async function readCliPreferences(env: Env = process.env): Promise<CliPre
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const obj = parsed as Record<string, unknown>
-    return typeof obj.defaultPlatform === 'string' ? { defaultPlatform: obj.defaultPlatform } : {}
+    const prefs: CliPreferences = {}
+    if (typeof obj.defaultPlatform === 'string' && obj.defaultPlatform) {
+      prefs.defaultPlatform = obj.defaultPlatform
+    }
+    if (typeof obj.serverUrl === 'string') {
+      const clean = obj.serverUrl.trim().replace(/\/+$/, '')
+      if (clean && !serverUrlProblem(clean)) prefs.serverUrl = clean
+    }
+    return prefs
   } catch {
     return {}
   }
@@ -50,6 +59,14 @@ export async function writeCliPreferences(
   const existing = await readText(file).catch(() => null)
   const body = `${JSON.stringify(prefs, null, 2)}\n`
   await safeWrite(file, body, existing, { backup: false })
+}
+
+export async function rememberServerUrl(url: string, env: Env = process.env): Promise<void> {
+  const clean = url.trim().replace(/\/+$/, '')
+  if (!clean || serverUrlProblem(clean)) return
+  const current = await readCliPreferences(env)
+  if (current.serverUrl === clean) return
+  await writeCliPreferences({ ...current, serverUrl: clean }, env)
 }
 
 function supportedPlatformList(): string {

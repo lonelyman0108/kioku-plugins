@@ -19,6 +19,7 @@ export class InlineScreen {
   private disposed = false
   private onSigInt?: () => void
   private onSigTerm?: () => void
+  private onSigBreak?: () => void
   private onExit?: () => void
 
   constructor(stream: ScreenStream = process.stdout) {
@@ -92,6 +93,7 @@ export class InlineScreen {
     this.showCursor()
     if (this.onSigInt) process.off('SIGINT', this.onSigInt)
     if (this.onSigTerm) process.off('SIGTERM', this.onSigTerm)
+    if (this.onSigBreak) process.off('SIGBREAK', this.onSigBreak)
     if (this.onExit) process.off('exit', this.onExit)
   }
 
@@ -113,6 +115,14 @@ export class InlineScreen {
     process.on('exit', this.onExit)
     process.on('SIGINT', this.onSigInt)
     process.on('SIGTERM', this.onSigTerm)
+    if (process.platform === 'win32') {
+      this.onSigBreak = () => {
+        const only = process.listenerCount('SIGBREAK') === 1
+        this.dispose()
+        if (only) process.kill(process.pid, 'SIGBREAK')
+      }
+      process.on('SIGBREAK', this.onSigBreak)
+    }
   }
 }
 

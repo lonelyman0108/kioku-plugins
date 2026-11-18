@@ -10,9 +10,15 @@ import { join, win32 } from 'node:path'
 
 import { KiokuFailure } from './http.mjs'
 
+const WINDOWS_APPS_STUB = /[\\/]Microsoft[\\/]WindowsApps[\\/][^\\/]+$/i
+
 const isFile = (file) => {
   try {
-    return statSync(file).isFile()
+    const st = statSync(file)
+    if (!st.isFile()) return false
+    // 未安装对应商店应用时 WindowsApps 目录里的执行别名是 0 字节空壳，跳过它免得误认或拉起商店弹窗
+    if (WINDOWS_APPS_STUB.test(file) && st.size === 0) return false
+    return true
   } catch {
     return false
   }

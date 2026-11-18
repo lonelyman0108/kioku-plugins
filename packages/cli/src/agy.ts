@@ -164,9 +164,13 @@ export async function setupAgy(options: SetupOptions, io: SetupIo): Promise<numb
   }
   out.write('Antigravity 已配好，新开会话生效。\n')
   if (!(await pluginInstalled(env, cwd)) && io.hints !== false) {
-    out.write(
-      `接下来安装插件以启用生命周期钩子：cp -r ${bundledAgyDir()} ${join(agyHome(env), 'plugins', 'kioku')}\n`,
-    )
+    const src = bundledAgyDir()
+    const dst = join(agyHome(env), 'plugins', 'kioku')
+    const cmd =
+      process.platform === 'win32'
+        ? `New-Item -ItemType Directory -Force "${join(agyHome(env), 'plugins')}" | Out-Null; Copy-Item -Recurse -Force "${src}" "${dst}"`
+        : `cp -r "${src}" "${dst}"`
+    out.write(`接下来安装插件以启用生命周期钩子：${cmd}\n`)
   }
   return 0
 }

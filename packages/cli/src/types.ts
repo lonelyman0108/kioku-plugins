@@ -2,6 +2,9 @@
 
 export type Env = Record<string, string | undefined>
 
+export type PlatformPresence = 'installed' | 'config-only' | 'absent'
+export type PlatformInstallKind = 'cli' | 'desktop' | 'ide'
+
 export interface Writer {
   write(chunk: string | Uint8Array): unknown
 }

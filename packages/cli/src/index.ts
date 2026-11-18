@@ -29,8 +29,9 @@ import { doctor, DOCTOR_USAGE } from './doctor.ts'
 import { IMPORT_USAGE, importMemories } from './import.ts'
 import { install, INSTALL_USAGE } from './install.ts'
 import { login, LOGIN_USAGE } from './login.ts'
-import { loadPrompts } from './prompts.ts'
+import { loadPrompts, nodeSupported } from './prompts.ts'
 import { setup, SETUP_USAGE } from './setup.ts'
+import { runTui } from './ui/tui.ts'
 import { barOut, wizard } from './wizard.ts'
 
 export { RUN_USAGE as USAGE, UsageError, parseRunArgs, run } from './core.ts'
@@ -67,12 +68,19 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
 const NO_WIZARD = '交互式的向导需要 Node.js 20.12 以上版本。\n'
 
 async function startWizard(): Promise<number> {
-  const ui = await loadPrompts()
-  if (!ui) {
+  if (!nodeSupported()) {
     process.stderr.write(`${OVERVIEW}\n${NO_WIZARD}`)
     return 2
   }
-  return wizard({ ui, env: process.env, cwd: process.cwd(), out: barOut(process.stdout) })
+  if (process.env.TERM === 'dumb') {
+    const ui = await loadPrompts()
+    if (!ui) {
+      process.stderr.write(`${OVERVIEW}\n${NO_WIZARD}`)
+      return 2
+    }
+    return wizard({ ui, env: process.env, cwd: process.cwd(), out: barOut(process.stdout) })
+  }
+  return runTui({ env: process.env, cwd: process.cwd(), stdin: process.stdin, out: process.stdout })
 }
 
 // 说明类的子命令：参数写错时打印原因与说明，以 2 退出；别的失败原因写到标准错误

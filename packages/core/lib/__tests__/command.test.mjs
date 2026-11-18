@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
@@ -163,5 +163,19 @@ describe('在这台机器上真的起一次', () => {
     expect(execFileSync(run.file, run.args, { env, encoding: 'utf8', ...run.options })).toBe(
       'via cmd',
     )
+  })
+
+  windowsOnly('Windows：跳过 Microsoft\\WindowsApps 下的 0 字节商店空壳', () => {
+    const stubDir = join(dir, 'Microsoft', 'WindowsApps')
+    mkdirSync(stubDir, { recursive: true })
+    writeFileSync(join(stubDir, 'python3.exe'), '')
+    const realDir = join(dir, 'real-py')
+    mkdirSync(realDir, { recursive: true })
+    writeFileSync(join(realDir, 'python3.exe'), 'real')
+
+    expect(findCommand('python3', { Path: stubDir })).toBeNull()
+    expect(
+      findCommand('python3', { Path: `${stubDir}${delimiter}${realDir}` })?.toLowerCase(),
+    ).toBe(join(realDir, 'python3.exe').toLowerCase())
   })
 })

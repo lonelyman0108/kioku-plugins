@@ -145,6 +145,13 @@ describe('本地记忆的解析', () => {
     const deep = `-Users-lm-code-${'a'.repeat(70)}-tail`
     expect(claudeProjectName(deep, home)).toHaveLength(64)
     expect(claudeProjectName(deep, home).endsWith('-tail')).toBe(true)
+    expect(claudeProjectName('c--Users-LM-Desktop-kioku-plugins', 'C:\\Users\\LM')).toBe(
+      'kioku-plugins',
+    )
+    expect(claudeProjectName('C--Users-LM-Desktop-kioku-plugins', 'c:\\Users\\lm')).toBe(
+      'kioku-plugins',
+    )
+    expect(claudeProjectName('c--Users-lmx-foo', 'C:\\Users\\LM')).toBe('c-users-lmx-foo')
   })
 })
 

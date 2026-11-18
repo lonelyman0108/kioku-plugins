@@ -13,17 +13,34 @@ export function supportsColor(
   return Boolean(stream?.isTTY)
 }
 
+export function supportsTrueColor(env: Env = process.env): boolean {
+  const colorterm = (env.COLORTERM ?? '').toLowerCase()
+  if (colorterm === 'truecolor' || colorterm === '24bit') return true
+  if ((env.WT_SESSION ?? '') !== '') return true
+  const prog = (env.TERM_PROGRAM ?? '').toLowerCase()
+  return ['vscode', 'ghostty', 'iterm.app', 'wezterm', 'alacritty', 'rio', 'hyper'].includes(prog)
+}
+
 export interface StrataTheme {
   color: boolean
+  trueColor: boolean
   ink: (text: string) => string
   bold: (text: string) => string
   muted: (text: string) => string
   rule: (text: string) => string
+  hairline: (text: string) => string
   accent: (text: string) => string
   ok: (text: string) => string
   warn: (text: string) => string
   error: (text: string) => string
   layer: (layer: string, text?: string) => string
+  layerChip: (layer: string, text?: string) => string
+  barSurface: (text: string) => string
+  selectedSurface: (text: string) => string
+  subtleSurface: (text: string) => string
+  modalSurface: (text: string) => string
+  brandStamp: (text: string) => string
+  keycap: (key: string, label: string) => string
 }
 
 const LAYER_LABELS: Record<string, string> = {
@@ -36,13 +53,33 @@ const LAYER_LABELS: Record<string, string> = {
 }
 
 // 低饱和度地层 ANSI 颜色（均配合归属文字标签显示，不单独依赖颜色传递信息）
-const LAYER_CODES: Record<string, string> = {
+const LAYER_CODES_256: Record<string, string> = {
   episode: '\x1b[38;5;103m',
   subject: '\x1b[38;5;138m',
-  user: '\x1b[38;5;73m',
+  user: '\x1b[38;5;180m',
   app: '\x1b[38;5;108m',
   persona: '\x1b[38;5;144m',
   core: '\x1b[38;5;246m',
+}
+
+const LAYER_CODES_TRUE: Record<string, string> = {
+  core: '\x1b[38;2;159;181;193m',
+  persona: '\x1b[38;2;156;187;168m',
+  app: '\x1b[38;2;186;199;148m',
+  user: '\x1b[38;2;216;196;143m',
+  subject: '\x1b[38;2;180;169;197m',
+  episode: '\x1b[38;2;202;195;213m',
+}
+
+/* eslint-disable no-control-regex */
+const SGR_RESET_RE = /\x1b\[0?m/g
+/* eslint-enable no-control-regex */
+
+function paintSurface(bgCode: string, fgCode: string): (text: string) => string {
+  return (text: string) => {
+    const restored = text.replace(SGR_RESET_RE, () => `\x1b[0m${bgCode}${fgCode}`)
+    return `${bgCode}${fgCode}${restored}\x1b[0m`
+  }
 }
 
 const SENSITIVITY_BADGES: Record<string, { mark: string; label: string }> = {
@@ -62,28 +99,79 @@ export function createTheme({
   stream = process.stdout,
   env = process.env,
   color,
+  trueColor,
 }: {
   stream?: { isTTY?: boolean }
   env?: Env
   color?: boolean
+  trueColor?: boolean
 } = {}): StrataTheme {
   const enabled = color ?? supportsColor(stream, env)
+  const tc = enabled && (trueColor ?? supportsTrueColor(env))
   const wrap = (code: string) => (text: string) => (enabled ? `${code}${text}\x1b[0m` : text)
+  const pick = (trueCode: string, code256: string) => (tc ? trueCode : code256)
+  const layerMap = tc ? LAYER_CODES_TRUE : LAYER_CODES_256
+
+  const layer = (layerName: string, text?: string) => {
+    const label = text ?? LAYER_LABELS[layerName] ?? layerName
+    const code = layerMap[layerName]
+    return enabled && code ? `${code}${label}\x1b[0m` : label
+  }
+
+  const keyBg = pick('\x1b[48;2;46;53;58m', '\x1b[48;5;237m')
+  const keyFg = pick('\x1b[38;2;240;241;235m', '\x1b[38;5;255m')
+  const keyLabelFg = pick('\x1b[38;2;162;166;163m', '\x1b[38;5;247m')
+  const stampBg = pick('\x1b[48;2;45;52;56m', '\x1b[48;5;237m')
+  const stampFg = pick('\x1b[38;2;232;213;156m', '\x1b[38;5;222m')
+
   return {
     color: enabled,
+    trueColor: tc,
     ink: (text) => text,
     bold: wrap('\x1b[1m'),
     muted: wrap('\x1b[2m'),
     rule: wrap('\x1b[90m'),
-    accent: wrap('\x1b[1m'),
-    ok: wrap('\x1b[38;5;71m'),
-    warn: wrap('\x1b[2m'),
+    hairline: wrap(pick('\x1b[38;2;61;70;75m', '\x1b[38;5;239m')),
+    accent: wrap(pick('\x1b[1m\x1b[38;2;216;196;143m', '\x1b[1m\x1b[38;5;180m')),
+    ok: wrap(pick('\x1b[38;2;143;194;161m', '\x1b[38;5;108m')),
+    warn: wrap(pick('\x1b[38;2;216;181;107m', '\x1b[38;5;179m')),
     // 砖红只给错误与危险确认
-    error: wrap('\x1b[38;5;167m'),
-    layer(layerName: string, text?: string) {
+    error: wrap(pick('\x1b[38;2;232;139;110m', '\x1b[38;5;167m')),
+    layer,
+    layerChip(layerName: string, text?: string) {
       const label = text ?? LAYER_LABELS[layerName] ?? layerName
-      const code = LAYER_CODES[layerName]
-      return enabled && code ? `${code}${label}\x1b[0m` : label
+      return enabled ? layer(layerName, `■ ${label}`) : `[${label}]`
+    },
+    barSurface: enabled
+      ? paintSurface(
+          pick('\x1b[48;2;32;38;42m', '\x1b[48;5;235m'),
+          pick('\x1b[38;2;227;228;221m', '\x1b[38;5;254m'),
+        )
+      : (text) => text,
+    selectedSurface: enabled
+      ? paintSurface(
+          pick('\x1b[48;2;51;59;64m', '\x1b[48;5;237m'),
+          pick('\x1b[38;2;240;241;235m', '\x1b[38;5;255m'),
+        )
+      : (text) => text,
+    subtleSurface: enabled
+      ? paintSurface(
+          pick('\x1b[48;2;28;34;38m', '\x1b[48;5;234m'),
+          pick('\x1b[38;2;213;216;210m', '\x1b[38;5;252m'),
+        )
+      : (text) => text,
+    modalSurface: enabled
+      ? paintSurface(
+          pick('\x1b[48;2;32;38;42m', '\x1b[48;5;235m'),
+          pick('\x1b[38;2;227;228;221m', '\x1b[38;5;254m'),
+        )
+      : (text) => text,
+    brandStamp(text: string) {
+      return enabled ? `${stampBg}${stampFg} ${text} \x1b[0m` : `[${text}]`
+    },
+    keycap(key: string, label: string) {
+      if (!enabled) return `[${key}] ${label}`
+      return `\x1b[1m${keyBg}${keyFg} ${key} \x1b[0m ${keyLabelFg}${label}\x1b[0m`
     },
   }
 }

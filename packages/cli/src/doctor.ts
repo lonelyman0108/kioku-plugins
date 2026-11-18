@@ -2,8 +2,6 @@
 // 单平台默认输出与既有脚本、E2E 合约完全一致（✓ / ! / ✗ 行）；
 // 未指定平台且未从会话认出时可自动巡检全部已接入/已安装平台（或使用 --all），并支持 --json 输出。
 
-import { stat } from 'node:fs/promises'
-
 import { whoami } from './api.ts'
 import { scanConflicts } from './conflicts.ts'
 import {
@@ -11,13 +9,13 @@ import {
   NotConfigured,
   UsageError,
   failureText,
-  hasCommand,
   keyFormatError,
   loadConfig,
   plain,
   serverUrlProblem,
   shownUrl,
 } from './core.ts'
+import { detectPlatformPresence } from './panel.ts'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.ts'
 import type { Env, SavedProfile, TargetConfig, WhoamiResponse, Writer } from './types.ts'
 import { capabilityLabel, layerLabel } from './ui/theme.ts'
@@ -207,9 +205,8 @@ async function discoverActivePlatforms(env: Env): Promise<string[]> {
   for (const id of Object.keys(PLATFORMS)) {
     const platform = PLATFORMS[id]
     const hasCfg = Boolean(await Promise.resolve(platform.readConfig?.(env)).catch(() => null))
-    const hasCmd = hasCommand(platform.command(env), env)
-    const hasHome = Boolean((await stat(platform.home(env)).catch(() => null))?.isDirectory())
-    if (hasCfg || hasCmd || hasHome) active.push(id)
+    const { presence } = await detectPlatformPresence(id, env)
+    if (hasCfg || presence === 'installed') active.push(id)
   }
   return active
 }

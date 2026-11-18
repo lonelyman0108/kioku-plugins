@@ -8,6 +8,7 @@ import { agyHome, bundledAgyDir } from './agy.ts'
 import { whoami } from './api.ts'
 import { capture, failureText, hasCommand, listTools, plain, writeToolCache } from './core.ts'
 import { bundledGeminiDir } from './gemini.ts'
+import { resolvePlatformCommand } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
 import { layerLabel, sensitivityBadge } from './ui/theme.ts'
@@ -139,7 +140,7 @@ export async function installPlugin(
   }
 
   if (id === 'claude-code') {
-    const bin = platform.command(env)
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const steps = upgrade
       ? [
           ['plugin', 'marketplace', 'update'],
@@ -169,7 +170,7 @@ export async function installPlugin(
   }
 
   if (id === 'codex') {
-    const bin = platform.command(env)
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const steps = upgrade
       ? [['plugin', 'add', 'kioku@kioku']]
       : [
@@ -195,7 +196,7 @@ export async function installPlugin(
   }
 
   if (id === 'gemini') {
-    const bin = platform.command(env)
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const bundled = bundledGeminiDir()
     const res = await runCliSteps(bin, [['extensions', 'link', bundled]], env)
     if (res.ok) {
@@ -205,19 +206,24 @@ export async function installPlugin(
         message: `${upgrade ? '已重新链接' : '已链接'} Gemini CLI 扩展（${plain(bundled)}）`,
       }
     }
+    const quotedBundled = /\s/.test(bundled) ? `"${bundled}"` : bundled
+    const after =
+      process.platform === 'win32'
+        ? `${platform.install.after}（Windows 下创建目录链接需开启系统「开发者模式」或改用目录复制）`
+        : platform.install.after
     return {
       id,
       status: 'manual',
       message: res.found
         ? '未能自动链接 Gemini CLI 扩展，请手动运行'
         : '未找到 gemini 命令，请手动运行',
-      commands: [`gemini extensions link ${bundled}`],
-      after: platform.install.after,
+      commands: [`gemini extensions link ${quotedBundled}`],
+      after,
     }
   }
 
   if (id === 'pi') {
-    const bin = platform.command(env)
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const step = upgrade
       ? ['update', 'git:github.com/lonelyman0108/kioku-plugins']
       : ['install', 'git:github.com/lonelyman0108/kioku-plugins']
@@ -239,7 +245,7 @@ export async function installPlugin(
   }
 
   if (id === 'hermes') {
-    const bin = platform.command(env)
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const res = await runCliSteps(
       bin,
       [['plugins', 'install', 'lonelyman0108/kioku-plugins/plugins/hermes', '--enable']],
@@ -265,27 +271,28 @@ export async function installPlugin(
   }
 
   if (id === 'openclaw') {
-    const bin = platform.command(env)
-    const res = await runCliSteps(
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
+    const installRes = await runCliSteps(
       bin,
-      [
-        ['plugins', 'install', 'npm:@kioku-memory/openclaw'],
-        ['gateway', 'restart'],
-      ],
+      [['plugins', 'install', 'npm:@kioku-memory/openclaw']],
       env,
       120_000,
     )
-    if (res.ok) {
+    if (installRes.ok) {
+      const restartRes = await capture(bin, ['gateway', 'restart'], env, { timeout: 30_000 })
+      const restartNote = restartRes.ok
+        ? '并重启网关'
+        : '（若网关正在运行请手动执行 openclaw gateway restart）'
       return {
         id,
         status: upgrade ? 'upgraded' : 'installed',
-        message: `${upgrade ? '已更新' : '已安装'} OpenClaw 插件并重启网关`,
+        message: `${upgrade ? '已更新' : '已安装'} OpenClaw 插件${restartNote}`,
       }
     }
     return {
       id,
       status: 'manual',
-      message: res.found
+      message: installRes.found
         ? '未能自动安装 OpenClaw 插件，请手动运行'
         : '未找到 openclaw 命令，请手动运行',
       commands: platform.install.commands,

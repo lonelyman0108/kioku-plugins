@@ -1,23 +1,35 @@
 // 向导的面板：扫描服务器与本机各平台的现状，排成几行文字，再按缺什么列出可做的动作。
 // 只读：不写文件、不签发访问密钥。查不了的项写「无法判断」，不猜
 
-import { stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import { KeyRejected, whoami } from './api.ts'
 import { conflictToolsText, scanConflicts, type ConflictItem } from './conflicts.ts'
 import {
   KiokuFailure,
+  envValue,
   failureText,
   fetchFailure,
+  findCommand,
   hasCommand,
   isRedirect,
   plain,
   serverUrlProblem,
   shownUrl,
 } from './core.ts'
+import { geminiHome } from './gemini.ts'
+import { readCliPreferences } from './identity.ts'
 import { countLocal } from './import.ts'
 import { PLATFORMS } from './platforms.ts'
-import type { Env, WhoamiResponse } from './types.ts'
+import type {
+  Env,
+  PlatformInstallKind,
+  PlatformPresence,
+  TargetConfig,
+  WhoamiResponse,
+} from './types.ts'
 
 const TIMEOUT = 5000
 
@@ -42,6 +54,7 @@ export interface ServerHealthState {
   version?: string | null
   problem: string | null
   needsSetup?: boolean
+  checking?: boolean
 }
 
 export interface PanelServer extends ServerHealthState {
@@ -52,17 +65,27 @@ export interface PlatformRow {
   id: string
   name: string
   present: boolean
+  presence?: PlatformPresence
+  installKind?: PlatformInstallKind
+  hasCli?: boolean
   connection: 'ok' | 'none' | 'invalid' | 'unknown' | 'broken' | 'manual'
   url?: string
   otherServer?: boolean
   who?: WhoamiResponse
   reason?: string
+  checking?: boolean
   plugin: boolean | null
   memory: 'on' | 'off' | 'none' | null
   reenabledIn?: string
   local?: number | null
   pending?: { pending: number | null; reason?: string }
   conflicts?: ConflictItem[]
+}
+
+export function effectivePresence(
+  row: Pick<PlatformRow, 'present' | 'presence'>,
+): PlatformPresence {
+  return row.presence ?? (row.present ? 'installed' : 'absent')
 }
 
 export interface PanelState {
@@ -99,6 +122,116 @@ async function isDir(path: string): Promise<boolean> {
   return Boolean((await stat(path).catch(() => null))?.isDirectory())
 }
 
+function userHomeOf(env: Env): string {
+  return env.HOME || env.USERPROFILE || homedir()
+}
+
+function localAppDataOf(env: Env): string {
+  const home = userHomeOf(env)
+  if (env.LOCALAPPDATA && (!env.USERPROFILE || !env.HOME || env.HOME === env.USERPROFILE)) {
+    return env.LOCALAPPDATA
+  }
+  return join(home, 'AppData', 'Local')
+}
+
+// Antigravity 会把数据写进 ~/.gemini/antigravity 与 ~/.gemini/config；裸目录不能算 Gemini CLI
+const GEMINI_AGY_ONLY_ENTRIES = new Set([
+  'antigravity',
+  'antigravity-ide',
+  'antigravity-cli',
+  'config',
+])
+
+const IDE_EXTENSION_RE: Record<string, RegExp> = {
+  'claude-code': /^anthropic\.claude-code-/i,
+  codex: /^openai\.(?:chatgpt|codex)-/i,
+}
+
+export function resolvePlatformCommand(
+  id: string,
+  env: Env,
+  { platform = process.platform }: { platform?: NodeJS.Platform } = {},
+): string | null {
+  const desc = PLATFORMS[id]
+  if (!desc) return null
+  const cmd = desc.command(env)
+  if (!cmd) return null
+  if (hasCommand(cmd, env, { platform })) return cmd
+  if (/[\\/]/.test(cmd) || !(envValue(env, 'PATH') ?? '').trim()) return null
+
+  const home = userHomeOf(env)
+  const candidates = [join(home, '.local', 'bin', cmd)]
+  if (platform === 'win32' && id === 'claude-code') {
+    candidates.push(join(localAppDataOf(env), 'Programs', 'claude', 'claude.exe'))
+  }
+  for (const candidate of candidates) {
+    if (platform === 'win32') {
+      const resolved = findCommand(candidate, env)
+      if (resolved) return resolved
+    } else if (hasCommand(candidate, env, { platform })) {
+      return candidate
+    }
+  }
+  return null
+}
+
+async function detectAppOrIde(id: string, env: Env): Promise<PlatformInstallKind | null> {
+  if (id === 'agy') {
+    const home = userHomeOf(env)
+    for (const sub of ['antigravity', 'antigravity-ide', 'antigravity-cli']) {
+      if (await isDir(join(home, '.gemini', sub))) return 'desktop'
+    }
+    return null
+  }
+  const pattern = IDE_EXTENSION_RE[id]
+  if (!pattern) return null
+  const home = userHomeOf(env)
+  for (const editorDir of ['.vscode', '.cursor', '.windsurf']) {
+    const entries = await readdir(join(home, editorDir, 'extensions')).catch(() => [] as string[])
+    if (entries.some((name) => pattern.test(name))) return 'ide'
+  }
+  return null
+}
+
+async function hasPlatformConfigDir(id: string, env: Env): Promise<boolean> {
+  if (id === 'gemini') {
+    const entries = await readdir(geminiHome(env)).catch(() => null)
+    if (!entries || entries.length === 0) return false
+    return entries.some((name) => !GEMINI_AGY_ONLY_ENTRIES.has(name.toLowerCase()))
+  }
+  return isDir(PLATFORMS[id].home(env))
+}
+
+export async function detectPlatformPresence(
+  id: string,
+  env: Env,
+  { platform = process.platform }: { platform?: NodeJS.Platform } = {},
+): Promise<{
+  presence: PlatformPresence
+  installKind?: PlatformInstallKind
+  hasCli: boolean
+  resolvedCmd: string | null
+}> {
+  const desc = PLATFORMS[id]
+  if (!desc) return { presence: 'absent', hasCli: false, resolvedCmd: null }
+
+  const resolvedCmd = resolvePlatformCommand(id, env, { platform })
+  const hasCli = resolvedCmd !== null
+  if (hasCli || desc.detect(env)) {
+    return { presence: 'installed', installKind: 'cli', hasCli, resolvedCmd }
+  }
+
+  const appKind = await detectAppOrIde(id, env)
+  if (appKind) {
+    return { presence: 'installed', installKind: appKind, hasCli: false, resolvedCmd: null }
+  }
+
+  if (await hasPlatformConfigDir(id, env)) {
+    return { presence: 'config-only', hasCli: false, resolvedCmd: null }
+  }
+  return { presence: 'absent', hasCli: false, resolvedCmd: null }
+}
+
 // 各平台写下的服务地址（按平台的顺序，同一个只留一次）
 export async function knownServers(env: Env): Promise<string[]> {
   const urls: string[] = []
@@ -109,33 +242,36 @@ export async function knownServers(env: Env): Promise<string[]> {
   return urls
 }
 
-// 没有指明时用哪个服务地址：KIOKU_SERVER_URL，否则各平台写下的里面最先找到的
+// 没有指明时用哪个服务地址：KIOKU_SERVER_URL → cli.json 记住的地址 → 各平台写下的里面最先找到的
 export async function defaultServerUrl(env: Env): Promise<string | null> {
   const fromEnv = (env.KIOKU_SERVER_URL ?? '').trim().replace(/\/+$/, '')
   if (fromEnv && !serverUrlProblem(fromEnv)) return fromEnv
+  const prefs = await readCliPreferences(env).catch(() => ({}) as { serverUrl?: string })
+  if (prefs.serverUrl) return prefs.serverUrl
   return (await knownServers(env))[0] ?? null
 }
 
-// 一个平台的现状。connection：
-// - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销
-// - unknown：连不上、响应不对，查不了；broken：配置文件读不懂
-// - manual：未写入 profile，但 Claude Code 在 /plugin 里已启用插件
-export async function scanPlatform(
+// 只扫描本机现状，不发 whoami 网络请求；配好访问密钥时标记 checking: true
+export async function scanLocalPlatform(
   id: string,
   { env, cwd, url }: { env: Env; cwd: string; url: string | null },
-): Promise<PlatformRow> {
+): Promise<{ row: PlatformRow; config: TargetConfig | null }> {
   const platform = PLATFORMS[id]
-  const present = hasCommand(platform.command(env), env) || (await isDir(platform.home(env)))
+  const detected = await detectPlatformPresence(id, env)
+  const present = detected.presence !== 'absent'
   const row: PlatformRow = {
     id,
     name: platform.name,
     present,
+    presence: detected.presence,
+    ...(detected.installKind ? { installKind: detected.installKind } : {}),
+    hasCli: detected.hasCli,
     connection: 'none',
     plugin: null,
     memory: null,
   }
 
-  let config = null
+  let config: TargetConfig | null = null
   if (!platform.readConfig) row.connection = 'manual'
   else {
     try {
@@ -148,13 +284,8 @@ export async function scanPlatform(
   if (config) {
     row.url = config.url
     row.otherServer = Boolean(url && config.url !== url)
-    try {
-      row.who = await whoami(config)
-      row.connection = 'ok'
-    } catch (err) {
-      row.connection = err instanceof KeyRejected ? 'invalid' : 'unknown'
-      row.reason = failureText(err)
-    }
+    row.connection = 'unknown'
+    row.checking = true
   }
 
   const status = await platform.status({ env, cwd }).catch(() => ({
@@ -174,7 +305,36 @@ export async function scanPlatform(
   if (platform.source) row.local = await countLocal(platform.source, { env }).catch(() => null)
   const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
   if (conflicts.length) row.conflicts = conflicts
-  return row
+  return { row, config }
+}
+
+// 远端校验单个已配置的平台，填好 who / connection / reason
+export async function verifyPlatformRemote(
+  row: PlatformRow,
+  config: TargetConfig,
+): Promise<PlatformRow> {
+  const next: PlatformRow = { ...row }
+  delete next.checking
+  try {
+    next.who = await whoami(config)
+    next.connection = 'ok'
+  } catch (err) {
+    next.connection = err instanceof KeyRejected ? 'invalid' : 'unknown'
+    next.reason = failureText(err)
+  }
+  return next
+}
+
+// 一个平台的现状。connection：
+// - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销
+// - unknown：连不上、响应不对，查不了；broken：配置文件读不懂
+// - manual：未写入 profile，但 Claude Code 在 /plugin 里已启用插件
+export async function scanPlatform(
+  id: string,
+  { env, cwd, url }: { env: Env; cwd: string; url: string | null },
+): Promise<PlatformRow> {
+  const { row, config } = await scanLocalPlatform(id, { env, cwd, url })
+  return config ? verifyPlatformRemote(row, config) : row
 }
 
 // 面板的全部现状。url 为空时只扫本机

@@ -62,12 +62,12 @@ export const LOCAL_PORT = 18920
 export const LOCAL_URL = `http://127.0.0.1:${LOCAL_PORT}`
 
 export function defaultLocalDir(env: Env): string {
-  return join(env.HOME || homedir(), 'kioku')
+  return join(env.HOME || env.USERPROFILE || homedir(), 'kioku')
 }
 
 // 目录：~ 开头的换成主目录
 export function expandDir(dir: string, env: Env): string {
-  const home = env.HOME || homedir()
+  const home = env.HOME || env.USERPROFILE || homedir()
   return resolve(dir === '~' ? home : dir.replace(/^~(?=[/\\])/, home))
 }
 
@@ -192,8 +192,15 @@ export async function download(
   return 'downloaded'
 }
 
-// 下载失败时让用户自己运行的命令
-export function manualDownload(dir: string, ref = 'main'): string {
+// 下载失败时让用户自己运行的命令（PowerShell 下 curl 是 Invoke-WebRequest 别名，需写 curl.exe）
+export function manualDownload(dir: string, ref = 'main', platform = process.platform): string {
+  if (platform === 'win32') {
+    return [
+      `New-Item -ItemType Directory -Force "${dir}" | Out-Null; Set-Location "${dir}"`,
+      `curl.exe -fsSLO ${rawUrl(ref, 'compose.yaml')}`,
+      `curl.exe -fsSL -o .env.example ${rawUrl(ref, '.env.example')}`,
+    ].join('\n')
+  }
   return [
     `mkdir -p ${dir} && cd ${dir}`,
     `curl -fsSLO ${rawUrl(ref, 'compose.yaml')}`,
@@ -287,7 +294,7 @@ export async function composeUp(dir: string, env: Env): Promise<void> {
   }
 }
 
-// 轮询直到 check 返回真，或者到时限；返回有没有等到
+// 轮询直到 check 返回真，或者到时限或取消；返回有没有等到
 export async function waitUntil(
   check: () => Promise<boolean>,
   {
@@ -295,18 +302,46 @@ export async function waitUntil(
     intervalMs = 2000,
     sleep,
     now = () => Date.now(),
+    signal,
   }: {
     timeoutMs: number
     intervalMs?: number
     sleep?: (ms: number) => Promise<void>
     now?: () => number
+    signal?: AbortSignal
   },
 ): Promise<boolean> {
-  const pause = sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
+  const waitStep = (ms: number): Promise<boolean> => {
+    if (signal?.aborted) return Promise.resolve(false)
+    if (!signal) {
+      const p = sleep ? sleep(ms) : new Promise<void>((done) => setTimeout(done, ms))
+      return p.then(() => true)
+    }
+    return new Promise<boolean>((done) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const finish = (ok: boolean) => {
+        if (timer) clearTimeout(timer)
+        signal.removeEventListener('abort', onAbort)
+        done(ok)
+      }
+      const onAbort = () => finish(false)
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (sleep) {
+        sleep(ms).then(
+          () => finish(!signal.aborted),
+          () => finish(false),
+        )
+      } else {
+        timer = setTimeout(() => finish(!signal.aborted), ms)
+      }
+    })
+  }
   const deadline = now() + timeoutMs
   while (now() < deadline) {
+    if (signal?.aborted) return false
     if (await check().catch(() => false)) return true
-    await pause(intervalMs)
+    if (signal?.aborted) return false
+    if (!(await waitStep(intervalMs))) return false
   }
   return false
 }

@@ -205,8 +205,12 @@ const CONTAINERS =
   /^(documents|desktop|code|projects|project|src|work|workspace|dev|repos|git|github)-/i
 export function claudeProjectName(encoded: string, home = homedir()): string {
   const prefix = home.replace(/[^A-Za-z0-9]/g, '-')
-  // 前缀之后要正好是一段的开头，/Users/lm 不能去掉 -Users-lmx-… 的开头
-  let rest = encoded.startsWith(`${prefix}-`) ? encoded.slice(prefix.length + 1) : encoded
+  // 前缀之后要正好是一段的开头，/Users/lm 不能去掉 -Users-lmx-… 的开头；Windows 下盘符与路径大小写不敏感
+  const hasPrefix =
+    encoded.length > prefix.length &&
+    encoded[prefix.length] === '-' &&
+    encoded.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
+  let rest = hasPrefix ? encoded.slice(prefix.length + 1) : encoded
   rest = rest.replace(/^-+/, '')
   while (CONTAINERS.test(rest)) rest = rest.replace(CONTAINERS, '')
   return tailSegment(rest || encoded)
