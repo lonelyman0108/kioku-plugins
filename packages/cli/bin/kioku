@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// kioku 命令的入口，实现在 ../lib/kioku.mjs。插件启用期间，Claude Code 把插件的 bin/ 加进 Bash 工具的 PATH。
-// 没有扩展名的文件按 CommonJS 还是 ES 模块执行，取决于 Node 的版本与上层的 package.json，
-// 所以这里只用两边都能用的写法：动态 import，位置从 process.argv[1] 推
-const load = (name) =>
+// kioku 命令的入口，优先加载构建产物 ../dist/index.mjs；开发/源码直跑场景下回退到 ../src/index.ts。
+// 没有扩展名的文件按 CommonJS 还是 ES 模块执行取决于上层 package.json，所以这里只用动态 import，位置从 process.argv[1] 推
+const loadEntry = () =>
   Promise.all([import('node:fs'), import('node:path'), import('node:url')]).then(
     ([fs, path, url]) => {
-      const lib = path.join(path.dirname(fs.realpathSync(process.argv[1])), '..', 'lib')
-      return import(url.pathToFileURL(path.join(lib, name)).href)
+      const root = path.join(path.dirname(fs.realpathSync(process.argv[1])), '..')
+      const built = path.join(root, 'dist', 'index.mjs')
+      const entry = fs.existsSync(built) ? built : path.join(root, 'src', 'index.ts')
+      return import(url.pathToFileURL(entry).href)
     },
   )
 
@@ -21,16 +22,19 @@ if (process.argv[2] !== 'run') {
   }
 }
 
-load('kioku.mjs')
+loadEntry()
   .then((cli) => cli.main(process.argv.slice(2)))
   .then((code) => {
     process.exitCode = code
   })
   .catch((err) => {
     process.exitCode = 2
-    // 只给错误类别：错误文字里可能带着环境变量的值。取不到共用的函数时只说一句固定的
-    return load('http.mjs').then(
-      ({ errorKind }) => process.stderr.write(`kioku：内部错误（${errorKind(err)}）\n`),
-      () => process.stderr.write('kioku：内部错误\n'),
-    )
+    // 只给错误类别：错误文字里可能带着环境变量的值
+    const kind =
+      err && typeof err === 'object' && typeof err.code === 'string' && err.code
+        ? err.code
+        : err && typeof err.name === 'string' && err.name
+          ? err.name
+          : 'Error'
+    process.stderr.write(`kioku：内部错误（${kind}）\n`)
   })

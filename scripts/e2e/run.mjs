@@ -30,7 +30,7 @@ import {
 } from './fakes.mjs'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const kiokuBin = join(repo, 'packages', 'core', 'bin', 'kioku')
+const kiokuBin = join(repo, 'packages', 'cli', 'bin', 'kioku')
 const PROMPT = '只回答一个字：好'
 
 const log = (text) => process.stdout.write(`${text}\n`)

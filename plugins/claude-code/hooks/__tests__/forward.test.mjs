@@ -40,7 +40,8 @@ beforeEach(() => {
 })
 
 function run(event, input, options = {}) {
-  const env = { ...process.env }
+  const emptyConfigDir = mkdtempSync(join(tmpdir(), 'kioku-hook-cfg-'))
+  const env = { ...process.env, KIOKU_CONFIG_DIR: options.configDir ?? emptyConfigDir }
   delete env.CLAUDE_PLUGIN_OPTION_SERVER_URL
   delete env.CLAUDE_PLUGIN_OPTION_API_KEY
   if (options.configured !== false) {
@@ -53,7 +54,10 @@ function run(event, input, options = {}) {
     let stderr = ''
     child.stdout.on('data', (d) => (stdout += d))
     child.stderr.on('data', (d) => (stderr += d))
-    child.on('close', (code) => resolve({ code, stdout, stderr }))
+    child.on('close', (code) => {
+      rmSync(emptyConfigDir, { recursive: true, force: true })
+      resolve({ code, stdout, stderr })
+    })
     child.stdin.end(typeof input === 'string' ? input : JSON.stringify(input))
   })
 }
@@ -181,7 +185,7 @@ describe('Claude Code 钩子转发', () => {
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
           additionalContext:
-            'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。',
+            'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 重新填写访问密钥。',
         },
       })
       const prompt = await run('prompt.submit', { prompt: '你好' }, { key })
@@ -216,7 +220,7 @@ describe('Claude Code 钩子转发', () => {
     const start = await run('session.start', {})
     expect(start.stderr).toBe(`Kioku session.start 未生效：${sentence}\n`)
     expect(JSON.parse(start.stdout).hookSpecificOutput.additionalContext).toBe(
-      `Kioku 插件的服务地址无法使用，长期记忆不可用：${sentence}，在 /plugin 里为 kioku 修改。`,
+      `Kioku 插件的服务地址无法使用，长期记忆不可用：${sentence}，运行 kioku login claude-code 或在 /plugin 里为 kioku 修改。`,
     )
     expect(prompt.stderr + start.stdout).not.toContain('token')
 
@@ -245,12 +249,37 @@ describe('Claude Code 钩子转发', () => {
     expect(garbled.stderr).toBe('Kioku prompt.submit 未生效：SyntaxError\n')
   })
 
-  it('没有配置时，会话开始提示一次，每轮输入什么都不做', async () => {
+  it('没有配置时，会话开始提示一次，每轮输入什么都不做；写在本机配置里时回退读取，/plugin 环境变量优先', async () => {
     const start = await run('session.start', {}, { configured: false })
     expect(JSON.parse(start.stdout).hookSpecificOutput.additionalContext).toContain('/plugin')
     const prompt = await run('prompt.submit', { prompt: '你好' }, { configured: false })
     expect(prompt.stdout).toBe('')
     expect(requests).toHaveLength(0)
+
+    const cfgDir = mkdtempSync(join(tmpdir(), 'kioku-cc-profile-'))
+    try {
+      writeFileSync(
+        join(cfgDir, 'claude-code.json'),
+        JSON.stringify({ serverUrl: `${base}/`, apiKey: 'kioku_profile_key' }),
+      )
+      const fallback = await run(
+        'prompt.submit',
+        { prompt: '查偏好' },
+        { configured: false, configDir: cfgDir },
+      )
+      expect(fallback.code).toBe(0)
+      expect(requests).toHaveLength(1)
+      expect(requests[0].headers.authorization).toBe('Bearer kioku_profile_key')
+
+      await run(
+        'prompt.submit',
+        { prompt: '优先级' },
+        { configDir: cfgDir, url: base, key: 'kioku_option_key' },
+      )
+      expect(requests[1].headers.authorization).toBe('Bearer kioku_option_key')
+    } finally {
+      rmSync(cfgDir, { recursive: true, force: true })
+    }
   })
 
   it('输入不是 JSON 时按空输入处理', async () => {

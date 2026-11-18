@@ -11,14 +11,14 @@
     "server_url": {
       "type": "string",
       "title": "Kioku 服务地址",
-      "description": "例如 https://kioku.example.com，不带 /v1，末尾不要斜杠",
-      "required": true
+      "description": "例如 https://kioku.example.com，不带 /v1，末尾不要斜杠（也可用 kioku login claude-code 一键授权写入本机配置）",
+      "required": false
     },
     "api_key": {
       "type": "string",
       "title": "访问密钥",
-      "description": "在 Kioku 管理界面的「应用」页为 Claude Code 应用签发的访问密钥",
-      "required": true,
+      "description": "在 Kioku 管理界面或通过 kioku login claude-code 签发的访问密钥；留空时读取本机配置",
+      "required": false,
       "sensitive": true
     }
   }
