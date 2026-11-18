@@ -27,10 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # 不用依赖缓存：发布的构建不从缓存里取东西
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           registry-url: https://registry.npmjs.org
+      - name: 构建包
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run --if-present build
       - name: 发布 npm 包
         run: scripts/ci/publish-npm.sh "$GITHUB_REF_NAME"
       - name: Release 页面

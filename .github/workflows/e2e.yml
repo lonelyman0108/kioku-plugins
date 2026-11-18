@@ -9,8 +9,10 @@ on:
     paths:
       - scripts/e2e/**
       - packages/core/**
+      - packages/cli/**
       - plugins/**
       - package.json
+      - pnpm-lock.yaml
       - .github/workflows/e2e.yml
   schedule:
     - cron: '17 3 * * 1'
@@ -35,6 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # 平台要的 Node 比仓库自己的新（OpenClaw 要 24.16 以上）
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -43,5 +46,9 @@ jobs:
         if: matrix.platform == 'hermes'
         with:
           version: 0.13.5
+      - name: 构建 CLI
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run --if-present build
       - name: 实测
         run: node scripts/e2e/run.mjs ${{ matrix.platform }}
