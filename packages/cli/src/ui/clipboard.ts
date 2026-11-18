@@ -64,6 +64,10 @@ function tryPipeCommand(cmd: string, args: string[], text: string): Promise<bool
         clearTimeout(timer)
         finish(code === 0)
       })
+      child.stdin?.on('error', () => {
+        clearTimeout(timer)
+        finish(false)
+      })
       child.stdin?.end(text)
     } catch {
       finish(false)

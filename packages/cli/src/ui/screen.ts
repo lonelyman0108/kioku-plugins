@@ -101,10 +101,14 @@ export class InlineScreen {
       if (this.hiddenCursor) this.stream.write('\x1b[?25h')
     }
     this.onSigInt = () => {
+      const only = process.listenerCount('SIGINT') === 1
       this.dispose()
+      if (only) process.kill(process.pid, 'SIGINT')
     }
     this.onSigTerm = () => {
+      const only = process.listenerCount('SIGTERM') === 1
       this.dispose()
+      if (only) process.kill(process.pid, 'SIGTERM')
     }
     process.on('exit', this.onExit)
     process.on('SIGINT', this.onSigInt)
