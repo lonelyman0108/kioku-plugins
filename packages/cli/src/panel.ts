@@ -232,7 +232,11 @@ export function connectionText(
   )
 }
 
-function platformLines(row: PlatformRow): string[] {
+export function platformDetails(row: PlatformRow): {
+  head: string
+  facts: string[]
+  details: string[]
+} {
   const head = connectionText(row)
   const facts: string[] = []
   if (row.connection === 'ok' && row.who) {
@@ -247,16 +251,13 @@ function platformLines(row: PlatformRow): string[] {
   }
   if (row.otherServer && row.url) facts.push(shownUrl(row.url))
   if (row.reason) facts.push(row.reason)
-  const first = [`${row.name}：${head}`, ...facts].join(' · ')
-  // 没装、也没配过且没有冲突的平台只写一行
-  if (!row.present && row.connection === 'none' && !row.conflicts?.length) return [first]
+
   const details: string[] = []
   if (row.connection === 'manual') details.push('访问密钥 无法判断（在 /plugin 里填）')
   details.push(`插件 ${PLUGIN_NAMES.get(row.plugin) ?? '无法判断'}`)
   const reenabled = row.reenabledIn ? `（被 ./${row.reenabledIn} 重新启用）` : ''
   details.push(`自带记忆 ${(row.memory && MEMORY_NAMES[row.memory]) ?? '无法判断'}${reenabled}`)
   if (row.local) {
-    // 未迁移的条数只在选过迁移、和 Kioku 比过之后才有
     const pending = !row.pending
       ? ''
       : row.pending.pending === null
@@ -267,11 +268,22 @@ function platformLines(row: PlatformRow): string[] {
   if (row.conflicts?.length) {
     details.push(`冲突 ${conflictToolsText(row.conflicts)}`)
   }
+  return { head, facts, details }
+}
+
+function platformLines(row: PlatformRow): string[] {
+  const { head, facts, details } = platformDetails(row)
+  const first = [`${row.name}：${head}`, ...facts].join(' · ')
+  // 没装、也没配过且没有冲突的平台只写一行
+  if (!row.present && row.connection === 'none' && !row.conflicts?.length) return [first]
   return [first, `  ${details.join(' · ')}`]
 }
 
 // 面板的文字
-export function renderPanel(state: PanelState): string {
+export function renderPanel(
+  state: PanelState,
+  { collapseUninstalled = false }: { collapseUninstalled?: boolean } = {},
+): string {
   const lines: string[] = []
   const { server } = state
   if (!server) lines.push('服务器：未设置')
@@ -295,7 +307,24 @@ export function renderPanel(state: PanelState): string {
     if (spaces.length > 1) lines.push(`访问密钥分属 ${spaces.length} 个空间：${spaces.join('、')}`)
   }
   lines.push('')
-  for (const row of state.platforms) lines.push(...platformLines(row))
+  const uninstalled: PlatformRow[] = []
+  for (const row of state.platforms) {
+    if (
+      collapseUninstalled &&
+      !row.present &&
+      row.connection === 'none' &&
+      !row.conflicts?.length
+    ) {
+      uninstalled.push(row)
+      continue
+    }
+    lines.push(...platformLines(row))
+  }
+  if (uninstalled.length) {
+    lines.push(
+      `未检测到客户端（${uninstalled.length} 个）：${uninstalled.map((r) => r.name).join('、')}`,
+    )
+  }
   return lines.join('\n')
 }
 

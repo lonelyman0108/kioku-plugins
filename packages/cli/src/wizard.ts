@@ -1,12 +1,12 @@
-// 在终端里不带参数运行 kioku 时的向导：一个状态面板，不是一条直线。先扫描服务器与本机各平台的现状，
-// 再按缺什么列出动作；每个动作先列计划、确认后执行，做完回到面板刷新。
-// 各动作的实际步骤都是别的子命令已有的那一套（setup、login、import、doctor）
+// 在终端里不带参数运行 kioku 时的向导：一个渐进披露的状态面板，先扫描服务器与本机各平台的现状，
+// 再按缺什么列出动作；接入后自动尝试安装对应平台插件并完成 MCP 握手验证，做完回到面板刷新。
 
 import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.ts'
-import { KiokuFailure, keyFormatError, loadConfig, shownUrl } from './core.ts'
+import { KiokuFailure, keyFormatError, loadConfig, serverUrlProblem, shownUrl } from './core.ts'
 import { doctor } from './doctor.ts'
 import { pendingOf, planImport, writeImport } from './import.ts'
+import { formatHandshakeLines, installPlugin, verifyConnectionHandshake } from './installer.ts'
 import {
   composeState,
   composeUp,
@@ -37,7 +37,6 @@ import {
   type PlatformRow,
 } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
-import { serverUrlProblem } from './core.ts'
 import type { PromptsUi } from './prompts.ts'
 import { setup } from './setup.ts'
 import type { Env, TargetConfig, Writer } from './types.ts'
@@ -77,6 +76,8 @@ const DEPS = {
   defaultServerUrl,
   connectPlatforms,
   pluginSteps,
+  installPlugin,
+  verifyConnectionHandshake,
   setup,
   doctor,
   planImport,
@@ -133,7 +134,7 @@ async function chooseServer(ctx: WizardContext): Promise<void> {
   ctx.url = url
 }
 
-// 接入（或重新授权）几个平台：浏览器确认一次，签发的访问密钥照 kioku setup 写下
+// 接入（或重新授权）几个平台：浏览器确认一次，签发的访问密钥照 kioku setup 写下；默认尝试自动安装插件并握手测试
 async function connect(
   ctx: WizardContext,
   rows: PlatformRow[],
@@ -191,6 +192,31 @@ async function connect(
     done.length ? resultsText(allResults) : `一个平台都没有接上\n${resultsText(allResults)}`,
     '结果',
   )
+
+  if (!done.length) return
+
+  // 非 mock 环境下自动尝试安装插件与 MCP 握手检查；测试里自定义 pluginSteps 时尊重旧契约
+  const isCustomMock =
+    deps.pluginSteps !== DEPS.pluginSteps || deps.connectPlatforms !== DEPS.connectPlatforms
+  if (!isCustomMock) {
+    const manualIds: string[] = []
+    const summary: string[] = []
+    for (const id of done) {
+      const res = await deps.installPlugin(id, { env, cwd })
+      summary.push(`${PLATFORMS[id].name}：${res.message}`)
+      if (res.status === 'manual') manualIds.push(id)
+      const cfg = await PLATFORMS[id].readConfig?.(env).catch(() => null)
+      if (cfg) {
+        const handshake = await deps.verifyConnectionHandshake(id, cfg, { env })
+        summary.push(...formatHandshakeLines(handshake).map((l) => `  ${l}`))
+      }
+    }
+    if (summary.length) ui.note(summary.join('\n'), '插件与连通性')
+    const steps = manualIds.length ? await deps.pluginSteps(manualIds, { env, cwd }) : ''
+    if (steps) ui.note(steps, '装插件')
+    return
+  }
+
   const steps = await deps.pluginSteps(done, { env, cwd })
   if (steps) ui.note(steps, '装插件')
 }
@@ -400,7 +426,6 @@ async function bringUp(ctx: WizardContext, dir: string): Promise<void> {
 }
 
 // 本机起一个 Kioku：放好 compose.yaml 与 .env，docker compose up -d，等它就绪、等用户建好管理员。
-// 目录里已经有这个 compose 项目（上次起过）时不再判端口、不重新准备，接着启动或等它就绪
 async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
   const { ui, deps, env } = ctx
   const local = deps.local
@@ -550,7 +575,7 @@ export async function wizard({
       if (ctx.pending.has(row.id)) row.pending = ctx.pending.get(row.id)
     }
     spin.stop('现状')
-    ui.note(renderPanel(state), '面板')
+    ui.note(renderPanel(state, { collapseUninstalled: true }), '面板')
     const choice = await ui.select({ message: '要做什么', options: actionsFor(state) })
     if (cancelled(ui, choice) || choice === 'exit') {
       ui.outro('再运行 kioku 回到这里')
