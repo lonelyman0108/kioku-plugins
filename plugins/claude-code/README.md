@@ -14,10 +14,12 @@
 
 较早的 Claude Code 分两步：先 `/plugin marketplace add lonelyman0108/kioku-plugins`，再 `/plugin install kioku@kioku`。
 
-启用时填写两项配置，之后可以在 `/plugin` 里修改：
+启用时填写两项配置，之后可以在 `/plugin` 里修改（**或直接留空，改由终端运行 `kioku connect claude-code` / `kioku login claude-code` 自动写入 `~/.config/kioku/claude-code.json`**）：
 
 - **Kioku 服务地址**：例如 `https://kioku.example.com`，不带 `/v1`，末尾不要斜杠
-- **访问密钥**：在管理界面的「应用」页为运行时是 claudecode 的应用签发。它存在系统的凭据存储里，不写进 `settings.json`
+- **访问密钥**：在管理界面的「应用」页为运行时是 claudecode 的应用签发。`/plugin` 里填的访问密钥存在系统的凭据存储里，不写进 `settings.json`
+
+当 `/plugin` 两项配置留空时，插件的生命周期钩子、`mcp-stdio.mjs` MCP 包装脚本与会话里的 `kioku` 命令会自动回退读取 `~/.config/kioku/claude-code.json`（由 `kioku connect claude-code` / `kioku login claude-code` / `kioku setup claude-code` 写入，权限仅本人可读写）；若 `/plugin` 里明确填写了配置，则优先使用 `/plugin` 中的值。
 
 要让 agent 显式读取机密级记忆，签发访问密钥时把最高敏感级设为机密；召回和启动加载永远不含机密内容。要让 agent 用凭据（`kioku run`、`kioku_credential`），签发时把凭据能力选为「取用」，最高敏感级不低于私密。
 

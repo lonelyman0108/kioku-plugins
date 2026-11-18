@@ -19,16 +19,17 @@
 npx @kioku-memory/cli
 ```
 
-在终端里不带参数运行是一个向导：先列出服务器与本机各平台接到了哪一步（接入、访问密钥、插件、自带记忆、本地记忆），再按缺的列出动作。几个平台一起接入时浏览器里只确认一次，访问密钥直接写进本机配置，全程不显示；平台自带的长期记忆一并停用，本地记忆可以顺带迁进来。还没有服务器的，可以在本机用 Docker 起一个。向导要 Node 20.12 以上。
+在终端里不带参数运行打开交互式控制台面板：先扫描服务器与本机已安装客户端的接入现状（折叠未安装的客户端，支持一键接入全部已检出客户端），几个平台一起接入时浏览器里只确认一次，确认后自动写入配置、停用自带长期记忆、尝试自动安装对应插件并执行 `whoami` + MCP 工具清单握手验证，本地记忆可顺带迁入。尚未部署服务端时可直接在本机用 Docker 启动一套实例（`kioku local up`）。需要 Node 20.12 以上（命令行内置界面完全零外部依赖）。
 
-只接一个平台、或者在脚本里用：
+只接特定平台、或非交互使用：
 
 ```bash
-npx @kioku-memory/cli login <平台> --server-url https://kioku.example.com
+npx @kioku-memory/cli connect claude-code codex --server-url https://kioku.example.com
+npx @kioku-memory/cli login codex --server-url https://kioku.example.com
 KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --platforms codex,pi --server-url https://kioku.example.com -y
 ```
 
-`login` 认得 `codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`；Claude Code 的访问密钥在它的 `/plugin` 里填。
+`connect` 与 `login` 覆盖全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。其中 Claude Code 支持在终端通过 `kioku connect claude-code` 自动写入 `~/.config/kioku/claude-code.json`，也可直接在 `/plugin` 选项中填写（`/plugin` 选项优先，留空时钩子与 `mcp-stdio.mjs` 自动回退读取本机配置文件）。
 
 ## 平台
 
@@ -69,16 +70,26 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 
 | 子命令 | 作用 |
 |---|---|
-| `kioku`（不带参数） | 交互式向导：扫描现状并分步接入多个平台 |
-| `kioku login <平台>` | 浏览器授权，签发访问密钥并写好配置 |
-| `kioku setup <平台>` | 停用平台自带的记忆，手动填地址与访问密钥 |
+| `kioku`（不带参数） | 交互式控制台：扫描现状、一键接入、诊断检查与本地迁移 |
+| `kioku status [--json]` | 只读查看服务端状态与本机各客户端接入概况 |
+| `kioku connect [平台…]` | 一站式接入：浏览器授权、停用自带记忆、自动装插件与 MCP 握手验证 |
+| `kioku disconnect <平台>` | 断开接入、恢复自带记忆并安全清理托管安装的插件 |
+| `kioku upgrade [平台…]` | 更新已安装插件并刷新本机 MCP 工具清单缓存 |
+| `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限与各客户端配置 |
+| `kioku search <查询>` | 日常记忆检索（召回候选并在交互终端展开详情） |
+| `kioku get <坐标>` | 按坐标读取单条记忆完整属性与正文 |
+| `kioku ls [坐标或归属]` | 按地层顺序（本人、应用、人格、通用）浏览记忆目录 |
+| `kioku add [坐标]` | 写入新记忆（支持 `--content`、管道标准输入、编辑器与明文拦阻确认） |
+| `kioku local [up\|down\|status\|logs]` | 使用 Docker Compose 管理本机 Kioku 服务 |
+| `kioku open` | 在默认浏览器中打开 Kioku 管理界面 |
+| `kioku login <平台>` | 浏览器授权签发访问密钥并写好本机配置 |
+| `kioku setup <平台>` | 停用平台自带长期记忆，手动填写服务地址与访问密钥 |
 | `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
-| `kioku doctor [平台]` | 检查地址、访问密钥与平台配置 |
 | `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
-| `kioku import --from <来源>` | 把平台本地的记忆迁进 Kioku |
+| `kioku import --from <来源>` | 把平台本地的长期记忆迁进 Kioku |
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 取凭据的值放进环境变量交给命令，agent 看不到明文 |
 
-完整说明见 [命令行](packages/cli/README.md)。Claude Code 插件自带同一个命令，启用插件后在它的 Bash 工具里直接用。
+完整说明见 [命令行](packages/cli/README.md)。Claude Code 插件自带凭据取值与生命周期脚本；日常与全功能命令行推荐 `npx @kioku-memory/cli` 或全局安装 `@kioku-memory/cli`。
 
 ## 设计取向
 

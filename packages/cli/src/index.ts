@@ -13,6 +13,16 @@ import {
   UPGRADE_USAGE,
   upgradeCommand,
 } from './commands/manage.ts'
+import {
+  ADD_USAGE,
+  addCommand,
+  GET_USAGE,
+  getCommand,
+  LS_USAGE,
+  lsCommand,
+  SEARCH_USAGE,
+  searchCommand,
+} from './commands/memory.ts'
 import { STATUS_USAGE, statusCommand } from './commands/status.ts'
 import { KiokuFailure, run, UsageError } from './core.ts'
 import { doctor, DOCTOR_USAGE } from './doctor.ts'
@@ -26,6 +36,12 @@ import { barOut, wizard } from './wizard.ts'
 export { RUN_USAGE as USAGE, UsageError, parseRunArgs, run } from './core.ts'
 
 const OVERVIEW = `用法：kioku <子命令> [参数…]
+
+日常记忆读写：
+  search      召回相关记忆，支持交互展开详情与 --json
+  get         按坐标读取单条记忆的完整内容与属性
+  ls          按归属或前缀路径浏览记忆目录结构
+  add         写入新记忆（支持标准输入管道、编辑器与明文拦阻确认）
 
 客户端与连接管理：
   status      查看服务端连接状态与本机各平台接入概况（支持 --json）
@@ -99,6 +115,10 @@ export async function main(
     return 0
   }
   if (sub === 'run') return run(rest)
+  if (sub === 'search') return guarded('search', SEARCH_USAGE, (a) => searchCommand(a), rest)
+  if (sub === 'get') return guarded('get', GET_USAGE, (a) => getCommand(a), rest)
+  if (sub === 'ls') return guarded('ls', LS_USAGE, (a) => lsCommand(a), rest)
+  if (sub === 'add') return guarded('add', ADD_USAGE, (a) => addCommand(a), rest)
   if (sub === 'status') return guarded('status', STATUS_USAGE, (a) => statusCommand(a), rest)
   if (sub === 'connect') return guarded('connect', CONNECT_USAGE, (a) => connectCommand(a), rest)
   if (sub === 'disconnect') {

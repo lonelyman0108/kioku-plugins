@@ -734,7 +734,13 @@ export function localized(impl: PromptsUi): PromptsUi {
   }
 }
 
-export async function loadPrompts(): Promise<PromptsUi | null> {
+export async function loadPrompts({
+  input = process.stdin,
+  output = process.stdout,
+}: {
+  input?: Reader
+  output?: Writer & { isTTY?: boolean; columns?: number }
+} = {}): Promise<PromptsUi | null> {
   if (!nodeSupported()) return null
-  return localized(createBuiltinPrompts())
+  return localized(createBuiltinPrompts(input as NodeJS.ReadStream, output))
 }
