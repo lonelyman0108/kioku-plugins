@@ -41,6 +41,7 @@ function hook(event = 'session.start', { env = {}, input = { session_id: SESSION
     if (name.startsWith('CLAUDE_')) delete childEnv[name]
   }
   Object.assign(childEnv, {
+    KIOKU_CONFIG_DIR: join(dir, 'kioku-config'),
     CLAUDE_ENV_FILE: envFile,
     CLAUDE_PLUGIN_DATA: data,
     CLAUDE_PLUGIN_OPTION_SERVER_URL: 'https://kioku.example.com/',
@@ -238,5 +239,21 @@ describe('会话开始时给 kioku 命令配好地址与访问密钥', () => {
     expect(newline.stderr).toContain('控制字符')
     expect(existsSync(envFile)).toBe(false)
     for (const result of [blocked, unwritable, newline]) expect(result.stderr).not.toContain(KEY)
+  })
+
+  it('没有 /plugin 环境变量时回退读取 ~/.config/kioku/claude-code.json', async () => {
+    const cfgDir = join(dir, 'kioku-config')
+    mkdirSync(cfgDir, { recursive: true })
+    writeFileSync(
+      join(cfgDir, 'claude-code.json'),
+      JSON.stringify({ serverUrl: 'https://kioku.example.com/', apiKey: 'kioku_from_profile' }),
+    )
+    const result = await hook('session.start', {
+      env: { CLAUDE_PLUGIN_OPTION_SERVER_URL: null, CLAUDE_PLUGIN_OPTION_API_KEY: null },
+    })
+    expect(result).toEqual({ code: 0, stdout: '', stderr: '' })
+    const keyFile = join(data, `api-key.${SESSION}`)
+    expect(readFileSync(keyFile, 'utf8')).toBe('kioku_from_profile')
+    expect(sourced(envFile)).toEqual(['https://kioku.example.com', keyFile])
   })
 })

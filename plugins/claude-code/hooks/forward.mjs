@@ -8,6 +8,7 @@
 import { open } from 'node:fs/promises'
 
 import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { readProfile, serverUrlProblem } from '../lib/profile.mjs'
 import {
   assertKeyFormat,
   clip,
@@ -101,15 +102,25 @@ function userText(entry) {
 // 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
 function noticeOf(err) {
   return err.kind === 'key'
-    ? 'Kioku 插件的访问密钥格式不对，长期记忆不可用：在 /plugin 里为 kioku 重新填写访问密钥。'
-    : `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，在 /plugin 里为 kioku 修改。`
+    ? 'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 重新填写访问密钥。'
+    : `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，运行 kioku login claude-code 或在 /plugin 里为 kioku 修改。`
+}
+
+async function resolveConfig(env) {
+  let base = normalizeBase(env.CLAUDE_PLUGIN_OPTION_SERVER_URL)
+  let key = (env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
+  if (!base || !key) {
+    const profile = await readProfile('claude-code', env)
+    if (!base && profile) base = profile.url
+    if (!key && profile) key = profile.key
+  }
+  return { base, key }
 }
 
 async function main(event) {
   const timeout = TIMEOUTS[event]
   if (!timeout) throw new KiokuFailure(`未知事件 ${event}`)
-  const base = normalizeBase(process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL)
-  const key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
+  const { base, key } = await resolveConfig(process.env)
   let input = {}
   try {
     input = JSON.parse((await readStdin()) || '{}')
@@ -122,11 +133,13 @@ async function main(event) {
     if (event === 'session.start') {
       writeContext(
         event,
-        'Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：在 /plugin 里为 kioku 填写配置。',
+        'Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 填写配置。',
       )
     }
     return
   }
+  const urlProblem = serverUrlProblem(base)
+  if (urlProblem) throw new Misconfigured(urlProblem, 'url')
   assertKeyFormat(key)
 
   const body = { event }

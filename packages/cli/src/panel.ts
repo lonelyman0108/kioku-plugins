@@ -1,0 +1,419 @@
+// 向导的面板：扫描服务器与本机各平台的现状，排成几行文字，再按缺什么列出可做的动作。
+// 只读：不写文件、不签发访问密钥。查不了的项写「无法判断」，不猜
+
+import { stat } from 'node:fs/promises'
+
+import { KeyRejected, whoami } from './api.ts'
+import { conflictToolsText, scanConflicts, type ConflictItem } from './conflicts.ts'
+import {
+  KiokuFailure,
+  failureText,
+  fetchFailure,
+  hasCommand,
+  isRedirect,
+  plain,
+  serverUrlProblem,
+  shownUrl,
+} from './core.ts'
+import { countLocal } from './import.ts'
+import { PLATFORMS } from './platforms.ts'
+import type { Env, WhoamiResponse } from './types.ts'
+
+const TIMEOUT = 5000
+
+async function getJson(
+  url: string,
+  path: string,
+): Promise<{ status: number; data: Record<string, unknown> | null }> {
+  let res: Response
+  let data: Record<string, unknown> | null
+  try {
+    res = await fetch(`${url}${path}`, { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) })
+    data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  } catch (err) {
+    throw new KiokuFailure(fetchFailure(err, TIMEOUT))
+  }
+  if (isRedirect(res.status)) throw new KiokuFailure(`返回了跳转（${res.status}）`)
+  return { status: res.status, data }
+}
+
+export interface ServerHealthState {
+  reachable: boolean
+  version?: string | null
+  problem: string | null
+  needsSetup?: boolean
+}
+
+export interface PanelServer extends ServerHealthState {
+  url: string
+}
+
+export interface PlatformRow {
+  id: string
+  name: string
+  present: boolean
+  connection: 'ok' | 'none' | 'invalid' | 'unknown' | 'broken' | 'manual'
+  url?: string
+  otherServer?: boolean
+  who?: WhoamiResponse
+  reason?: string
+  plugin: boolean | null
+  memory: 'on' | 'off' | 'none' | null
+  reenabledIn?: string
+  local?: number | null
+  pending?: { pending: number | null; reason?: string }
+  conflicts?: ConflictItem[]
+}
+
+export interface PanelState {
+  server: PanelServer | null
+  platforms: PlatformRow[]
+}
+
+// 服务器的现状：{ reachable, version, problem, needsSetup }。不要访问密钥
+export async function serverHealth(url: string): Promise<ServerHealthState> {
+  let answer
+  try {
+    answer = await getJson(url, '/v1/health')
+  } catch (err) {
+    return { reachable: false, problem: failureText(err) }
+  }
+  const version = typeof answer.data?.version === 'string' ? plain(answer.data.version) : null
+  if (answer.status === 503) {
+    return { reachable: true, version, problem: '数据库暂时无法连接' }
+  }
+  if (answer.status !== 200 || answer.data?.status !== 'ok') {
+    return { reachable: false, problem: `不像 Kioku（HTTP ${answer.status}）` }
+  }
+  let needsSetup = false
+  try {
+    const setup = await getJson(url, '/v1/setup/status')
+    needsSetup = setup.status === 200 && setup.data?.needsSetup === true
+  } catch {
+    // 查不到按已初始化算
+  }
+  return { reachable: true, version, problem: null, needsSetup }
+}
+
+async function isDir(path: string): Promise<boolean> {
+  return Boolean((await stat(path).catch(() => null))?.isDirectory())
+}
+
+// 各平台写下的服务地址（按平台的顺序，同一个只留一次）
+export async function knownServers(env: Env): Promise<string[]> {
+  const urls: string[] = []
+  for (const platform of Object.values(PLATFORMS)) {
+    const config = await Promise.resolve(platform.readConfig?.(env)).catch(() => null)
+    if (config?.url && !urls.includes(config.url)) urls.push(config.url)
+  }
+  return urls
+}
+
+// 没有指明时用哪个服务地址：KIOKU_SERVER_URL，否则各平台写下的里面最先找到的
+export async function defaultServerUrl(env: Env): Promise<string | null> {
+  const fromEnv = (env.KIOKU_SERVER_URL ?? '').trim().replace(/\/+$/, '')
+  if (fromEnv && !serverUrlProblem(fromEnv)) return fromEnv
+  return (await knownServers(env))[0] ?? null
+}
+
+// 一个平台的现状。connection：
+// - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销
+// - unknown：连不上、响应不对，查不了；broken：配置文件读不懂
+// - manual：未写入 profile，但 Claude Code 在 /plugin 里已启用插件
+export async function scanPlatform(
+  id: string,
+  { env, cwd, url }: { env: Env; cwd: string; url: string | null },
+): Promise<PlatformRow> {
+  const platform = PLATFORMS[id]
+  const present = hasCommand(platform.command(env), env) || (await isDir(platform.home(env)))
+  const row: PlatformRow = {
+    id,
+    name: platform.name,
+    present,
+    connection: 'none',
+    plugin: null,
+    memory: null,
+  }
+
+  let config = null
+  if (!platform.readConfig) row.connection = 'manual'
+  else {
+    try {
+      config = await platform.readConfig(env)
+    } catch (err) {
+      row.connection = 'broken'
+      row.reason = failureText(err)
+    }
+  }
+  if (config) {
+    row.url = config.url
+    row.otherServer = Boolean(url && config.url !== url)
+    try {
+      row.who = await whoami(config)
+      row.connection = 'ok'
+    } catch (err) {
+      row.connection = err instanceof KeyRejected ? 'invalid' : 'unknown'
+      row.reason = failureText(err)
+    }
+  }
+
+  const status = await platform.status({ env, cwd }).catch(() => ({
+    plugin: null,
+    memory: null,
+    reenabledIn: undefined,
+  }))
+  row.plugin = status.plugin
+  row.memory = status.memory
+  if (status.reenabledIn) row.reenabledIn = status.reenabledIn
+
+  if (!config && row.connection === 'none' && id === 'claude-code' && status.plugin === true) {
+    row.connection = 'manual'
+  }
+
+  // 只数本地有几条；和 Kioku 比（没迁的有几条）要一条一条地问，选了迁移再比
+  if (platform.source) row.local = await countLocal(platform.source, { env }).catch(() => null)
+  const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
+  if (conflicts.length) row.conflicts = conflicts
+  return row
+}
+
+// 面板的全部现状。url 为空时只扫本机
+export async function scan({
+  env,
+  cwd,
+  url,
+}: {
+  env: Env
+  cwd: string
+  url: string | null
+}): Promise<PanelState> {
+  const server = url ? { url, ...(await serverHealth(url)) } : null
+  const platforms = await Promise.all(
+    Object.keys(PLATFORMS).map((id) => scanPlatform(id, { env, cwd, url })),
+  )
+  return { server, platforms }
+}
+
+const PLUGIN_NAMES = new Map<boolean | null, string>([
+  [true, '已安装'],
+  [false, '未安装'],
+  [null, '无法判断'],
+])
+const MEMORY_NAMES: Record<string, string> = { off: '已停用', on: '未停用', none: '无' }
+
+// 访问密钥属于哪个空间：服务端给了空间名就用名字，否则用 id 的前 8 位
+function spaceText(who: WhoamiResponse): string | null {
+  if (typeof who.spaceName === 'string' && who.spaceName) return plain(who.spaceName)
+  return typeof who.spaceId === 'string' ? plain(who.spaceId).slice(0, 8) : null
+}
+
+// 能不能停用：配过（不管现在能不能用），或者 Claude Code 的自动记忆停着
+export function canDisable(row: Pick<PlatformRow, 'connection' | 'memory'>): boolean {
+  return (
+    ['ok', 'invalid', 'unknown', 'broken'].includes(row.connection) ||
+    (row.connection === 'manual' && row.memory === 'off')
+  )
+}
+
+// 平台接到哪一步，一个短词
+export function connectionText(
+  row: Pick<PlatformRow, 'connection' | 'plugin' | 'otherServer' | 'present'>,
+): string {
+  if (row.connection === 'manual') return row.plugin ? '插件已启用' : '未接入'
+  if (row.connection === 'ok' && row.otherServer) return '接到另一台服务器'
+  return (
+    {
+      ok: '已接入',
+      none: row.present ? '未接入' : '未安装',
+      invalid: '已失效',
+      unknown: '无法判断',
+      broken: '配置有误',
+    }[row.connection] ?? '无法判断'
+  )
+}
+
+export function platformDetails(row: PlatformRow): {
+  head: string
+  facts: string[]
+  details: string[]
+} {
+  const head = connectionText(row)
+  const facts: string[] = []
+  if (row.connection === 'ok' && row.who) {
+    const app = row.who.app
+    facts.push(`应用 ${plain(app.name)}（${plain(app.slug)}）`)
+    const space = spaceText(row.who)
+    if (space) facts.push(`空间 ${space}`)
+    if (typeof row.who.accountName === 'string' && row.who.accountName) {
+      facts.push(`账号 ${plain(row.who.accountName)}`)
+    }
+    if (app.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) facts.push('应用的运行时不对')
+  }
+  if (row.otherServer && row.url) facts.push(shownUrl(row.url))
+  if (row.reason) facts.push(row.reason)
+
+  const details: string[] = []
+  if (row.connection === 'manual') details.push('访问密钥 无法判断（在 /plugin 里填）')
+  details.push(`插件 ${PLUGIN_NAMES.get(row.plugin) ?? '无法判断'}`)
+  const reenabled = row.reenabledIn ? `（被 ./${row.reenabledIn} 重新启用）` : ''
+  details.push(`自带记忆 ${(row.memory && MEMORY_NAMES[row.memory]) ?? '无法判断'}${reenabled}`)
+  if (row.local) {
+    const pending = !row.pending
+      ? ''
+      : row.pending.pending === null
+        ? '（未迁移 无法判断）'
+        : `（未迁移 ${row.pending.pending} 条）`
+    details.push(`本地记忆 ${row.local} 条${pending}`)
+  }
+  if (row.conflicts?.length) {
+    details.push(`冲突 ${conflictToolsText(row.conflicts)}`)
+  }
+  return { head, facts, details }
+}
+
+function platformLines(row: PlatformRow): string[] {
+  const { head, facts, details } = platformDetails(row)
+  const first = [`${row.name}：${head}`, ...facts].join(' · ')
+  // 没装、也没配过且没有冲突的平台只写一行
+  if (!row.present && row.connection === 'none' && !row.conflicts?.length) return [first]
+  return [first, `  ${details.join(' · ')}`]
+}
+
+// 面板的文字
+export function renderPanel(
+  state: PanelState,
+  { collapseUninstalled = false }: { collapseUninstalled?: boolean } = {},
+): string {
+  const lines: string[] = []
+  const { server } = state
+  if (!server) lines.push('服务器：未设置')
+  else {
+    const facts: string[] = []
+    if (!server.reachable) facts.push(`无法连接（${server.problem}）`)
+    else {
+      facts.push(server.problem ?? '可连接')
+      if (server.version) facts.push(`版本 ${server.version}`)
+      if (server.needsSetup) facts.push('未初始化')
+    }
+    lines.push(`服务器：${shownUrl(server.url)}（${facts.join(' · ')}）`)
+    const spaces = [
+      ...new Set(
+        state.platforms
+          .filter((row) => row.connection === 'ok' && row.who)
+          .map((row) => spaceText(row.who!))
+          .filter((s): s is string => Boolean(s)),
+      ),
+    ]
+    if (spaces.length > 1) lines.push(`访问密钥分属 ${spaces.length} 个空间：${spaces.join('、')}`)
+  }
+  lines.push('')
+  const uninstalled: PlatformRow[] = []
+  for (const row of state.platforms) {
+    if (
+      collapseUninstalled &&
+      !row.present &&
+      row.connection === 'none' &&
+      !row.conflicts?.length
+    ) {
+      uninstalled.push(row)
+      continue
+    }
+    lines.push(...platformLines(row))
+  }
+  if (uninstalled.length) {
+    lines.push(
+      `未检测到客户端（${uninstalled.length} 个）：${uninstalled.map((r) => r.name).join('、')}`,
+    )
+  }
+  return lines.join('\n')
+}
+
+// 要接入的候选：有自己的配置、还没接到这台服务器的（失效的与仅 /plugin 手动配置的另算）
+export function connectCandidates(state: PanelState): PlatformRow[] {
+  return state.platforms.filter(
+    (row) =>
+      PLATFORMS[row.id].setup &&
+      row.connection !== 'invalid' &&
+      row.connection !== 'manual' &&
+      !(row.connection === 'ok' && !row.otherServer),
+  )
+}
+
+const names = (rows: Array<{ name: string }>) => rows.map((row) => row.name).join('、')
+
+export interface PanelAction {
+  value: string
+  label: string
+  hint?: string
+}
+
+// 面板下面列出的动作：{ value, label, hint? }，按缺什么排在前面
+export function actionsFor(state: PanelState): PanelAction[] {
+  const actions: PanelAction[] = []
+  const { server } = state
+  const ready = Boolean(server?.reachable && !server.problem && !server.needsSetup)
+  if (!server || !server.reachable) {
+    actions.push({ value: 'local', label: '本机起一个 Kioku', hint: '用 Docker' })
+  }
+  if (!server) actions.push({ value: 'server', label: '填写服务器地址' })
+  if (server?.needsSetup) {
+    actions.push({ value: 'open', label: '打开管理界面初始化', hint: '建第一个管理员' })
+  }
+  if (ready) {
+    const candidates = connectCandidates(state)
+    const present = candidates.filter((row) => row.present)
+    if (present.length) {
+      actions.push({
+        value: 'connect',
+        label: `接入 ${names(present)}（${present.length} 个未接入）`,
+      })
+    } else if (candidates.length) {
+      actions.push({ value: 'connect', label: '接入其他平台', hint: '本机没发现的' })
+    }
+    const invalid = state.platforms.filter((row) => row.connection === 'invalid')
+    if (invalid.length) {
+      actions.push({ value: 'reauth', label: `重新授权 ${names(invalid)}（访问密钥已失效）` })
+    }
+  }
+  const claude = state.platforms.find((row) => row.id === 'claude-code')
+  if (
+    claude?.present &&
+    (claude.connection === 'manual' || claude.connection === 'ok') &&
+    claude.memory === 'on' &&
+    !claude.reenabledIn
+  ) {
+    actions.push({ value: 'claude-memory', label: '停用 Claude Code 的自动记忆' })
+  }
+  if (ready) {
+    for (const row of state.platforms) {
+      if (!row.local) continue
+      // 迁移要这个平台的访问密钥
+      if (row.connection !== 'manual' && !(row.connection === 'ok' && !row.otherServer)) continue
+      // 比过、确实都迁了的不再提供
+      if (row.pending?.pending === 0) continue
+      const count =
+        typeof row.pending?.pending === 'number'
+          ? `未迁移 ${row.pending.pending} 条`
+          : `${row.local} 条`
+      actions.push({ value: `import:${row.id}`, label: `迁移 ${row.name} 的本地记忆（${count}）` })
+    }
+  }
+  const conflicted = state.platforms.filter((row) => row.conflicts?.some((c) => c.removable))
+  if (conflicted.length) {
+    actions.push({
+      value: 'clean',
+      label: '清理冲突的记忆工具',
+      hint: conflictToolsText(
+        conflicted.flatMap((row) => row.conflicts!.filter((c) => c.removable)),
+      ),
+    })
+  }
+  if (state.platforms.some(canDisable)) {
+    actions.push({ value: 'disable', label: '停用某个平台', hint: '恢复自带记忆、清掉配置' })
+  }
+  actions.push({ value: 'doctor', label: '检查（doctor）' })
+  if (server) actions.push({ value: 'server', label: '更换服务器地址' })
+  actions.push({ value: 'refresh', label: '刷新' })
+  actions.push({ value: 'exit', label: '退出' })
+  return actions
+}
