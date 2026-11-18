@@ -12,6 +12,7 @@ import { appendFile, lstat, mkdir, open, readdir, readFile, rename, rm } from 'n
 import { join } from 'node:path'
 
 import { failureText, keyFormatError, KiokuFailure } from '../lib/http.mjs'
+import { readProfile, serverUrlProblem } from '../lib/profile.mjs'
 
 const KEY_PREFIX = 'api-key.'
 const TEMP_PREFIX = '.api-key.'
@@ -103,12 +104,28 @@ async function main(event) {
   }
 
   await cleanup(dataDir)
-  const base = (process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
-  const key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
+  let base = (process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
+  let key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
+  if (!base || !key) {
+    let profile
+    try {
+      profile = await readProfile('claude-code', process.env)
+    } catch (err) {
+      await rm(keyFile, { force: true })
+      throw err
+    }
+    if (!base && profile) base = profile.url
+    if (!key && profile) key = profile.key
+  }
   if (!base || !key) {
     // 配置清掉了：这个会话之前写下的访问密钥也不留着，别的会话的不动
     await rm(keyFile, { force: true })
     throw new KiokuFailure('插件没有配置服务地址或访问密钥')
+  }
+  const urlProblem = serverUrlProblem(base)
+  if (urlProblem) {
+    await rm(keyFile, { force: true })
+    throw new KiokuFailure(urlProblem)
   }
   // 格式不对的访问密钥发不出去，也不写进文件；这个会话之前写下的旧访问密钥同样不留着
   const problem = keyFormatError(key)

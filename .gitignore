@@ -16,6 +16,7 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+packages/cli/assets/
 # Python
 .venv/
 __pycache__/

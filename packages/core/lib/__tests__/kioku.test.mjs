@@ -215,25 +215,23 @@ describe('kioku run 的参数', () => {
     }
   })
 
-  it('不带子命令或子命令不认识时列出子命令', async () => {
+  it('不带子命令、子命令不认识或调用完整 CLI 命令时给出清晰提示', async () => {
     for (const args of [[], ['nope']]) {
       const result = await kioku(args)
       expect(result.code, args.join(' ')).toBe(2)
-      expect(result.stderr).toContain('用法：kioku <子命令>')
+      expect(result.stderr).toContain('用法：kioku run')
       expect(result.stdout).toBe('')
     }
     for (const args of [['--help'], ['-h']]) {
       const result = await kioku(args)
       expect(result.code).toBe(0)
-      for (const sub of ['run', 'setup', 'doctor']) expect(result.stdout).toContain(`  ${sub} `)
+      expect(result.stdout).toContain('用法：kioku run')
+      expect(result.stdout).toContain('@kioku-memory/cli')
     }
     for (const sub of ['setup', 'doctor']) {
-      const help = await kioku([sub, '--help'])
-      expect(help).toMatchObject({ code: 0, stderr: '' })
-      expect(help.stdout).toContain(`用法：kioku ${sub}`)
-      const wrong = await kioku([sub, '--nope'])
-      expect(wrong.code).toBe(2)
-      expect(wrong.stderr).toContain(`kioku ${sub}：不认识的选项 --nope`)
+      const redirected = await kioku([sub, '--help'])
+      expect(redirected.code).toBe(2)
+      expect(redirected.stderr).toContain(`npx @kioku-memory/cli ${sub}`)
     }
   })
 
@@ -246,7 +244,7 @@ describe('kioku run 的参数', () => {
       child.on('close', (code) => resolve({ code, stdout }))
     })
     expect(result.code).toBe(0)
-    expect(result.stdout).toContain('用法：kioku <子命令>')
+    expect(result.stdout).toContain('用法：kioku run')
   })
 })
 
