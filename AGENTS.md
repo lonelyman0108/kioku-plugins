@@ -49,7 +49,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场。hooks 与 `hooks/mcp-stdio.mjs` 支持 `/plugin` 配置，选项留空时回退读取 `~/.config/kioku/claude-code.json` |
 | `packages/core` | 各 JS 插件共用的零依赖运行时（`http.mjs`、`profile.mjs`、`config.mjs`、`text.mjs`、`usage.mjs`、`command.mjs`、`mcp.mjs`、`redact.mjs`、`lifecycle.mjs`、`run.mjs`、`kioku.mjs` 与 `bin/kioku` 入口）；保持纯运行时最小集合，向导、终端界面与平台诊断不放这里 |
-| `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：TypeScript + tsdown 构建成零外部运行依赖的单文件包 `dist/index.mjs`（`bin/kioku` 运行它）。包含各平台接入与巡检（`claudeCode.ts`、`codex.ts`、`pi.ts`、`hermes.ts`、`openclaw.ts`、`dsh.ts`、`opencode.ts`、`gemini.ts`、`agy.ts`、`doctor.ts`、`setup.ts`、`login.ts`、`connect.ts`、`install.ts`、`installer.ts`、`conflicts.ts`、`clean.ts`、`import.ts`、`sources.ts`、`local.ts`、`panel.ts`、`wizard.ts`、`identity.ts`）、高阶/记忆命令（`commands/status.ts`、`commands/manage.ts`、`commands/memory.ts`）、Strata 终端 UI 层（`ui/{width,theme,screen,clipboard,prompts}.ts`）及 `copyRules.test.ts` |
+| `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：TypeScript + tsdown 构建成零外部运行依赖的单文件包 `dist/index.mjs`（`bin/kioku` 运行它）。包含各平台接入与巡检（`claudeCode.ts`、`codex.ts`、`pi.ts`、`hermes.ts`、`openclaw.ts`、`dsh.ts`、`opencode.ts`、`gemini.ts`、`agy.ts`、`doctor.ts`、`setup.ts`、`login.ts`、`connect.ts`、`install.ts`、`installer.ts`、`conflicts.ts`、`clean.ts`、`import.ts`、`sources.ts`、`local.ts`、`panel.ts`、`wizard.ts`、`identity.ts`）、高阶/记忆命令（`commands/status.ts`、`commands/manage.ts`、`commands/memory.ts`）、Strata 终端 UI 层（`ui/{width,theme,screen,viewport,lineInput,clipboard,prompts,tui}.ts`）及 `copyRules.test.ts` |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
@@ -59,7 +59,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `plugins/opencode` | OpenCode 的插件：在 `config` 钩子自动注册远程 MCP 服务并在 `experimental.chat.system.transform`、`chat.message` 与 `session.idle` 转发生命周期；`lib/` 同样是副本 |
 | `plugins/gemini` | Gemini CLI 扩展：清单 `gemini-extension.json`，钩子 `hooks/hooks.json` 与 `hooks/forward.mjs`；`lib/` 同样是副本 |
 | `plugins/agy` | Antigravity 插件：清单 `plugin.json`，钩子 `hooks.json` 与 `hooks/forward.mjs`（单轮工具调用按 transcript 步骤去重）；`lib/` 同样是副本 |
-| `packages/cli/src/ui/` | Strata 终端视觉规范实现（零依赖）；细线框、`NO_COLOR`/`FORCE_COLOR`、CJK 宽度对齐、归属染色+文字标签、纯字符敏感级纹理、原地重绘、`[o]`/`[c]`/`[Esc]` 浏览器授权等待框与剪贴板辅助 |
+| `packages/cli/src/ui/` | Strata 终端视觉规范与全屏 TUI 实现（零依赖）；细线框、`NO_COLOR`/`FORCE_COLOR`、CJK 宽度与样式保留截断、归属染色+文字标签、纯字符敏感级纹理、字素簇行输入（`lineInput.ts`）、全屏双缓冲视口（`viewport.ts`）、客户端管理 TUI（`tui.ts`）、原地重绘（`screen.ts`）、`[o]`/`[c]`/`[Esc]` 浏览器授权等待框与剪贴板辅助 |
 | `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
 | `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
 
@@ -138,5 +138,5 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - 用例里假的服务端收请求体时要 `req.setEncoding('utf8')`：不设的话分块到达的多字节字符按块拼成字符串，切开的字变成替换字符，长度对不上（按上限截断的用例会偶尔失败）。
 - 用例不靠等一段固定时间来判断请求发出去没有、后台的事做完没有：测取消要等请求到了假的服务端（在 `reply` 里记下）再取消；OpenClaw 插件在后台取工具清单、写回本机，用例等它的 `idle()`，`afterEach` 也先等它再删临时目录。原因：门禁并行跑各包的测试，负载下几十毫秒不够，请求还没到时 `release` 是空的，没写完的清单让删目录报 `ENOTEMPTY`，迟到的请求落进下一个用例。
 - 用真实的 Codex 核对时不用官方的地址与登录：独立的 `CODEX_HOME` 里配一个自定义的 `model_providers`（`requires_openai_auth = false`，`env_key` 指向放密钥的环境变量），`codex exec` 要 `< /dev/null`，否则它等标准输入。
-- 交互式终端界面（不带参数的 `kioku`、浏览器授权确认框、`search`/`add`/`import --select` 等）使用 `packages/cli/src/ui/prompts.ts`（经 `prompts.ts` 导出）提供的零依赖 `PromptsUi` 实现，不引入外部 UI 包。用例里通过传入 mock `ui` 或非 TTY 流进行测试。各平台给面板的信息（命令名、配置目录、`status`、装插件的命令）登记在 `platforms.mjs`；向导与 `kioku install` 调各平台的 `setup` 时传 `hints: false`，「接下来装上」由 `connect.mjs` 统一处理，新平台的 `setup` 也要照这个开关。
+- 交互式终端界面：在终端不带参数运行 `kioku` 时默认进入 `packages/cli/src/ui/tui.ts` 提供的零依赖全屏客户端管理工作台（`TERM=dumb` 回退到 `wizard.ts` + `PromptsUi`）；子命令的浏览器授权确认框、`search`/`add`/`import --select` 等使用 `packages/cli/src/ui/prompts.ts`（经 `prompts.ts` 导出）提供的 `PromptsUi` 实现，不引入外部 UI 包。用例里通过传入 mock `ui` / mock TTY `stdin` 或非 TTY 流进行测试。各平台给面板的信息（命令名、配置目录、`status`、装插件的命令）登记在 `platforms.mjs`；向导、TUI 与 `kioku install` 调各平台的 `setup` 时传 `hints: false`，「接下来装上」由 `connect.mjs` 统一处理，新平台的 `setup` 也要照这个开关。
 - `packages/cli/package.json`、`plugins/claude-code/package.json` 不写 `"type": "module"`：没有扩展名的 `bin/kioku` 因此在各个 Node 版本上都按 CommonJS 执行。`packages/cli` 经 `pnpm --filter @kioku-memory/cli build`（`scripts/build.mjs` + `tsdown`）把 TypeScript 源码与 `packages/core` 运行时一并打包进 `dist/index.mjs`，发布到 npm 后无任何第三方 `dependencies`；开发测试时修改 `packages/core` 仍需运行 `node scripts/sync-core.mjs` 同步到各插件目录，`vendored.test.mjs` 会校验一致性。

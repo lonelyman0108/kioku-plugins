@@ -1,9 +1,11 @@
-// 终端显示宽度计算与排版工具：剥离 ANSI 转义序列、按字素簇准确计算 CJK 全角与表情符号列宽，
-// 提供按视觉列宽补齐、截断与自动换行，确保 Strata 框线在含中文与终端链接的输出里严丝合缝。
+// 终端显示宽度计算与排版工具：剥离或保留 ANSI 转义序列、按字素簇准确计算 CJK 全角与表情符号列宽，
+// 提供按视觉列宽补齐、保留样式截断、自动换行与任意列区间精确切片，确保 Strata 框线与弹出层严丝合缝。
 
 /* eslint-disable no-control-regex */
 const ANSI_PATTERN =
   /\u001b(?:\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\[[0-9;?]*[ -/]*[@-~]|P[^\u001b]*\u001b\\|.)/g
+const SGR_PATTERN = /^\u001b\[([0-9;]*)m$/
+const OSC8_PATTERN = /^\u001b\]8;[^;]*;([^\u0007\u001b]*)(?:\u0007|\u001b\\)$/
 /* eslint-enable no-control-regex */
 
 const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'grapheme' })
@@ -90,51 +92,167 @@ export function padStartWidth(text: string, width: number, fill = ' '): string {
   return fill.repeat(diff) + text
 }
 
+type AnsiToken = { kind: 'ansi'; seq: string } | { kind: 'text'; text: string }
+
+function tokenizeAnsi(text: string): AnsiToken[] {
+  const tokens: AnsiToken[] = []
+  ANSI_PATTERN.lastIndex = 0
+  let last = 0
+  for (const match of text.matchAll(ANSI_PATTERN)) {
+    const idx = match.index ?? 0
+    if (idx > last) tokens.push({ kind: 'text', text: text.slice(last, idx) })
+    tokens.push({ kind: 'ansi', seq: match[0] })
+    last = idx + match[0].length
+  }
+  if (last < text.length) tokens.push({ kind: 'text', text: text.slice(last) })
+  return tokens
+}
+
+interface StyleState {
+  sgr: string[]
+  osc8: string | null
+}
+
+function updateStyle(style: StyleState, seq: string): void {
+  const sgr = SGR_PATTERN.exec(seq)
+  if (sgr) {
+    if (sgr[1] === '' || sgr[1] === '0') style.sgr = []
+    else style.sgr.push(seq)
+    return
+  }
+  const osc8 = OSC8_PATTERN.exec(seq)
+  if (osc8) {
+    style.osc8 = osc8[1] ? seq : null
+  }
+}
+
+function closeStyleSuffix(style: StyleState): string {
+  let suffix = ''
+  if (style.osc8) suffix += '\x1b]8;;\x07'
+  if (style.sgr.length) suffix += '\x1b[0m'
+  return suffix
+}
+
+function reopenStylePrefix(style: StyleState): string {
+  return `${style.sgr.join('')}${style.osc8 ?? ''}`
+}
+
 export function truncateWidth(text: string, maxWidth: number, ellipsis = '…'): string {
   if (maxWidth <= 0) return ''
   if (displayWidth(text) <= maxWidth) return text
   const suffixWidth = displayWidth(ellipsis)
   if (suffixWidth >= maxWidth) {
-    return Array.from(segmenter.segment(ellipsis))
-      .slice(0, maxWidth)
-      .map((s) => s.segment)
-      .join('')
+    let out = ''
+    let used = 0
+    for (const { segment } of segmenter.segment(stripAnsi(ellipsis))) {
+      const w = graphemeWidth(segment)
+      if (used + w > maxWidth) break
+      out += segment
+      used += w
+    }
+    return out
   }
   const budget = maxWidth - suffixWidth
-  const plain = stripAnsi(text)
+  const style: StyleState = { sgr: [], osc8: null }
   let out = ''
   let used = 0
-  for (const { segment } of segmenter.segment(plain)) {
-    const w = graphemeWidth(segment)
-    if (used + w > budget) break
-    out += segment
-    used += w
+  let truncated = false
+
+  for (const token of tokenizeAnsi(text)) {
+    if (token.kind === 'ansi') {
+      if (budget > 0) {
+        out += token.seq
+        updateStyle(style, token.seq)
+      }
+      continue
+    }
+    for (const { segment } of segmenter.segment(token.text)) {
+      const w = graphemeWidth(segment)
+      if (used + w > budget) {
+        truncated = true
+        break
+      }
+      out += segment
+      used += w
+    }
+    if (truncated) break
   }
-  return `${out}${ellipsis}`
+
+  return `${out}${closeStyleSuffix(style)}${ellipsis}`
+}
+
+export function fitWidth(text: string, width: number): string {
+  if (width <= 0) return ''
+  return padEndWidth(truncateWidth(text, width), width)
 }
 
 export function wrapWidth(text: string, maxWidth: number): string[] {
   const target = Math.max(8, maxWidth)
   const lines: string[] = []
+  const style: StyleState = { sgr: [], osc8: null }
+
   for (const rawLine of text.split(/\r?\n/)) {
     if (!rawLine) {
       lines.push('')
       continue
     }
-    let current = ''
+    let current = reopenStylePrefix(style)
     let used = 0
-    for (const { segment } of segmenter.segment(stripAnsi(rawLine))) {
-      const w = graphemeWidth(segment)
-      if (used + w > target && current) {
-        lines.push(current)
-        current = segment
-        used = w
-      } else {
+    let hasVisible = false
+
+    for (const token of tokenizeAnsi(rawLine)) {
+      if (token.kind === 'ansi') {
+        current += token.seq
+        updateStyle(style, token.seq)
+        continue
+      }
+      for (const { segment } of segmenter.segment(token.text)) {
+        const w = graphemeWidth(segment)
+        if (used + w > target && hasVisible) {
+          lines.push(`${current}${closeStyleSuffix(style)}`)
+          current = reopenStylePrefix(style)
+          used = 0
+          hasVisible = false
+        }
         current += segment
         used += w
+        if (w > 0) hasVisible = true
       }
     }
-    lines.push(current)
+    lines.push(`${current}${closeStyleSuffix(style)}`)
   }
   return lines
+}
+
+// 按视觉列区间 [startCol, endCol) 精确切出纯文本片段；被切开的双列字符以单个空格补齐宽度
+export function slicePlainColumns(plainText: string, startCol: number, endCol: number): string {
+  const targetWidth = endCol - startCol
+  if (targetWidth <= 0) return ''
+  const clean = stripAnsi(plainText)
+  let out = ''
+  let outWidth = 0
+  let col = 0
+
+  for (const { segment } of segmenter.segment(clean)) {
+    const w = graphemeWidth(segment)
+    if (w === 0) continue
+    const segStart = col
+    const segEnd = col + w
+    col = segEnd
+    if (segEnd <= startCol) continue
+    if (segStart >= endCol) break
+    if (segStart >= startCol && segEnd <= endCol) {
+      out += segment
+      outWidth += w
+    } else {
+      const overlap = Math.min(segEnd, endCol) - Math.max(segStart, startCol)
+      out += ' '.repeat(overlap)
+      outWidth += overlap
+    }
+  }
+
+  if (outWidth < targetWidth) {
+    out += ' '.repeat(targetWidth - outWidth)
+  }
+  return out
 }

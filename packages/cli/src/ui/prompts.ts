@@ -8,6 +8,7 @@ import { plain } from '../core.ts'
 import { applyKeys } from '../secret.ts'
 import type { Reader, Writer } from '../types.ts'
 import { copyToClipboard, osc8Link } from './clipboard.ts'
+import { createLineInput, lineInputValue, renderLineWindow, stepLineInput } from './lineInput.ts'
 import { createScreen } from './screen.ts'
 import { createTheme, renderBox, type StrataTheme } from './theme.ts'
 import { displayWidth, padEndWidth } from './width.ts'
@@ -200,44 +201,45 @@ function readHiddenLine(stdin: NodeJS.ReadStream, out: Writer): Promise<string |
 
 function readVisibleLine(
   stdin: NodeJS.ReadStream,
-  out: Writer,
+  out: Writer & { isTTY?: boolean; columns?: number },
   initialValue = '',
+  prefix = '',
 ): Promise<string | symbol> {
-  let value = initialValue
-  if (value) out.write(value)
+  let state = createLineInput(initialValue)
+  const prefixWidth = displayWidth(prefix)
+  const maxWidth = () => Math.max(16, (out.columns ?? 80) - prefixWidth - 1)
+  const redraw = () => {
+    if (!out.isTTY) return
+    const { text, cursorCol } = renderLineWindow(state, { maxWidth: maxWidth() })
+    const col = prefixWidth + cursorCol
+    const move = col > 0 ? `\r\x1b[${col}C` : '\r'
+    out.write(`\r\x1b[K${prefix}${text}${move}`)
+  }
+  if (out.isTTY) {
+    if (initialValue) redraw()
+  } else if (initialValue) {
+    out.write(initialValue)
+  }
   return withRawKeypress<string | symbol>(stdin, (str, key, done) => {
-    if (key.ctrl && (key.name === 'c' || key.name === 'd')) {
+    const prev = state
+    const step = stepLineInput(state, str, key)
+    state = step.state
+    if (step.outcome === 'cancel') {
       out.write('\n')
       done(CANCEL)
       return
     }
-    if (key.name === 'escape') {
+    if (step.outcome === 'submit') {
       out.write('\n')
-      done(CANCEL)
+      done(lineInputValue(state))
       return
     }
-    if (key.name === 'return' || key.name === 'enter') {
-      out.write('\n')
-      done(value)
-      return
-    }
-    if (key.name === 'backspace') {
-      const chars = Array.from(value)
-      if (chars.length) {
-        chars.pop()
-        value = chars.join('')
-        out.write('\b \b')
+    if (state !== prev) {
+      if (out.isTTY) {
+        redraw()
+      } else if (str && !/\p{Cc}/u.test(str) && !key.ctrl && !key.meta) {
+        out.write(str)
       }
-      return
-    }
-    if (key.ctrl && key.name === 'u') {
-      value = ''
-      out.write('\r\x1b[K')
-      return
-    }
-    if (str && !/\p{Cc}/u.test(str) && !key.ctrl && !key.meta) {
-      value += str
-      out.write(str)
     }
   })
 }
@@ -279,7 +281,7 @@ export function createBuiltinPrompts(
       error: (msg) => writeLines(`${theme.rule('│')}  ${theme.error('✗')} `, msg),
       success: (msg) => writeLines(`${theme.rule('│')}  ${theme.ok('✓')} `, msg),
       message: (msg) => writeLines(`${theme.rule('│')}  `, msg),
-      step: (msg) => writeLines(`${theme.rule('│')}  ${theme.bold('◆')} `, msg),
+      step: (msg) => writeLines(`${theme.rule('│')}  ${theme.bold('▸')} `, msg),
     },
     async select<T>({ message, options, initialValue }: SelectConfig<T>): Promise<T | symbol> {
       if (!options.length) return CANCEL
@@ -290,7 +292,7 @@ export function createBuiltinPrompts(
       const screen = createScreen(out)
       screen.hideCursor()
       const render = () => {
-        const lines = [`${theme.bold('◆')}  ${theme.bold(message)}`]
+        const lines = [`${theme.bold('▸')}  ${theme.bold(message)}`]
         options.forEach((opt, i) => {
           const mark = i === index ? theme.ok('●') : theme.muted('○')
           const label = i === index ? theme.bold(opt.label) : opt.label
@@ -320,7 +322,7 @@ export function createBuiltinPrompts(
             index = (index + 1) % options.length
             render()
           } else if (key.name === 'return' || key.name === 'enter') {
-            screen.commit(`${theme.ok('◇')}  ${message} · ${options[index].label}`)
+            screen.commit(`${theme.ok('•')}  ${message} · ${options[index].label}`)
             done(options[index].value)
           }
         })
@@ -344,7 +346,7 @@ export function createBuiltinPrompts(
       screen.hideCursor()
 
       const render = (warning = '') => {
-        const lines = [`${theme.bold('◆')}  ${theme.bold(message)}`]
+        const lines = [`${theme.bold('▸')}  ${theme.bold(message)}`]
         options.forEach((opt, i) => {
           const ptr = i === cursor ? theme.bold('>') : ' '
           const box = selected.has(opt.value) ? theme.ok('[✓]') : theme.muted('[ ]')
@@ -393,7 +395,7 @@ export function createBuiltinPrompts(
             }
             const picked = options.filter((o) => selected.has(o.value))
             screen.commit(
-              `${theme.ok('◇')}  ${message} · ${picked.map((o) => o.label).join('、') || '无'}`,
+              `${theme.ok('•')}  ${message} · ${picked.map((o) => o.label).join('、') || '无'}`,
             )
             done(picked.map((o) => o.value))
           }
@@ -422,7 +424,7 @@ export function createBuiltinPrompts(
           ? `${theme.ok('●')} ${theme.bold(inactive)}`
           : `${theme.muted('○')} ${inactive}`
         screen.render(
-          `${theme.bold('◆')}  ${theme.bold(message)}\n${theme.rule('│')}  ${yes}  /  ${no}`,
+          `${theme.bold('▸')}  ${theme.bold(message)}\n${theme.rule('│')}  ${yes}  /  ${no}`,
         )
       }
       render()
@@ -437,13 +439,13 @@ export function createBuiltinPrompts(
             value = !value
             render()
           } else if (str === 'y' || str === 'Y') {
-            screen.commit(`${theme.ok('◇')}  ${message} · ${active}`)
+            screen.commit(`${theme.ok('•')}  ${message} · ${active}`)
             done(true)
           } else if (str === 'n' || str === 'N') {
-            screen.commit(`${theme.ok('◇')}  ${message} · ${inactive}`)
+            screen.commit(`${theme.ok('•')}  ${message} · ${inactive}`)
             done(false)
           } else if (key.name === 'return' || key.name === 'enter') {
-            screen.commit(`${theme.ok('◇')}  ${message} · ${value ? active : inactive}`)
+            screen.commit(`${theme.ok('•')}  ${message} · ${value ? active : inactive}`)
             done(value)
           }
         })
@@ -458,9 +460,10 @@ export function createBuiltinPrompts(
       validate,
     }: TextConfig): Promise<string | symbol> {
       const hint = placeholder ? theme.muted(`（例如 ${placeholder}）`) : ''
+      const prefix = `${theme.rule('│')}  `
       for (;;) {
-        out.write(`${theme.bold('◆')}  ${theme.bold(message)}${hint}\n${theme.rule('│')}  `)
-        const answer = await readVisibleLine(stdin, out, initialValue)
+        out.write(`${theme.bold('▸')}  ${theme.bold(message)}${hint}\n${prefix}`)
+        const answer = await readVisibleLine(stdin, out, initialValue, prefix)
         if (isCancel(answer)) {
           out.write(`${theme.error('■')}  ${message}：已取消\n`)
           return CANCEL
@@ -474,7 +477,7 @@ export function createBuiltinPrompts(
     async password({ message, validate }: PasswordConfig): Promise<string | symbol> {
       for (;;) {
         out.write(
-          `${theme.bold('◆')}  ${theme.bold(message)}${theme.muted('（不回显）')}\n${theme.rule('│')}  `,
+          `${theme.bold('▸')}  ${theme.bold(message)}${theme.muted('（不回显）')}\n${theme.rule('│')}  `,
         )
         const answer = await readHiddenLine(stdin, out)
         if (isCancel(answer)) {
@@ -489,7 +492,7 @@ export function createBuiltinPrompts(
     spinner(): SpinnerHandle {
       let current = ''
       let timer: ReturnType<typeof setInterval> | null = null
-      const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+      const frames = ['·', '•', '●', '•']
       let frame = 0
       const stopTimer = () => {
         if (timer) {
@@ -509,7 +512,7 @@ export function createBuiltinPrompts(
           timer = setInterval(() => {
             frame = (frame + 1) % frames.length
             out.write(`\r\x1b[K${theme.rule('│')}  ${frames[frame]} ${current}`)
-          }, 80)
+          }, 140)
         },
         message(msg = '') {
           current = msg
@@ -520,8 +523,8 @@ export function createBuiltinPrompts(
           stopTimer()
           const line = msg || current
           if (out.isTTY)
-            out.write(`\r\x1b[K${line ? `${theme.rule('│')}  ${theme.ok('◇')} ${line}\n` : ''}`)
-          else if (line) out.write(`│  ◇ ${line}\n`)
+            out.write(`\r\x1b[K${line ? `${theme.rule('│')}  ${theme.ok('•')} ${line}\n` : ''}`)
+          else if (line) out.write(`│  • ${line}\n`)
         },
       }
     },

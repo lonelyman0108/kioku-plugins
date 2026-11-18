@@ -42,7 +42,12 @@ export function osc52Sequence(text: string): string {
   return `\x1b]52;c;${Buffer.from(text, 'utf8').toString('base64')}\x07`
 }
 
-function tryPipeCommand(cmd: string, args: string[], text: string): Promise<boolean> {
+// Windows 下 clip.exe 把 UTF-8 按系统代码页解析，中文会乱码；加 BOM 的 UTF-16LE 能原生正确识别
+export function encodeWin32Clipboard(text: string): Buffer {
+  return Buffer.from(`\uFEFF${text}`, 'utf16le')
+}
+
+function tryPipeCommand(cmd: string, args: string[], payload: string | Buffer): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
     const finish = (ok: boolean) => {
@@ -68,7 +73,7 @@ function tryPipeCommand(cmd: string, args: string[], text: string): Promise<bool
         clearTimeout(timer)
         finish(false)
       })
-      child.stdin?.end(text)
+      child.stdin?.end(payload)
     } catch {
       finish(false)
     }
@@ -94,8 +99,9 @@ export async function copyToClipboard(
             ['xsel', ['--clipboard', '--input']],
           ]
 
+  const payload = platform === 'win32' ? encodeWin32Clipboard(text) : text
   for (const [cmd, args] of candidates) {
-    if (await tryPipeCommand(cmd, args, text)) {
+    if (await tryPipeCommand(cmd, args, payload)) {
       return { ok: true, method: 'native' }
     }
   }
