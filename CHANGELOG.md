@@ -2,6 +2,17 @@
 
 ## [未发布]
 
+## [0.4.0] - 2026-11-18
+
+`@kioku-memory/cli` 重构为零外部运行依赖的单文件包，带来全新的终端地层界面（Strata UI）、插件自动安装与日常记忆读写子命令（要求 Node 22.12 以上）。
+
+### 新功能
+
+- **地层风格终端界面与交互控制台**：全面采用 Kioku 地层视觉语言（细线直角卡片、归属色彩配文字标签、纯字符敏感级纹理、非全屏原地局部重绘，兼容 `NO_COLOR` / `FORCE_COLOR`）；默认控制台自动折叠本机未安装的客户端；浏览器授权等待框新增确认码自动复制、10 分钟倒计时及 `[o]` 打开浏览器 / `[c]` 复制链接 / `[Esc]` 取消快捷键
+- **一站式接入管理与插件自动安装**：新增 `kioku connect`、`kioku status [--json]`、`kioku disconnect`、`kioku upgrade`、`kioku open`、`kioku local [up|down|status|logs]`，以及 `kioku doctor --all / --json`；接入完成后自动尝试安装或更新对应客户端插件（Antigravity 目录带托管标记安全管理），并执行 `whoami` 与 MCP 工具清单连通性握手验证
+- **Claude Code 统一授权支持**：`kioku connect claude-code`、`kioku login claude-code` 与 `kioku setup claude-code` 现支持浏览器授权并写入 `~/.config/kioku/claude-code.json`；当 `/plugin` 选项留空时，插件钩子与 MCP 包装脚本自动回退读取该配置
+- **零配置日常记忆读写命令**：新增 `kioku search`（检索并在交互终端回车展开正文）、`kioku get`（按坐标读取完整属性与多行正文）、`kioku ls`（按本人、应用、人格、通用地层顺序或前缀浏览目录）与 `kioku add`（支持参数、标准输入管道与编辑器写入，遇疑似明文凭据拦阻时不回显原值并支持确认或 `--plaintext-ok` 放行）；支持自动识别本机客户端身份并记住默认选择；`kioku import` 新增 `-y` 与 `--select` 交互勾选子集
+
 ## [0.3.0] - 2026-11-17
 
 本版起 `@kioku-memory/plugin-opencode` 一并随 `kioku` 命令行与 OpenClaw 插件发到 npm。

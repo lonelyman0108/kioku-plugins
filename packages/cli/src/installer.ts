@@ -1,5 +1,6 @@
 // 插件自动安装、版本升级、安全卸载与连通性握手（whoami + MCP tools/list）
 
+import { readFileSync } from 'node:fs'
 import { cp, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -11,7 +12,11 @@ import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
 import { layerLabel, sensitivityBadge } from './ui/theme.ts'
 
-export const CLI_VERSION = '0.3.0'
+export const CLI_VERSION = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string
+  }
+).version
 const MANAGED_MARKER = '.kioku-managed.json'
 const EXCLUDE_ASSETS = new Set(['node_modules', '__tests__', '.vitest', '.DS_Store', 'coverage'])
 
