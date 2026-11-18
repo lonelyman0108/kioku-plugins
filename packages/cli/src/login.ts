@@ -10,6 +10,7 @@ import { ensureNoConflicts } from './conflicts.ts'
 import { configure, orphanHint } from './connect.ts'
 import { KiokuFailure, UsageError, fetchFailure, isRedirect, plain, redirectError } from './core.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
+import { startDeviceAuthWait } from './prompts.ts'
 import { resolveServerUrl } from './target.ts'
 import type { Env, Reader, Writer } from './types.ts'
 
@@ -47,9 +48,13 @@ async function post(
   url: string,
   path: string,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<{ status: number; data: Record<string, unknown> | null }> {
   let res: Response
   let data: Record<string, unknown> | null
+  const combined = signal
+    ? AbortSignal.any([AbortSignal.timeout(TIMEOUT), signal])
+    : AbortSignal.timeout(TIMEOUT)
   try {
     res = await fetch(`${url}${path}`, {
       method: 'POST',
@@ -57,10 +62,11 @@ async function post(
       body: JSON.stringify(body),
       // 不跟着跳转走：设备码只发给配置的地址
       redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT),
+      signal: combined,
     })
     data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   } catch (err) {
+    if (signal?.aborted) throw new KiokuFailure('已取消')
     throw new KiokuFailure(fetchFailure(err, TIMEOUT))
   }
   if (isRedirect(res.status)) {
@@ -145,6 +151,30 @@ export async function requestGrant(
 export interface WaitTimingOptions {
   sleep?: (ms: number) => Promise<void>
   now?: () => number
+  signal?: AbortSignal
+}
+
+function abortableSleep(
+  ms: number,
+  sleep: (ms: number) => Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return sleep(ms)
+  if (signal.aborted) return Promise.reject(new KiokuFailure('已取消'))
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(new KiokuFailure('已取消'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    sleep(ms).then(
+      () => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      },
+    )
+  })
 }
 
 // 等确认：按服务端给的间隔轮询，确认了返回服务端的整个回答；被拒绝、过期时抛 KiokuFailure。
@@ -155,6 +185,7 @@ async function waitForApproval(
   {
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now = () => performance.now(),
+    signal,
   }: WaitTimingOptions = {},
 ): Promise<Record<string, unknown>> {
   const deadline = now() + grant.expiresIn * 1000
@@ -163,12 +194,13 @@ async function waitForApproval(
   // 有过没得到回答的轮询：那一次服务端可能已经把访问密钥签出来了
   let missed = false
   while (now() < deadline) {
-    await sleep(interval)
+    if (signal?.aborted) throw new KiokuFailure('已取消')
+    await abortableSleep(interval, sleep, signal)
     let answer: { status: number; data: Record<string, unknown> | null }
     try {
-      answer = await post(url, '/v1/device/token', { deviceCode: grant.deviceCode })
+      answer = await post(url, '/v1/device/token', { deviceCode: grant.deviceCode }, signal)
     } catch (err) {
-      if (err instanceof Redirected) throw err
+      if (err instanceof Redirected || signal?.aborted) throw err
       missed = true
       if (++failures >= MAX_FAILURES) {
         throw new KiokuFailure(`${(err as Error).message}。${ORPHAN_HINT}`)
@@ -289,23 +321,13 @@ export function machineName(clientName: unknown): string {
   return name || 'kioku-cli'
 }
 
-// 显示确认码与确认页，打开浏览器
-function showGrant(
-  grant: DeviceGrant,
-  { out, open, browser }: { out: Writer; open: (url: string) => void; browser: boolean },
-): void {
-  out.write(`确认码：${plain(grant.userCode)}\n`)
-  // 显示的和打开的是同一个地址
-  out.write(`在浏览器里打开 ${plain(grant.verificationUrl)}，登录后输入这个确认码\n`)
-  out.write(`等待确认（${Math.ceil(grant.expiresIn / 60)} 分钟内有效）…\n`)
-  if (browser) open(grant.verificationUrl)
-}
-
 export interface DeviceLoginOptions extends WaitTimingOptions {
-  out: Writer
+  out: Writer & { isTTY?: boolean; columns?: number }
+  stdin?: Reader
   open?: (url: string) => void
   browser?: boolean
   clientName?: string
+  interactive?: boolean
 }
 
 // 走一遍浏览器授权，返回访问密钥。提示写到 out，访问密钥不写
@@ -313,18 +335,37 @@ export async function deviceLogin(
   { url, runtimeFamily }: { url: string; runtimeFamily: string },
   {
     out,
+    stdin = process.stdin,
     open = openBrowser,
     browser = true,
     clientName = hostname(),
     sleep,
     now,
+    interactive,
   }: DeviceLoginOptions,
 ): Promise<string> {
   const grant = await requestGrant(url, { runtimeFamily, clientName: machineName(clientName) })
-  showGrant(grant, { out, open, browser })
-  const { key, app } = await waitForKey(url, grant, { sleep, now })
-  out.write(`✓ 已确认：应用 ${plain(app.name ?? '')}（${plain(app.slug ?? '')}）\n`)
-  return key
+  const controller = new AbortController()
+  const waitUi = await startDeviceAuthWait({
+    userCode: grant.userCode,
+    verificationUrl: grant.verificationUrl,
+    expiresIn: grant.expiresIn,
+    out,
+    stdin,
+    open,
+    browser,
+    interactive: interactive ?? (sleep || now ? false : undefined),
+    onCancel: () => controller.abort(),
+  })
+  try {
+    const { key, app } = await waitForKey(url, grant, { sleep, now, signal: controller.signal })
+    waitUi.stop()
+    out.write(`✓ 已确认：应用 ${plain(app.name ?? '')}（${plain(app.slug ?? '')}）\n`)
+    return key
+  } catch (err) {
+    waitUi.stop()
+    throw err
+  }
 }
 
 // 几个平台一起申请，只确认一次。返回 waitForKeys 的结果（按去重后的顺序）；服务端不认这种写法时抛 LegacyServer。
@@ -333,11 +374,13 @@ export async function deviceLoginMany(
   { url, runtimeFamilies }: { url: string; runtimeFamilies: string[] },
   {
     out,
+    stdin = process.stdin,
     open = openBrowser,
     browser = true,
     clientName = hostname(),
     sleep,
     now,
+    interactive,
   }: DeviceLoginOptions,
 ): Promise<MultiKeyItem[]> {
   const families = [...new Set(runtimeFamilies)]
@@ -348,12 +391,33 @@ export async function deviceLoginMany(
     platforms: families.map((runtimeFamily) => ({ runtimeFamily })),
     clientName: machineName(clientName),
   })
-  showGrant(grant, { out, open, browser })
-  const results = await waitForKeys(url, grant, families, { sleep, now })
-  // 确认了也可能一个都没签发：取走时照签发规则再核对，全都没过（例如确认人已停用）
-  const issued = results.filter((item) => item.status === 'issued').length
-  out.write(issued ? `✓ 已确认，签发了 ${issued} 个访问密钥\n` : '✗ 已确认，但没有签发访问密钥\n')
-  return results
+  const controller = new AbortController()
+  const waitUi = await startDeviceAuthWait({
+    userCode: grant.userCode,
+    verificationUrl: grant.verificationUrl,
+    expiresIn: grant.expiresIn,
+    out,
+    stdin,
+    open,
+    browser,
+    interactive: interactive ?? (sleep || now ? false : undefined),
+    onCancel: () => controller.abort(),
+  })
+  try {
+    const results = await waitForKeys(url, grant, families, {
+      sleep,
+      now,
+      signal: controller.signal,
+    })
+    waitUi.stop()
+    // 确认了也可能一个都没签发：取走时照签发规则再核对，全都没过（例如确认人已停用）
+    const issued = results.filter((item) => item.status === 'issued').length
+    out.write(issued ? `✓ 已确认，签发了 ${issued} 个访问密钥\n` : '✗ 已确认，但没有签发访问密钥\n')
+    return results
+  } catch (err) {
+    waitUi.stop()
+    throw err
+  }
 }
 
 export function parseLoginArgs(argv: string[]): {
