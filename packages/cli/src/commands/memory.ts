@@ -11,6 +11,7 @@ import {
   UsageError,
   fetchFailure,
   isRedirect,
+  launch,
   plain,
   redirectError,
 } from '../core.ts'
@@ -680,7 +681,9 @@ async function editInTempEditor(env: Env): Promise<string | null> {
   const file = join(dir, 'memory.md')
   try {
     await writeFile(file, '', 'utf8')
-    const res = spawnSync(parts[0], [...parts.slice(1), file], { stdio: 'inherit', env })
+    const run = launch(parts[0], [...parts.slice(1), file], env)
+    if (!run) return null
+    const res = spawnSync(run.file, run.args, { stdio: 'inherit', env, ...run.options })
     if (res.error || res.status !== 0) return null
     return await readFile(file, 'utf8')
   } finally {

@@ -10,7 +10,7 @@ import { ensureNoConflicts } from './conflicts.ts'
 import { configure, orphanHint } from './connect.ts'
 import { KiokuFailure, UsageError, fetchFailure, isRedirect, plain, redirectError } from './core.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
-import { startDeviceAuthWait } from './prompts.ts'
+import { startDeviceAuthWait, type DeviceWaitHandle } from './prompts.ts'
 import { resolveServerUrl } from './target.ts'
 import type { Env, Reader, Writer } from './types.ts'
 
@@ -321,6 +321,15 @@ export function machineName(clientName: unknown): string {
   return name || 'kioku-cli'
 }
 
+export type DeviceAuthPrompt = (params: {
+  userCode: string
+  verificationUrl: string
+  expiresIn: number
+  open: (url: string) => void
+  browser: boolean
+  onCancel: () => void
+}) => Promise<DeviceWaitHandle> | DeviceWaitHandle
+
 export interface DeviceLoginOptions extends WaitTimingOptions {
   out: Writer & { isTTY?: boolean; columns?: number }
   stdin?: Reader
@@ -328,6 +337,53 @@ export interface DeviceLoginOptions extends WaitTimingOptions {
   browser?: boolean
   clientName?: string
   interactive?: boolean
+  authPrompt?: DeviceAuthPrompt
+}
+
+async function beginAuthWait(
+  grant: DeviceGrant,
+  {
+    out,
+    stdin,
+    open,
+    browser,
+    interactive,
+    authPrompt,
+    sleep,
+    now,
+  }: {
+    out: Writer & { isTTY?: boolean; columns?: number }
+    stdin: Reader
+    open: (url: string) => void
+    browser: boolean
+    interactive?: boolean
+    authPrompt?: DeviceAuthPrompt
+    sleep?: (ms: number) => Promise<void>
+    now?: () => number
+  },
+  onCancel: () => void,
+): Promise<DeviceWaitHandle> {
+  if (authPrompt) {
+    return await authPrompt({
+      userCode: grant.userCode,
+      verificationUrl: grant.verificationUrl,
+      expiresIn: grant.expiresIn,
+      open,
+      browser,
+      onCancel,
+    })
+  }
+  return startDeviceAuthWait({
+    userCode: grant.userCode,
+    verificationUrl: grant.verificationUrl,
+    expiresIn: grant.expiresIn,
+    out,
+    stdin,
+    open,
+    browser,
+    interactive: interactive ?? (sleep || now ? false : undefined),
+    onCancel,
+  })
 }
 
 // 走一遍浏览器授权，返回访问密钥。提示写到 out，访问密钥不写
@@ -342,21 +398,16 @@ export async function deviceLogin(
     sleep,
     now,
     interactive,
+    authPrompt,
   }: DeviceLoginOptions,
 ): Promise<string> {
   const grant = await requestGrant(url, { runtimeFamily, clientName: machineName(clientName) })
   const controller = new AbortController()
-  const waitUi = await startDeviceAuthWait({
-    userCode: grant.userCode,
-    verificationUrl: grant.verificationUrl,
-    expiresIn: grant.expiresIn,
-    out,
-    stdin,
-    open,
-    browser,
-    interactive: interactive ?? (sleep || now ? false : undefined),
-    onCancel: () => controller.abort(),
-  })
+  const waitUi = await beginAuthWait(
+    grant,
+    { out, stdin, open, browser, interactive, authPrompt, sleep, now },
+    () => controller.abort(),
+  )
   try {
     const { key, app } = await waitForKey(url, grant, { sleep, now, signal: controller.signal })
     waitUi.stop()
@@ -381,6 +432,7 @@ export async function deviceLoginMany(
     sleep,
     now,
     interactive,
+    authPrompt,
   }: DeviceLoginOptions,
 ): Promise<MultiKeyItem[]> {
   const families = [...new Set(runtimeFamilies)]
@@ -392,17 +444,11 @@ export async function deviceLoginMany(
     clientName: machineName(clientName),
   })
   const controller = new AbortController()
-  const waitUi = await startDeviceAuthWait({
-    userCode: grant.userCode,
-    verificationUrl: grant.verificationUrl,
-    expiresIn: grant.expiresIn,
-    out,
-    stdin,
-    open,
-    browser,
-    interactive: interactive ?? (sleep || now ? false : undefined),
-    onCancel: () => controller.abort(),
-  })
+  const waitUi = await beginAuthWait(
+    grant,
+    { out, stdin, open, browser, interactive, authPrompt, sleep, now },
+    () => controller.abort(),
+  )
   try {
     const results = await waitForKeys(url, grant, families, {
       sleep,

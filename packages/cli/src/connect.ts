@@ -3,7 +3,13 @@
 // kioku install 的访问密钥从环境变量来，直接写下。插件不替用户装，只列出要运行的命令
 
 import { KiokuFailure, plain } from './core.ts'
-import { deviceLogin, deviceLoginMany, LegacyServer, MAX_PLATFORMS } from './login.ts'
+import {
+  deviceLogin,
+  deviceLoginMany,
+  LegacyServer,
+  MAX_PLATFORMS,
+  type DeviceAuthPrompt,
+} from './login.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, Writer } from './types.ts'
 
@@ -72,6 +78,7 @@ export async function connectPlatforms(
     clientName,
     sleep,
     now,
+    authPrompt,
   }: {
     env: Env
     out: Writer
@@ -81,10 +88,19 @@ export async function connectPlatforms(
     clientName?: string
     sleep?: (ms: number) => Promise<void>
     now?: () => number
+    authPrompt?: DeviceAuthPrompt
   },
 ): Promise<ConnectResult[]> {
   const io = { env, out, cwd, url }
-  const login = { out, open, browser, sleep, now, ...(clientName ? { clientName } : {}) }
+  const login = {
+    out,
+    open,
+    browser,
+    sleep,
+    now,
+    ...(clientName ? { clientName } : {}),
+    ...(authPrompt ? { authPrompt } : {}),
+  }
   const results = new Map<string, ConnectResult>()
   // 申请之前先看各平台的配置写不写得进去：访问密钥只在签发时给一次
   const ready: string[] = []

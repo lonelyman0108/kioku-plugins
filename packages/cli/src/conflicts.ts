@@ -859,6 +859,13 @@ async function scanCodexConflicts(items: ConflictItem[], { env }: { env: Env }) 
 
 // ── OpenCode (opencode) ──────────────────────────────────────────────────────
 
+function findPythonBin(env: Env): string | null {
+  for (const bin of ['python3', 'python']) {
+    if (hasCommand(bin, env)) return bin
+  }
+  return null
+}
+
 async function scanOpenCodeConflicts(
   items: ConflictItem[],
   { env, cwd }: { env: Env; cwd: string },
@@ -938,7 +945,8 @@ async function scanOpenCodeConflicts(
   if ((await lstat(compatState).catch(() => null))?.isFile()) {
     const compatHelper = join(loreHome, 'opencode-compat.py')
     const hasHelper = (await lstat(compatHelper).catch(() => null))?.isFile()
-    if (hasHelper && hasCommand('python3', env)) {
+    const pythonBin = hasHelper ? findPythonBin(env) : null
+    if (hasHelper && pythonBin) {
       items.push({
         id: `opencode:lore:compat:${compatState}`,
         platform: 'opencode',
@@ -949,7 +957,7 @@ async function scanOpenCodeConflicts(
         removable: true,
         remove: async () => {
           const res = await capture(
-            'python3',
+            pythonBin,
             [compatHelper, 'uninstall', '--home', homeOf(env), '--lore-home', loreHome],
             env,
             { timeout: 15_000 },
@@ -968,7 +976,7 @@ async function scanOpenCodeConflicts(
         tool: 'lore',
         toolName: 'Lore',
         kind: 'warning',
-        summary: `发现 ${plain(compatState)}（缺少 python3 或辅助脚本，请检查 oh-my-openagent 配置）`,
+        summary: `发现 ${plain(compatState)}（缺少 python 或辅助脚本，请检查 oh-my-openagent 配置）`,
         removable: false,
       })
     }

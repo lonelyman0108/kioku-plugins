@@ -186,10 +186,16 @@ const agy: PlatformDescriptor = {
   home: agyHome,
   status: statusAgy,
   install: {
-    commands: [
-      'git clone https://github.com/lonelyman0108/kioku-plugins',
-      'mkdir -p ~/.gemini/config/plugins && cp -r kioku-plugins/plugins/agy ~/.gemini/config/plugins/kioku',
-    ],
+    commands:
+      process.platform === 'win32'
+        ? [
+            'git clone https://github.com/lonelyman0108/kioku-plugins',
+            'New-Item -ItemType Directory -Force "$HOME\\.gemini\\config\\plugins" | Out-Null; Copy-Item -Recurse -Force kioku-plugins\\plugins\\agy "$HOME\\.gemini\\config\\plugins\\kioku"',
+          ]
+        : [
+            'git clone https://github.com/lonelyman0108/kioku-plugins',
+            'mkdir -p ~/.gemini/config/plugins && cp -r kioku-plugins/plugins/agy ~/.gemini/config/plugins/kioku',
+          ],
     after: '新开会话生效（MCP 服务已由 kioku setup agy 写进 mcp_config.json）',
   },
   detect: (env: Env) => Boolean(env.ANTIGRAVITY_AGENT || env.AGY_SESSION_ID),

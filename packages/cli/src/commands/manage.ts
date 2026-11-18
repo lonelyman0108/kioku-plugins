@@ -16,6 +16,7 @@ import {
   shownUrl,
   writeToolCache,
 } from '../core.ts'
+import { rememberServerUrl } from '../identity.ts'
 import { confirm } from '../import.ts'
 import {
   formatHandshakeLines,
@@ -171,6 +172,7 @@ export async function connectCommand(
   }
   const urlProblem = serverUrlProblem(url)
   if (urlProblem) throw new KiokuFailure(urlProblem)
+  await rememberServerUrl(url, env).catch(() => {})
 
   const readyIds: string[] = []
   const preFailed: Array<{ id: string; status: 'failed'; reason: string }> = []
@@ -517,6 +519,7 @@ export async function localCommand(
 
   // up
   if (await healthy(LOCAL_URL)) {
+    await rememberServerUrl(LOCAL_URL, env).catch(() => {})
     out.write(`✓ 本机 ${LOCAL_PORT} 端口上已经有 Kioku 在运行：${LOCAL_URL}\n`)
     return 0
   }
@@ -546,6 +549,7 @@ export async function localCommand(
     throw new KiokuFailure(`Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 看原因`)
   }
   out.write(`✓ Kioku 已就绪：${LOCAL_URL}\n`)
+  await rememberServerUrl(LOCAL_URL, env).catch(() => {})
   if (!(await setupDone(LOCAL_URL))) {
     const codeLines = code
       ? [`初始化码：${code}`, `在浏览器中打开 ${LOCAL_URL} 完成初始化`]

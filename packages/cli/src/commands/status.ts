@@ -4,6 +4,7 @@
 import { UsageError, plain, shownUrl } from '../core.ts'
 import {
   defaultServerUrl,
+  effectivePresence,
   platformDetails,
   scan,
   type PanelState,
@@ -65,7 +66,8 @@ function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean
   const uninstalled: PlatformRow[] = []
 
   for (const row of state.platforms) {
-    if (!row.present && row.connection === 'none' && !row.conflicts?.length) {
+    const presence = effectivePresence(row)
+    if (presence !== 'installed' && row.connection === 'none' && !row.conflicts?.length) {
       uninstalled.push(row)
     } else {
       active.push(row)
@@ -78,9 +80,12 @@ function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean
   } else {
     for (const row of active) {
       const details = platformDetails(row)
+      const presence = effectivePresence(row)
       const headBadge =
         row.connection === 'ok' && !row.otherServer
-          ? theme.ok('✓ 已接入')
+          ? presence === 'installed'
+            ? theme.ok('✓ 已接入')
+            : theme.warn(presence === 'config-only' ? '! 未找到程序' : '! 客户端不在')
           : row.connection === 'invalid' || row.connection === 'broken'
             ? theme.error(`✗ ${details.head}`)
             : theme.muted(details.head)
@@ -106,7 +111,9 @@ function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean
     lines.push('')
     lines.push(
       theme.muted(
-        `未检测到客户端（${uninstalled.length} 个）：${uninstalled.map((r) => r.name).join('、')}`,
+        `未检测到客户端（${uninstalled.length} 个）：${uninstalled
+          .map((r) => (effectivePresence(r) === 'config-only' ? `${r.name}（仅配置）` : r.name))
+          .join('、')}`,
       ),
     )
   }
