@@ -2,6 +2,18 @@
 
 ## [未发布]
 
+## [0.5.0] - 2026-11-18
+
+### 新功能
+
+- **全屏双栏客户端管理工作台**：终端无参运行 `kioku` 默认进入零外部依赖的全屏双栏工作台（`TERM=dumb` 时自动回退到流式问答向导），顶栏展示 `記 憶 · kioku-plugins` 与服务器连接状态，左侧客户端列表与右侧详情渐进加载，支持单键接入、批量接入、插件安装更新、连通性诊断、冲突清理与本地记忆迁移，并保留终端原生鼠标框选复制
+- **服务器地址持久化**：在 `~/.config/kioku/cli.json` 中自动记住最近使用或配置的 Kioku 服务地址，后续打开工作台或执行管理命令时直接沿用
+
+### 问题修复
+
+- **客户端三态探测与目录消歧**：区分 `installed`（含 CLI、桌面目录与 VS Code / Cursor / Windsurf 扩展）、`config-only`（仅残余配置）与 `absent` 三种状态；未接入的仅残余配置项默认折叠到 `Tab`，已接入但找不到可执行程序的客户端在主列表保留并提示告警；隔离 Gemini CLI 与 Antigravity 共用的 `~/.gemini` 目录，避免误判已安装
+- **Windows 与 Windows Terminal 适配加固**：替换 `Consolas` 字体缺失或宽窄飘移字形并补充全屏自动折行保护与 `SIGBREAK` 终端恢复；Windows 下 `clip.exe` 改用 UTF-16LE BOM 编码避免中文复制乱码；查找命令时跳过 `Microsoft\WindowsApps` 下的零字节商店空壳；补齐 PowerShell 安装与下载指引、`$EDITOR` 启动 `.cmd` 编辑器及大小写不敏感的 Claude Code 盘符项目名解析
+
 ## [0.4.1] - 2026-11-18
 
 ### 问题修复
