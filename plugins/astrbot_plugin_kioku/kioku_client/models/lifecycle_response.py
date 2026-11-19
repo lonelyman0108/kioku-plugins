@@ -22,11 +22,11 @@ class LifecycleResponse:
     """
     Attributes:
         host_output (HostOutput):
-        node_uris (list[str]):
+        short_ids (list[str]):
     """
 
     host_output: HostOutput
-    node_uris: list[str]
+    short_ids: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,14 +34,14 @@ class LifecycleResponse:
 
         host_output = self.host_output.to_dict()
 
-        node_uris = self.node_uris
+        short_ids = self.short_ids
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "hostOutput": host_output,
-                "nodeUris": node_uris,
+                "shortIds": short_ids,
             }
         )
 
@@ -54,11 +54,11 @@ class LifecycleResponse:
         d = dict(src_dict)
         host_output = HostOutput.from_dict(d.pop("hostOutput"))
 
-        node_uris = cast(list[str], d.pop("nodeUris"))
+        short_ids = cast(list[str], d.pop("shortIds"))
 
         lifecycle_response = cls(
             host_output=host_output,
-            node_uris=node_uris,
+            short_ids=short_ids,
         )
 
         lifecycle_response.additional_properties = d

@@ -80,7 +80,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: PromptSubmitEvent | SessionStartEvent | TurnEndEvent,
 ) -> Response[ErrorResponse | LifecycleResponse]:
-    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
+    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出与短 ID 列表；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
 
     Args:
         body (PromptSubmitEvent | SessionStartEvent | TurnEndEvent):
@@ -109,7 +109,7 @@ def sync(
     client: AuthenticatedClient,
     body: PromptSubmitEvent | SessionStartEvent | TurnEndEvent,
 ) -> ErrorResponse | LifecycleResponse | None:
-    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
+    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出与短 ID 列表；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
 
     Args:
         body (PromptSubmitEvent | SessionStartEvent | TurnEndEvent):
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: PromptSubmitEvent | SessionStartEvent | TurnEndEvent,
 ) -> Response[ErrorResponse | LifecycleResponse]:
-    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
+    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出与短 ID 列表；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
 
     Args:
         body (PromptSubmitEvent | SessionStartEvent | TurnEndEvent):
@@ -160,7 +160,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: PromptSubmitEvent | SessionStartEvent | TurnEndEvent,
 ) -> ErrorResponse | LifecycleResponse | None:
-    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
+    """插件转发宿主的生命周期事件，返回宿主可直接使用的输出与短 ID 列表；turn.end 把这一轮对话放进会话缓冲，攒批后抽取
 
     Args:
         body (PromptSubmitEvent | SessionStartEvent | TurnEndEvent):

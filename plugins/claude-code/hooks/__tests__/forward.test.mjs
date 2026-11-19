@@ -15,7 +15,7 @@ let base
 let requests = []
 const defaultReply = () => ({
   status: 200,
-  body: { hostOutput: { mode: 'none', value: null }, nodeUris: [] },
+  body: { hostOutput: { mode: 'none', value: null }, shortIds: [] },
 })
 let reply = defaultReply
 
@@ -41,7 +41,11 @@ beforeEach(() => {
 
 function run(event, input, options = {}) {
   const emptyConfigDir = mkdtempSync(join(tmpdir(), 'kioku-hook-cfg-'))
-  const env = { ...process.env, KIOKU_CONFIG_DIR: options.configDir ?? emptyConfigDir }
+  const env = {
+    ...process.env,
+    KIOKU_CONFIG_DIR: options.configDir ?? emptyConfigDir,
+    KIOKU_DEVICE_KEY: options.deviceKey ?? 'claude-dev',
+  }
   delete env.CLAUDE_PLUGIN_OPTION_SERVER_URL
   delete env.CLAUDE_PLUGIN_OPTION_API_KEY
   if (options.configured !== false) {
@@ -69,7 +73,7 @@ describe('Claude Code 钩子转发', () => {
     }
     reply = () => ({
       status: 200,
-      body: { hostOutput: { mode: 'stdout_json', value }, nodeUris: [] },
+      body: { hostOutput: { mode: 'stdout_json', value }, shortIds: [] },
     })
     const dir = mkdtempSync(join(tmpdir(), 'kioku-hook-'))
     const cwd = join(dir, 'my-project')
@@ -85,6 +89,7 @@ describe('Claude Code 钩子转发', () => {
       expect(requests[0].body).toEqual({
         event: 'session.start',
         sessionId: 's1',
+        deviceKey: 'claude-dev',
         project: { dirName: 'my-project', repoName: 'kioku' },
       })
     } finally {
@@ -105,23 +110,31 @@ describe('Claude Code 钩子转发', () => {
   it('每轮输入：转发提示语，把召回块作为附加上下文写出', async () => {
     reply = () => ({
       status: 200,
-      body: { hostOutput: { mode: 'stdout_text', value: '<recall>\n</recall>' }, nodeUris: [] },
+      body: { hostOutput: { mode: 'stdout_text', value: '<recall>\n</recall>' }, shortIds: [] },
     })
-    const result = await run('prompt.submit', {
-      session_id: 's1',
-      prompt: '  办公室的网络怎么配的  ',
-    })
-    expect(JSON.parse(result.stdout)).toEqual({
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
-        additionalContext: '<recall>\n</recall>',
-      },
-    })
-    expect(requests[0].body).toEqual({
-      event: 'prompt.submit',
-      sessionId: 's1',
-      prompt: '办公室的网络怎么配的',
-    })
+    const dir = mkdtempSync(join(tmpdir(), 'kioku-hook-'))
+    try {
+      const result = await run('prompt.submit', {
+        session_id: 's1',
+        cwd: dir,
+        prompt: '  办公室的网络怎么配的  ',
+      })
+      expect(JSON.parse(result.stdout)).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          additionalContext: '<recall>\n</recall>',
+        },
+      })
+      expect(requests[0].body).toEqual({
+        event: 'prompt.submit',
+        sessionId: 's1',
+        deviceKey: 'claude-dev',
+        project: { dirName: basename(dir) },
+        prompt: '办公室的网络怎么配的',
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('只转交上下文文本：服务端返回的其他控制字段不透传，挡不住用户的输入', async () => {
@@ -136,7 +149,7 @@ describe('Claude Code 钩子转发', () => {
             hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '启动' },
           },
         },
-        nodeUris: [],
+        shortIds: [],
       },
     })
     const start = await run('session.start', {})
@@ -146,7 +159,7 @@ describe('Claude Code 钩子转发', () => {
 
     reply = () => ({
       status: 200,
-      body: { hostOutput: { mode: 'stdout_json', value: { decision: 'block' } }, nodeUris: [] },
+      body: { hostOutput: { mode: 'stdout_json', value: { decision: 'block' } }, shortIds: [] },
     })
     const prompt = await run('prompt.submit', { prompt: '你好' })
     expect(prompt).toMatchObject({ code: 0, stdout: '' })
@@ -154,7 +167,7 @@ describe('Claude Code 钩子转发', () => {
     // 纯文本恰好是一段 JSON 时，也只会作为上下文文本出现
     reply = () => ({
       status: 200,
-      body: { hostOutput: { mode: 'stdout_text', value: '{"decision":"block"}' }, nodeUris: [] },
+      body: { hostOutput: { mode: 'stdout_text', value: '{"decision":"block"}' }, shortIds: [] },
     })
     const text = JSON.parse((await run('prompt.submit', { prompt: '你好' })).stdout)
     expect(text.decision).toBeUndefined()
@@ -324,18 +337,26 @@ describe('Claude Code 钩子转发', () => {
         ],
         '{"type":"assistant","message":{"content":',
       )
+      const workDir = mkdtempSync(join(tmpdir(), 'kioku-cc-cwd-'))
       try {
-        const result = await run('turn.end', { session_id: 's1', transcript_path: path })
+        const result = await run('turn.end', {
+          session_id: 's1',
+          cwd: workDir,
+          transcript_path: path,
+        })
         expect(result).toMatchObject({ code: 0, stdout: '' })
         expect(requests).toHaveLength(1)
         expect(requests[0].url).toBe('/v1/lifecycle/event')
         expect(requests[0].body).toEqual({
           event: 'turn.end',
           sessionId: 's1',
+          deviceKey: 'claude-dev',
+          project: { dirName: basename(workDir) },
           user: '办公室的网络怎么配的',
           reply: '先查一下记忆。\n主路由器在机房。',
         })
       } finally {
+        rmSync(workDir, { recursive: true, force: true })
         cleanup()
       }
     })

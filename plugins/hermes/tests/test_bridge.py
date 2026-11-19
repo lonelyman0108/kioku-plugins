@@ -7,6 +7,7 @@ from hermes.kioku_bridge import (
     KiokuFailure,
     KiokuSession,
     context_of,
+    device_key_of,
     is_trivial,
     key_problem,
     server_url_problem,
@@ -33,7 +34,8 @@ def body_of(kioku, name):
     )
 
 
-def test_local_session_boots_recalls_and_reports(kioku, tmp_path):
+def test_local_session_boots_recalls_and_reports(monkeypatch, kioku, tmp_path):
+    monkeypatch.setenv("KIOKU_DEVICE_KEY", "hermes-dev")
     s = session(kioku)
     s.start("s1", platform="cli", cwd=str(tmp_path), agent_context="primary")
     assert s.active
@@ -41,18 +43,27 @@ def test_local_session_boots_recalls_and_reports(kioku, tmp_path):
     assert body_of(kioku, "session.start") == {
         "event": "session.start",
         "sessionId": "s1",
+        "deviceKey": "hermes-dev",
         "project": {"dirName": tmp_path.name},
     }
     assert all(r["auth"] == f"Bearer {KEY}" for r in kioku.requests)
 
     assert s.recall("  办公室的网络怎么配的  ") == "<召回>"
-    assert body_of(kioku, "prompt.submit")["prompt"] == "办公室的网络怎么配的"
+    assert body_of(kioku, "prompt.submit") == {
+        "event": "prompt.submit",
+        "sessionId": "s1",
+        "deviceKey": "hermes-dev",
+        "project": {"dirName": tmp_path.name},
+        "prompt": "办公室的网络怎么配的",
+    }
 
     s.turn_end(" 问 ", " 答 ")
     s.flush()
     assert body_of(kioku, "turn.end") == {
         "event": "turn.end",
         "sessionId": "s1",
+        "deviceKey": "hermes-dev",
+        "project": {"dirName": tmp_path.name},
         "user": "问",
         "reply": "答",
     }
@@ -65,19 +76,19 @@ def test_tools_are_listed_before_start_and_routed(kioku):
     assert names == ["kioku_get", "kioku_search"]
     assert s.tools()[0]["parameters"] == {
         "type": "object",
-        "properties": {"uri": {"type": "string"}},
+        "properties": {"id": {"type": "string"}},
     }
     assert s.tools()[1]["parameters"] == {"type": "object", "properties": {}}
     s.start("s1", platform="cli")
     # 清单只取一次
     assert events(kioku).count("tools/list") == 1
     assert [tool["name"] for tool in s.tools()] == names
-    assert json.loads(s.call_tool("kioku_get", {"uri": "user://a"})) == {
+    assert json.loads(s.call_tool("kioku_get", {"id": "m-234567"})) == {
         "result": "调用了 kioku_get"
     }
     assert body_of(kioku, "tools/call")["params"] == {
         "name": "kioku_get",
-        "arguments": {"uri": "user://a"},
+        "arguments": {"id": "m-234567"},
     }
     # 不是 Kioku 的工具不转发
     assert "error" in json.loads(s.call_tool("rm_rf", {}))
@@ -142,7 +153,7 @@ def test_only_local_platforms_are_enabled(kioku, kwargs):
     assert s.recall("问") == ""
     # 模型看不到工具；登记还在，调用时拒绝
     assert s.tools() == []
-    assert "error" in json.loads(s.call_tool("kioku_get", {"uri": "user://a"}))
+    assert "error" in json.loads(s.call_tool("kioku_get", {"id": "m-234567"}))
     s.turn_end("问", "答")
     s.flush()
     assert kioku.requests == []
@@ -229,7 +240,9 @@ def test_long_text_is_clipped(kioku):
     s.flush()
     assert len(body_of(kioku, "prompt.submit")["prompt"]) == 20_000
     assert len(body_of(kioku, "turn.end")["user"]) == 20_000
-    assert len(body_of(kioku, "turn.end")["reply"]) == 20_000
+    assert len(body_of(kioku, "turn.end")["reply"]) == 10_000
+    assert len(body_of(kioku, "turn.end")["reply"].encode("utf-16-le")) == 40_000
+    assert device_key_of({"KIOKU_DEVICE_KEY": ("a" * 127) + "🚀tail"}) == "a" * 127
 
 
 def test_event_stream_answers_from_the_tool_endpoint(kioku):

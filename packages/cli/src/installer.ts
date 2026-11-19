@@ -11,7 +11,7 @@ import { bundledGeminiDir } from './gemini.ts'
 import { resolvePlatformCommand } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
-import { layerLabel, sensitivityBadge } from './ui/theme.ts'
+import { kindLabel, sensitivityBadge } from './ui/theme.ts'
 
 export const CLI_VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -346,17 +346,19 @@ export function formatHandshakeLines(report: HandshakeReport): string[] {
     return [`✗ 连通测试失败：${report.problem ?? '未知错误'}`]
   }
   const { who, toolCount } = report
-  const space = who.spaceName
-    ? plain(who.spaceName)
-    : who.spaceId
-      ? plain(who.spaceId).slice(0, 8)
-      : '默认空间'
-  const readScopes = (who.scopes.readLayers ?? []).map(layerLabel).join('、') || '无'
-  const writeScopes = (who.scopes.writeLayers ?? []).map(layerLabel).join('、') || '无'
+  const circle = who.primaryCircle.name
+    ? plain(who.primaryCircle.name)
+    : who.primaryCircle.slug
+      ? plain(who.primaryCircle.slug)
+      : plain(who.primaryCircle.id).slice(0, 8)
+  const linkedCount = Array.isArray(who.linkedCircles) ? who.linkedCircles.length : 0
+  const linkedNote = linkedCount > 0 ? `（含 ${linkedCount} 个关联圈）` : ''
+  const readScopes = (who.scopes.readKinds ?? []).map(kindLabel).join('、') || '无'
+  const writeScopes = (who.scopes.writeKinds ?? []).map(kindLabel).join('、') || '无'
   const maxSens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal')
   const mcpNote = typeof toolCount === 'number' ? ` · MCP 工具 ${toolCount} 个` : ''
   return [
-    `✓ 握手成功：应用 ${plain(who.app.name)}（${plain(who.app.slug)}） · 空间 ${space}${mcpNote}`,
-    `  读归属：${readScopes} · 写归属：${writeScopes} · 上限：${maxSens}`,
+    `✓ 握手成功：接入实例 ${plain(who.client.name)}（${plain(who.client.slug)}） · 记忆圈 ${circle}${linkedNote}${mcpNote}`,
+    `  读物种：${readScopes} · 写物种：${writeScopes} · 上限：${maxSens}`,
   ]
 }

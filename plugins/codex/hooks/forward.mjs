@@ -11,6 +11,7 @@ import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -59,11 +60,12 @@ function pendingFile(env, sessionId, turnId) {
   return join(pendingDir(env), `${PENDING_PREFIX}${sessionId}.${turnId}.json`)
 }
 
-async function savePending(env, input, prompt) {
+async function savePending(env, input, prompt, project) {
   const file = pendingFile(env, input.session_id, input.turn_id)
   if (!file) return
   await mkdir(pendingDir(env), { recursive: true, mode: 0o700 })
-  await writeFile(file, JSON.stringify({ prompt }), { mode: 0o600 })
+  const data = Object.keys(project ?? {}).length ? { prompt, project } : { prompt }
+  await writeFile(file, JSON.stringify(data), { mode: 0o600 })
 }
 
 // 取走这一轮记下的输入；没有记下（提交时钩子没跑、或者已经取过）时为 null
@@ -71,8 +73,15 @@ async function takePending(env, input) {
   const file = pendingFile(env, input.session_id, input.turn_id)
   if (!file) return null
   try {
-    const { prompt } = JSON.parse(await readFile(file, 'utf8'))
-    return typeof prompt === 'string' && prompt ? prompt : null
+    const parsed = JSON.parse(await readFile(file, 'utf8'))
+    if (typeof parsed?.prompt !== 'string' || !parsed.prompt) return null
+    return {
+      user: parsed.prompt,
+      project:
+        parsed.project && typeof parsed.project === 'object' && !Array.isArray(parsed.project)
+          ? parsed.project
+          : undefined,
+    }
   } catch {
     return null
   } finally {
@@ -125,35 +134,37 @@ async function main(event) {
     return
   }
   const { url: base, key } = profile
+  const explicitCwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : ''
+  const detectedProject = projectOf(explicitCwd || process.cwd())
+  const deviceKey = deviceKeyOf(env)
 
-  const body = { event }
+  const body = { event, ...(deviceKey ? { deviceKey } : {}) }
   if (typeof input.session_id === 'string' && input.session_id) {
-    body.sessionId = input.session_id.slice(0, MAX_SESSION_ID)
+    body.sessionId = clip(input.session_id, MAX_SESSION_ID)
   }
   if (event === 'turn.end') {
     // 一轮结束：把这一轮交给服务端写会话摘要，不带会话上下文；什么都不写到标准输出（Stop 钩子的输出能让它接着说）。
     // 别的钩子让它接着说时（stop_hook_active）这一轮还没完，等真正结束的那一次，记下的输入留着
     if (input.stop_hook_active === true) return
-    const user = await takePending(env, input)
+    const pending = await takePending(env, input)
+    const user = pending?.user
     const reply =
       typeof input.last_assistant_message === 'string' ? input.last_assistant_message : ''
     if (!body.sessionId || !user) return
+    const project = explicitCwd ? detectedProject : (pending?.project ?? detectedProject)
+    if (Object.keys(project).length) body.project = project
     body.user = clip(user, MAX_PROMPT)
     body.reply = clip(reply.trim(), MAX_REPLY)
     await postEvent(base, key, body, timeout)
     return
   }
-  if (event === 'session.start') {
-    const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()
-    const project = projectOf(cwd)
-    if (Object.keys(project).length) body.project = project
-  }
+  if (Object.keys(detectedProject).length) body.project = detectedProject
   if (event === 'prompt.submit') {
     const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
     if (!prompt) return
     body.prompt = clip(prompt, MAX_PROMPT)
     // 先记下输入再召回：召回失败也不影响这一轮结束时写会话摘要
-    await savePending(env, input, body.prompt).catch(() => {})
+    await savePending(env, input, body.prompt, detectedProject).catch(() => {})
   }
 
   const res = await postEvent(base, key, body, timeout)

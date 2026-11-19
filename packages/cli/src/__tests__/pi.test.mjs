@@ -19,10 +19,24 @@ import { mode } from '../../../core/lib/__tests__/fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  app: { id: 'a', slug: 'pi', name: 'pi', runtimeFamily: 'pi' },
+  primaryCircle: {
+    id: '00000000-0000-4000-8000-000000000001',
+    slug: 'personal',
+    name: '个人圈',
+    kind: 'personal',
+  },
+  linkedCircles: [],
+  client: {
+    id: 'a',
+    circleId: '00000000-0000-4000-8000-000000000001',
+    slug: 'pi',
+    name: 'pi',
+    runtimeFamily: 'pi',
+  },
+  persona: null,
   scopes: {
-    readLayers: ['core'],
-    writeLayers: ['app'],
+    readKinds: ['entry'],
+    writeKinds: ['entry'],
     maxSensitivity: 'internal',
     credentials: 'none',
   },
@@ -74,7 +88,7 @@ describe('kioku setup pi', () => {
     const result = await run(setup, ['pi', '--server-url', `${base}/`])
     expect(result.code).toBe(0)
     expect(requests).toEqual(['/v1/whoami'])
-    expect(result.text).toContain('✓ 访问密钥可用：应用 pi，运行时 pi')
+    expect(result.text).toContain('✓ 访问密钥可用：接入实例 pi，运行时 pi')
     expect(result.text).toContain('pi install git:github.com/lonelyman0108/kioku-plugins')
     expect(result.text).not.toContain(KEY)
     expect(JSON.parse(readFileSync(profile, 'utf8'))).toEqual({ serverUrl: base, apiKey: KEY })
@@ -90,10 +104,13 @@ describe('kioku setup pi', () => {
     expect(again.text).not.toContain('pi install')
   })
 
-  it('应用的运行时不是 pi 时提醒；核对不过时什么都不写', async () => {
-    reply = () => ({ status: 200, body: { ...WHO, app: { ...WHO.app, runtimeFamily: 'codex' } } })
+  it('接入实例的运行时不是 pi 时提醒；核对不过时什么都不写', async () => {
+    reply = () => ({
+      status: 200,
+      body: { ...WHO, client: { ...WHO.client, runtimeFamily: 'codex' } },
+    })
     expect((await run(setup, ['pi', '--server-url', base])).text).toContain(
-      '! 这个应用的运行时不是 pi',
+      '! 这个接入实例的运行时不是 pi',
     )
     rmSync(join(dir, 'kioku'), { recursive: true })
     reply = () => ({ status: 401 })

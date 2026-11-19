@@ -34,12 +34,24 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            spaceId: '11111111-2222-3333-4444-555555555555',
-            spaceName: '个人空间',
-            app: { id: 'a', slug: 'oc', name: 'OpenClaw 应用', runtimeFamily: 'openclaw' },
+            primaryCircle: {
+              id: '11111111-2222-3333-4444-555555555555',
+              slug: 'personal',
+              name: '个人圈',
+              kind: 'personal',
+            },
+            linkedCircles: [],
+            client: {
+              id: 'a',
+              circleId: '11111111-2222-3333-4444-555555555555',
+              slug: 'oc',
+              name: 'OpenClaw 接入实例',
+              runtimeFamily: 'openclaw',
+            },
+            persona: null,
             scopes: {
-              readLayers: ['core', 'persona', 'app', 'user'],
-              writeLayers: ['app', 'user'],
+              readKinds: ['entry', 'fact', 'episode'],
+              writeKinds: ['entry'],
               maxSensitivity: 'private',
               credentials: 'use',
             },
@@ -215,10 +227,10 @@ describe('installer', () => {
     expect(readToolCacheSync('openclaw', env)).toMatchObject({ url: base })
 
     const lines = formatHandshakeLines(ok).join('\n')
-    expect(lines).toContain('OpenClaw 应用')
-    expect(lines).toContain('个人空间')
+    expect(lines).toContain('OpenClaw 接入实例')
+    expect(lines).toContain('个人圈')
     expect(lines).toContain('MCP 工具 2 个')
-    expect(lines).toContain('通用、人格、应用、本人')
+    expect(lines).toContain('正式词条、联系人事实、会话摘要')
     expect(lines).toContain('[╱] 私密')
 
     const bad = await verifyConnectionHandshake(

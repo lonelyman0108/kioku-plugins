@@ -33,8 +33,8 @@ export interface StrataTheme {
   ok: (text: string) => string
   warn: (text: string) => string
   error: (text: string) => string
-  layer: (layer: string, text?: string) => string
-  layerChip: (layer: string, text?: string) => string
+  kind: (kind: string, text?: string) => string
+  kindChip: (kind: string, text?: string) => string
   barSurface: (text: string) => string
   selectedSurface: (text: string) => string
   subtleSurface: (text: string) => string
@@ -43,31 +43,34 @@ export interface StrataTheme {
   keycap: (key: string, label: string) => string
 }
 
-const LAYER_LABELS: Record<string, string> = {
-  core: '通用',
-  persona: '人格',
-  app: '应用',
-  user: '本人',
-  subject: '联系人',
-  episode: '会话',
+const KIND_LABELS: Record<string, string> = {
+  entry: '正式词条',
+  fact: '联系人事实',
+  episode: '会话摘要',
+  personal: '个人圈',
+  'shared-away': '共享客场圈',
+  persona: '独立人格',
+  primary: '主场圈',
 }
 
 // 低饱和度地层 ANSI 颜色（均配合归属文字标签显示，不单独依赖颜色传递信息）
-const LAYER_CODES_256: Record<string, string> = {
+const KIND_CODES_256: Record<string, string> = {
   episode: '\x1b[38;5;103m',
-  subject: '\x1b[38;5;138m',
-  user: '\x1b[38;5;180m',
-  app: '\x1b[38;5;108m',
+  fact: '\x1b[38;5;138m',
+  personal: '\x1b[38;5;180m',
+  'shared-away': '\x1b[38;5;108m',
   persona: '\x1b[38;5;144m',
-  core: '\x1b[38;5;246m',
+  primary: '\x1b[38;5;246m',
+  entry: '\x1b[38;5;246m',
 }
 
-const LAYER_CODES_TRUE: Record<string, string> = {
-  core: '\x1b[38;2;159;181;193m',
+const KIND_CODES_TRUE: Record<string, string> = {
+  entry: '\x1b[38;2;159;181;193m',
+  primary: '\x1b[38;2;159;181;193m',
   persona: '\x1b[38;2;156;187;168m',
-  app: '\x1b[38;2;186;199;148m',
-  user: '\x1b[38;2;216;196;143m',
-  subject: '\x1b[38;2;180;169;197m',
+  'shared-away': '\x1b[38;2;186;199;148m',
+  personal: '\x1b[38;2;216;196;143m',
+  fact: '\x1b[38;2;180;169;197m',
   episode: '\x1b[38;2;202;195;213m',
 }
 
@@ -110,11 +113,11 @@ export function createTheme({
   const tc = enabled && (trueColor ?? supportsTrueColor(env))
   const wrap = (code: string) => (text: string) => (enabled ? `${code}${text}\x1b[0m` : text)
   const pick = (trueCode: string, code256: string) => (tc ? trueCode : code256)
-  const layerMap = tc ? LAYER_CODES_TRUE : LAYER_CODES_256
+  const kindMap = tc ? KIND_CODES_TRUE : KIND_CODES_256
 
-  const layer = (layerName: string, text?: string) => {
-    const label = text ?? LAYER_LABELS[layerName] ?? layerName
-    const code = layerMap[layerName]
+  const kind = (kindName: string, text?: string) => {
+    const label = text ?? KIND_LABELS[kindName] ?? kindName
+    const code = kindMap[kindName]
     return enabled && code ? `${code}${label}\x1b[0m` : label
   }
 
@@ -137,10 +140,10 @@ export function createTheme({
     warn: wrap(pick('\x1b[38;2;216;181;107m', '\x1b[38;5;179m')),
     // 砖红只给错误与危险确认
     error: wrap(pick('\x1b[38;2;232;139;110m', '\x1b[38;5;167m')),
-    layer,
-    layerChip(layerName: string, text?: string) {
-      const label = text ?? LAYER_LABELS[layerName] ?? layerName
-      return enabled ? layer(layerName, `■ ${label}`) : `[${label}]`
+    kind,
+    kindChip(kindName: string, text?: string) {
+      const label = text ?? KIND_LABELS[kindName] ?? kindName
+      return enabled ? kind(kindName, `■ ${label}`) : `[${label}]`
     },
     barSurface: enabled
       ? paintSurface(
@@ -176,8 +179,8 @@ export function createTheme({
   }
 }
 
-export function layerLabel(layer: string): string {
-  return LAYER_LABELS[layer] ?? layer
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind
 }
 
 export function sensitivityBadge(sensitivity: string, theme?: StrataTheme): string {

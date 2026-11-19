@@ -13,6 +13,7 @@ import {
   assertKeyFormat,
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -142,9 +143,16 @@ async function main(event) {
   if (urlProblem) throw new Misconfigured(urlProblem, 'url')
   assertKeyFormat(key)
 
-  const body = { event }
+  const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()
+  const project = projectOf(cwd)
+  const deviceKey = deviceKeyOf(process.env)
+  const body = {
+    event,
+    ...(deviceKey ? { deviceKey } : {}),
+    ...(Object.keys(project).length ? { project } : {}),
+  }
   if (typeof input.session_id === 'string' && input.session_id) {
-    body.sessionId = input.session_id.slice(0, MAX_SESSION_ID)
+    body.sessionId = clip(input.session_id, MAX_SESSION_ID)
   }
   if (event === 'turn.end') {
     // 一轮结束：把这一轮交给服务端写会话摘要，不带会话上下文；什么都不写到标准输出（Stop 钩子的输出能挡住结束）。
@@ -158,15 +166,10 @@ async function main(event) {
     await postEvent(base, key, body, timeout)
     return
   }
-  if (event === 'session.start') {
-    const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()
-    const project = projectOf(cwd)
-    if (Object.keys(project).length) body.project = project
-  }
   if (event === 'prompt.submit') {
     const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
     if (!prompt) return
-    body.prompt = prompt.slice(0, MAX_PROMPT)
+    body.prompt = clip(prompt, MAX_PROMPT)
   }
 
   const res = await postEvent(base, key, body, timeout)

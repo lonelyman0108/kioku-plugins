@@ -18,16 +18,24 @@ class SubjectFactsFactsItem:
     Attributes:
         content (str):
         updated_at (str):
+        short_id (str | Unset):
+        cross_group (bool | Unset):
     """
 
     content: str
     updated_at: str
+    short_id: str | Unset = UNSET
+    cross_group: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         content = self.content
 
         updated_at = self.updated_at
+
+        short_id = self.short_id
+
+        cross_group = self.cross_group
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -37,6 +45,10 @@ class SubjectFactsFactsItem:
                 "updatedAt": updated_at,
             }
         )
+        if short_id is not UNSET:
+            field_dict["shortId"] = short_id
+        if cross_group is not UNSET:
+            field_dict["crossGroup"] = cross_group
 
         return field_dict
 
@@ -47,9 +59,15 @@ class SubjectFactsFactsItem:
 
         updated_at = d.pop("updatedAt")
 
+        short_id = d.pop("shortId", UNSET)
+
+        cross_group = d.pop("crossGroup", UNSET)
+
         subject_facts_facts_item = cls(
             content=content,
             updated_at=updated_at,
+            short_id=short_id,
+            cross_group=cross_group,
         )
 
         subject_facts_facts_item.additional_properties = d

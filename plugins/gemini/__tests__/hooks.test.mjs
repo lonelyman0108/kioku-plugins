@@ -80,8 +80,11 @@ describe('Gemini CLI Kioku 钩子', () => {
     )
     expect(end).toBeNull()
     expect(events.map((e) => e.event)).toEqual(['session.start', 'prompt.submit', 'turn.end'])
+    expect(events[0]).toMatchObject({ event: 'session.start', deviceKey: expect.any(String) })
+    expect(events[1]).toMatchObject({ event: 'prompt.submit', deviceKey: expect.any(String) })
     expect(events[2]).toMatchObject({
       sessionId: 'g1',
+      deviceKey: expect.any(String),
       user: '看看部署端口',
       reply: '端口是 18920',
     })

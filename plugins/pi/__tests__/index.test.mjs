@@ -52,7 +52,7 @@ beforeEach(() => {
   clock = 1_000_000
   dir = mkdtempSync(join(tmpdir(), 'kioku-pi-'))
   mkdirSync(join(dir, 'kioku'))
-  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku') }
+  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku'), KIOKU_DEVICE_KEY: 'pi-dev' }
   profile({ serverUrl: `${base}/`, apiKey: KEY })
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -124,11 +124,14 @@ describe('pi 扩展', () => {
     expect(bodyOf('session.start')).toEqual({
       event: 'session.start',
       sessionId: 's1',
+      deviceKey: 'pi-dev',
       project: { dirName: basename(dir) },
     })
     expect(bodyOf('prompt.submit')).toEqual({
       event: 'prompt.submit',
       sessionId: 's1',
+      deviceKey: 'pi-dev',
+      project: { dirName: basename(dir) },
       prompt: '第一问',
     })
 
@@ -159,7 +162,14 @@ describe('pi 扩展', () => {
     await emit('agent_settled', { aborted: false })
     await emit('session_shutdown', { reason: 'quit' })
     expect(requests.map((r) => r.body)).toEqual([
-      { event: 'turn.end', sessionId: 's1', user: '问', reply: '第一段\n第二段\n第三段' },
+      {
+        event: 'turn.end',
+        sessionId: 's1',
+        deviceKey: 'pi-dev',
+        project: { dirName: basename(dir) },
+        user: '问',
+        reply: '第一段\n第二段\n第三段',
+      },
     ])
     // 没有新的输入时再结束一次不重复上报
     await emit('agent_settled', {})
@@ -418,6 +428,11 @@ describe('pi 扩展', () => {
     await anonymous.emit('agent_settled', {})
     await anonymous.emit('session_shutdown', {})
     expect(events()).toEqual(['prompt.submit', 'session.start'])
-    expect(bodyOf('prompt.submit')).toEqual({ event: 'prompt.submit', prompt: '问' })
+    expect(bodyOf('prompt.submit')).toEqual({
+      event: 'prompt.submit',
+      deviceKey: 'pi-dev',
+      project: { dirName: basename(dir) },
+      prompt: '问',
+    })
   })
 })

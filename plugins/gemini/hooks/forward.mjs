@@ -10,6 +10,7 @@ import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -51,13 +52,14 @@ function pendingFile(env, sessionId) {
   return join(pendingDir(env), `${PENDING_PREFIX}${sessionId}.json`)
 }
 
-async function savePending(env, sessionId, prompt) {
+async function savePending(env, sessionId, prompt, project) {
   const file = pendingFile(env, sessionId)
   if (!file) return
   await mkdir(pendingDir(env), { recursive: true, mode: 0o700 })
   const temp = `${file}.${randomUUID()}.tmp`
   try {
-    await writeFile(temp, JSON.stringify({ prompt }), { mode: 0o600, flag: 'wx' })
+    const data = Object.keys(project ?? {}).length ? { prompt, project } : { prompt }
+    await writeFile(temp, JSON.stringify(data), { mode: 0o600, flag: 'wx' })
     await rename(temp, file)
   } catch (err) {
     await rm(temp, { force: true }).catch(() => {})
@@ -69,8 +71,15 @@ async function takePending(env, sessionId) {
   const file = pendingFile(env, sessionId)
   if (!file) return null
   try {
-    const { prompt } = JSON.parse(await readFile(file, 'utf8'))
-    return typeof prompt === 'string' && prompt ? prompt : null
+    const parsed = JSON.parse(await readFile(file, 'utf8'))
+    if (typeof parsed?.prompt !== 'string' || !parsed.prompt) return null
+    return {
+      user: parsed.prompt,
+      project:
+        parsed.project && typeof parsed.project === 'object' && !Array.isArray(parsed.project)
+          ? parsed.project
+          : undefined,
+    }
   } catch {
     return null
   } finally {
@@ -116,14 +125,22 @@ export async function forwardGeminiEvent(event, rawStdin, env = process.env) {
   const { url: base, key } = profile
   const sessionId =
     typeof input.session_id === 'string' && input.session_id
-      ? input.session_id.slice(0, MAX_SESSION_ID)
+      ? clip(input.session_id, MAX_SESSION_ID)
       : undefined
-  const body = { event, ...(sessionId ? { sessionId } : {}) }
+  const explicitCwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : ''
+  const detectedProject = projectOf(explicitCwd || process.cwd())
+  const deviceKey = deviceKeyOf(env)
+  const body = {
+    event,
+    ...(sessionId ? { sessionId } : {}),
+    ...(deviceKey ? { deviceKey } : {}),
+  }
 
   if (event === 'turn.end') {
     if (input.stop_hook_active === true) return null
     const direct = typeof input.prompt === 'string' ? input.prompt.trim() : ''
-    const user = direct || (await takePending(env, sessionId))
+    const pending = direct ? null : await takePending(env, sessionId)
+    const user = direct || pending?.user
     const reply =
       typeof input.prompt_response === 'string'
         ? input.prompt_response
@@ -131,23 +148,21 @@ export async function forwardGeminiEvent(event, rawStdin, env = process.env) {
           ? input.last_assistant_message
           : ''
     if (!sessionId || !user) return null
+    const project = explicitCwd ? detectedProject : (pending?.project ?? detectedProject)
+    if (Object.keys(project).length) body.project = project
     body.user = clip(user, MAX_PROMPT)
     body.reply = clip(reply.trim(), MAX_REPLY)
     await postEvent(base, key, body, timeout)
     return null
   }
 
-  if (event === 'session.start') {
-    const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()
-    const project = projectOf(cwd)
-    if (Object.keys(project).length) body.project = project
-  }
+  if (Object.keys(detectedProject).length) body.project = detectedProject
 
   if (event === 'prompt.submit') {
     const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
     if (!prompt) return null
     body.prompt = clip(prompt, MAX_PROMPT)
-    await savePending(env, sessionId, body.prompt).catch(() => {})
+    await savePending(env, sessionId, body.prompt, detectedProject).catch(() => {})
   }
 
   const res = await postEvent(base, key, body, timeout)

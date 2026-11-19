@@ -47,7 +47,7 @@ MAX_TEXT = 20_000
 MAX_SESSION_ID = 200
 # 服务端只记名字的前 128 个字（按字符），太长的整个请求会被拒，这边先截
 MAX_NAME = 128
-# 会话开始的启动上下文（人格与基础规则）很少变，按会话缓存这么久，不必每轮都请求
+# 会话开始的启动上下文（独立人格与长期规范）很少变，按会话缓存这么久，不必每轮都请求
 BOOT_TTL_SECONDS = 600
 # 启动上下文没取到（Kioku 不可用或没有内容）时，过这么久再试
 BOOT_RETRY_SECONDS = 60
@@ -174,7 +174,7 @@ class KiokuBridge:
         return self._client is not None
 
     async def boot(self, turn: Turn) -> str | None:
-        """会话开始时注入的人格与基础规则，按会话缓存；没取到的也记下，过一会儿再试。"""
+        """会话开始时注入的独立人格与长期规范，按会话缓存；没取到的也记下，过一会儿再试。"""
         now = time.monotonic()
         cached = self._boot.get(turn.session_id)
         if cached and now < cached[0]:

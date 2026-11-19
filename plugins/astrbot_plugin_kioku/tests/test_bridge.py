@@ -52,7 +52,7 @@ def answer(context: str):
         200,
         json={
             "hostOutput": {"mode": "return_value", "value": {"context": context}},
-            "nodeUris": [],
+            "shortIds": [],
         },
     )
 
@@ -87,12 +87,12 @@ def test_private_and_group_contexts_are_reported_as_is():
 
 
 def test_boot_is_cached_per_session(monkeypatch):
-    bridge, sent = bridge_with(answer("人格与基础规则"))
+    bridge, sent = bridge_with(answer("独立人格与长期规范"))
     clock = [1000.0]
     monkeypatch.setattr("astrbot_plugin_kioku.bridge.time.monotonic", lambda: clock[0])
-    assert asyncio.run(bridge.boot(GROUP)) == "人格与基础规则"
-    assert asyncio.run(bridge.boot(GROUP)) == "人格与基础规则"
-    assert asyncio.run(bridge.boot(PRIVATE)) == "人格与基础规则"
+    assert asyncio.run(bridge.boot(GROUP)) == "独立人格与长期规范"
+    assert asyncio.run(bridge.boot(GROUP)) == "独立人格与长期规范"
+    assert asyncio.run(bridge.boot(PRIVATE)) == "独立人格与长期规范"
     assert [s["event"] for s in sent] == ["session.start", "session.start"]
     clock[0] += BOOT_TTL_SECONDS + 1
     asyncio.run(bridge.boot(GROUP))
@@ -135,7 +135,7 @@ def test_long_text_is_clipped_by_utf16_length():
 def test_turn_end_reports_the_reply_and_skips_empty_turns():
     bridge, sent = bridge_with(
         lambda _r: httpx.Response(
-            200, json={"hostOutput": {"mode": "none", "value": None}, "nodeUris": []}
+            200, json={"hostOutput": {"mode": "none", "value": None}, "shortIds": []}
         )
     )
     asyncio.run(bridge.turn_end(GROUP, "还没定"))

@@ -78,8 +78,8 @@ function profile(value) {
   )
 }
 
-function run(event, input, { pluginData = true } = {}) {
-  const env = { ...process.env, KIOKU_CONFIG_DIR: config }
+function run(event, input, { pluginData = true, deviceKey = 'codex-dev' } = {}) {
+  const env = { ...process.env, KIOKU_CONFIG_DIR: config, KIOKU_DEVICE_KEY: deviceKey }
   delete env.PLUGIN_DATA
   if (pluginData) env.PLUGIN_DATA = data
   return new Promise((resolve) => {
@@ -121,6 +121,7 @@ describe('Codex 钩子转发', () => {
     expect(requests[0].body).toEqual({
       event: 'session.start',
       sessionId: 's1',
+      deviceKey: 'codex-dev',
       project: { dirName: basename(dir) },
     })
   })
@@ -130,6 +131,7 @@ describe('Codex 钩子转发', () => {
     const result = await run('prompt.submit', {
       session_id: 's1',
       turn_id: 't1',
+      cwd: dir,
       prompt: '  办公室的网络怎么配的  ',
     })
     expect(contextIn(result.stdout)).toEqual({
@@ -139,6 +141,8 @@ describe('Codex 钩子转发', () => {
     expect(requests[0].body).toEqual({
       event: 'prompt.submit',
       sessionId: 's1',
+      deviceKey: 'codex-dev',
+      project: { dirName: basename(dir) },
       prompt: '办公室的网络怎么配的',
     })
     expect(turns()).toEqual(['turn.s1.t1.json'])
@@ -146,8 +150,8 @@ describe('Codex 钩子转发', () => {
   })
 
   it('一轮结束：用提交时记下的输入与最后的回复转发 turn.end，不写标准输出，记下的输入删掉', async () => {
-    await run('prompt.submit', { session_id: 's1', turn_id: 't1', prompt: '第一问' })
-    await run('prompt.submit', { session_id: 's1', turn_id: 't2', prompt: '第二问' })
+    await run('prompt.submit', { session_id: 's1', turn_id: 't1', cwd: dir, prompt: '第一问' })
+    await run('prompt.submit', { session_id: 's1', turn_id: 't2', cwd: dir, prompt: '第二问' })
     requests = []
     const result = await run('turn.end', {
       session_id: 's1',
@@ -157,7 +161,14 @@ describe('Codex 钩子转发', () => {
     })
     expect(result).toMatchObject({ code: 0, stdout: '' })
     expect(requests.map((r) => r.body)).toEqual([
-      { event: 'turn.end', sessionId: 's1', user: '第一问', reply: '第一答' },
+      {
+        event: 'turn.end',
+        sessionId: 's1',
+        deviceKey: 'codex-dev',
+        project: { dirName: basename(dir) },
+        user: '第一问',
+        reply: '第一答',
+      },
     ])
     // 别的轮次记下的还在
     expect(turns()).toEqual(['turn.s1.t2.json'])

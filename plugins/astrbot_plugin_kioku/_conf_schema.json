@@ -8,11 +8,11 @@
   "kioku_key": {
     "description": "Kioku 的访问密钥",
     "type": "string",
-    "hint": "在 Kioku 管理界面的「应用」页为这个机器人建一个应用（运行时选 astrbot），再签发访问密钥",
+    "hint": "在 Kioku 管理界面的「接入实例」页为这个机器人新建接入实例（运行时选 astrbot），再签发访问密钥",
     "default": ""
   },
   "boot": {
-    "description": "注入 Kioku 里的人格与基础规则",
+    "description": "注入 Kioku 里的独立人格与长期规范",
     "type": "bool",
     "hint": "关掉之后只注入每轮召回的记忆；人格完全用 AstrBot 自己的设置时关掉",
     "default": true

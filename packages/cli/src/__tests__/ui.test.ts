@@ -20,7 +20,7 @@ import { createScreen } from '../ui/screen.ts'
 import {
   capabilityLabel,
   createTheme,
-  layerLabel,
+  kindLabel,
   renderBox,
   sensitivityBadge,
   supportsColor,
@@ -88,14 +88,14 @@ describe('ui/theme', () => {
     const plainTheme = createTheme({ color: false })
     expect(plainTheme.error('失败')).toBe('失败')
     expect(plainTheme.brandStamp('記 憶')).toBe('[記 憶]')
-    expect(plainTheme.layerChip('user')).toBe('[本人]')
+    expect(plainTheme.kindChip('entry')).toBe('[正式词条]')
     expect(plainTheme.keycap('Enter', '接入')).toBe('[Enter] 接入')
 
     const tcTheme = createTheme({ color: true, env: { COLORTERM: 'truecolor' } })
     expect(tcTheme.trueColor).toBe(true)
     expect(tcTheme.warn('注意')).toContain('\x1b[38;2;216;181;107m')
     expect(tcTheme.warn('注意')).not.toBe('\x1b[2m注意\x1b[0m')
-    expect(displayWidth(tcTheme.layerChip('user'))).toBe(displayWidth('■ 本人'))
+    expect(displayWidth(tcTheme.kindChip('entry'))).toBe(displayWidth('■ 正式词条'))
 
     const theme256 = createTheme({ color: true, env: { TERM: 'xterm-256color' } })
     expect(theme256.trueColor).toBe(false)
@@ -109,9 +109,10 @@ describe('ui/theme', () => {
     expect(row.endsWith('\x1b[0m')).toBe(true)
   })
 
-  it('提供规范的归属名、敏感级纹理与细线方框排版', () => {
-    expect(layerLabel('core')).toBe('通用')
-    expect(layerLabel('user')).toBe('本人')
+  it('提供规范的物种名、敏感级纹理与细线方框排版', () => {
+    expect(kindLabel('entry')).toBe('正式词条')
+    expect(kindLabel('fact')).toBe('联系人事实')
+    expect(kindLabel('episode')).toBe('会话摘要')
     expect(sensitivityBadge('public')).toBe('[ ] 公开')
     expect(sensitivityBadge('internal')).toBe('[·] 内部')
     expect(sensitivityBadge('private')).toBe('[╱] 私密')
@@ -284,19 +285,25 @@ describe('ui/lineInput & prompts', () => {
         return true
       },
     }
-    const prompts = createBuiltinPrompts(ttyIn as unknown as NodeJS.ReadStream, out)
-    const pending = prompts.text({ message: '输入目录' })
+    vi.stubEnv('TERM', 'xterm-256color')
+    vi.stubEnv('NO_COLOR', '')
+    try {
+      const prompts = createBuiltinPrompts(ttyIn as unknown as NodeJS.ReadStream, out)
+      const pending = prompts.text({ message: '输入目录' })
 
-    ttyIn.emit('keypress', '中', { name: '中' })
-    ttyIn.emit('keypress', '文', { name: '文' })
-    ttyIn.emit('keypress', '', { name: 'backspace' })
-    ttyIn.emit('keypress', '字', { name: '字' })
-    ttyIn.emit('keypress', '\r', { name: 'return' })
+      ttyIn.emit('keypress', '中', { name: '中' })
+      ttyIn.emit('keypress', '文', { name: '文' })
+      ttyIn.emit('keypress', '', { name: 'backspace' })
+      ttyIn.emit('keypress', '字', { name: '字' })
+      ttyIn.emit('keypress', '\r', { name: 'return' })
 
-    await expect(pending).resolves.toBe('中字')
-    expect(outText).not.toContain('\b \b')
-    expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中\r\x1b[5C')
-    expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中字\r\x1b[7C')
+      await expect(pending).resolves.toBe('中字')
+      expect(outText).not.toContain('\b \b')
+      expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中\r\x1b[5C')
+      expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中字\r\x1b[7C')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

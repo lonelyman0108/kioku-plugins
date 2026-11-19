@@ -18,15 +18,16 @@ def plugin_with(sent: list[dict], boot: bool = True) -> KiokuPlugin:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         sent.append(body)
-        context = {"session.start": "人格与基础规则", "prompt.submit": "<recall>…</recall>"}.get(
-            body["event"]
-        )
+        context = {
+            "session.start": "独立人格与长期规范",
+            "prompt.submit": "<recall>…</recall>",
+        }.get(body["event"])
         value = {"context": context} if context else None
         return httpx.Response(
             200,
             json={
                 "hostOutput": {"mode": "return_value" if value else "none", "value": value},
-                "nodeUris": [],
+                "shortIds": [],
             },
         )
 
@@ -59,8 +60,8 @@ def test_group_turn_injects_boot_and_recall_and_reports_the_turn():
     )
     plugin = plugin_with(sent)
     req = asyncio.run(one_turn(plugin, event))
-    # 很少变的人格与基础规则进系统提示；每轮的召回作为临时的额外内容，不进对话历史
-    assert req.system_prompt == "你是豆包。\n\n人格与基础规则"
+    # 很少变的独立人格与长期规范进系统提示；每轮的召回作为临时的额外内容，不进对话历史
+    assert req.system_prompt == "你是豆包。\n\n独立人格与长期规范"
     assert [(p.text, p.temp) for p in req.extra_user_content_parts] == [
         ("<recall>…</recall>", True)
     ]

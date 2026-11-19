@@ -108,8 +108,21 @@ describe('OpenCode Kioku 插件', () => {
     await plugin.event({ event: { type: 'session.idle', properties: { sessionID: longSid } } })
 
     expect(events.map((e) => e.body.event)).toEqual(['session.start', 'prompt.submit', 'turn.end'])
+    expect(events[0].body).toMatchObject({
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
+    })
+    expect(events[1].body).toMatchObject({
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
+    })
     expect(events[2].body.sessionId).toHaveLength(200)
-    expect(events[2].body).toMatchObject({ user: '查一下配置', reply: '这是结果' })
+    expect(events[2].body).toMatchObject({
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
+      user: '查一下配置',
+      reply: '这是结果',
+    })
 
     // 中止/报错的回合不上报半截回复
     const abortedMsg = {

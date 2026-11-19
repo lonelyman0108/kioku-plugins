@@ -15,7 +15,7 @@ import { osc8Link } from '../ui/clipboard.ts'
 import {
   capabilityLabel,
   createTheme,
-  layerLabel,
+  kindLabel,
   renderBox,
   sensitivityBadge,
 } from '../ui/theme.ts'
@@ -96,8 +96,8 @@ function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean
         lines.push(`  ${theme.muted(details.details.join(' · '))}`)
       }
       if (row.connection === 'ok' && row.who) {
-        const readStr = (row.who.scopes.readLayers ?? []).map(layerLabel).join('、') || '无'
-        const writeStr = (row.who.scopes.writeLayers ?? []).map(layerLabel).join('、') || '无'
+        const readStr = (row.who.scopes.readKinds ?? []).map(kindLabel).join('、') || '无'
+        const writeStr = (row.who.scopes.writeKinds ?? []).map(kindLabel).join('、') || '无'
         const sens = sensitivityBadge(row.who.scopes.maxSensitivity ?? 'internal', theme)
         const cred = capabilityLabel(row.who.scopes.credentials)
         lines.push(

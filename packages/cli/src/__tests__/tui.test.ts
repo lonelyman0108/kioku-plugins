@@ -13,13 +13,25 @@ import { renderTuiFrame, runTui, type TuiDeps, type TuiModal, type TuiState } fr
 import { displayWidth, stripAnsi } from '../ui/width.ts'
 
 const WHO = (family: string) => ({
-  spaceId: '11111111-2222-3333-4444-555555555555',
-  spaceName: '个人空间',
+  primaryCircle: {
+    id: '11111111-2222-3333-4444-555555555555',
+    slug: 'personal',
+    name: '个人圈',
+    kind: 'personal' as const,
+  },
+  linkedCircles: [],
   accountName: '测试账号',
-  app: { id: 'app-id', slug: family, name: `${family} 应用`, runtimeFamily: family },
+  client: {
+    id: 'client-id',
+    circleId: '11111111-2222-3333-4444-555555555555',
+    slug: family,
+    name: `${family} 接入实例`,
+    runtimeFamily: family,
+  },
+  persona: null,
   scopes: {
-    readLayers: ['core', 'user', 'app'],
-    writeLayers: ['user', 'app'],
+    readKinds: ['entry', 'fact', 'episode'],
+    writeKinds: ['entry'],
     maxSensitivity: 'private',
     credentials: 'use',
   },
@@ -302,7 +314,7 @@ describe('runTui 交互工作台状态流', () => {
 
     const updatedSnapshot = stripAnsi(writes.join(''))
     expect(updatedSnapshot).toContain('已接入')
-    expect(updatedSnapshot).toContain('个人空间')
+    expect(updatedSnapshot).toContain('个人圈')
 
     ttyIn.emit('keypress', 'q', { name: 'q' })
     await expect(done).resolves.toBe(0)
@@ -315,7 +327,7 @@ describe('runTui 交互工作台状态流', () => {
     const opened: string[] = []
     const copied: string[] = []
     let finishConnect!: (
-      res: Array<{ id: string; status: 'connected'; app: { name: string } }>,
+      res: Array<{ id: string; status: 'connected'; client: { name: string } }>,
     ) => void
 
     const installPlugin = vi.fn(async () => ({
@@ -358,7 +370,7 @@ describe('runTui 交互工作台状态流', () => {
           onCancel: () => {},
         })
         const res = await new Promise<
-          Array<{ id: string; status: 'connected'; app: { name: string } }>
+          Array<{ id: string; status: 'connected'; client: { name: string } }>
         >((r) => {
           finishConnect = r
         })
@@ -402,7 +414,7 @@ describe('runTui 交互工作台状态流', () => {
 
     expect(opened).toEqual(['https://kioku.example.com/authorize'])
 
-    finishConnect([{ id: 'codex', status: 'connected', app: { name: 'Codex' } }])
+    finishConnect([{ id: 'codex', status: 'connected', client: { name: 'Codex' } }])
     await vi.waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith('codex', { env: emptyEnv, cwd: '/tmp' })
       expect(stripAnsi(writes.join(''))).toContain('已安装 Codex 插件')

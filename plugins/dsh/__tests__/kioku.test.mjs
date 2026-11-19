@@ -53,7 +53,7 @@ beforeEach(() => {
   clock = 1_000_000
   dir = mkdtempSync(join(tmpdir(), 'kioku-dsh-'))
   mkdirSync(join(dir, 'kioku'))
-  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku') }
+  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku'), KIOKU_DEVICE_KEY: 'dsh-dev' }
   profile({ serverUrl: `${base}/`, apiKey: KEY })
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -388,10 +388,12 @@ describe('DeepSeek Harness 插件：一轮结束', () => {
 
   it('上报这一轮里用户说的（含运行中排进来的）与助手说的文字，别的不带', async () => {
     const kioku = start()
-    await kioku.turnStopping({ agent: agentOf({ events: history }), turn: 2 })
+    await kioku.turnStopping({ agent: agentOf({ events: history, cwd: dir }), turn: 2 })
     expect(bodyOf('turn.end')).toEqual({
       event: 'turn.end',
       sessionId: 'session-1',
+      deviceKey: 'dsh-dev',
+      project: { dirName: basename(dir) },
       user: '今天做什么\n顺便做乙',
       reply: '先看了一下\n做甲和乙',
     })

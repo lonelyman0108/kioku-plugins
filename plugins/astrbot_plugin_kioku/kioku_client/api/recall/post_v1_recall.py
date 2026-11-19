@@ -73,7 +73,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: RecallRequest,
 ) -> Response[ErrorResponse | RecallResponse]:
-    """按一段文本召回候选记忆（只返回 URI 与线索，正文用 GET /memories 读）；带了会话上下文时按它收紧权限，并附上当前发言人与本群的事实
+    """按一段文本召回候选词条（只返回短 ID 与线索，正文用 GET /entries 读）；带了会话上下文或切面时按它收紧权限并调制排序，并附上当前发言人与本群的事实
 
     Args:
         body (RecallRequest):
@@ -102,7 +102,7 @@ def sync(
     client: AuthenticatedClient,
     body: RecallRequest,
 ) -> ErrorResponse | RecallResponse | None:
-    """按一段文本召回候选记忆（只返回 URI 与线索，正文用 GET /memories 读）；带了会话上下文时按它收紧权限，并附上当前发言人与本群的事实
+    """按一段文本召回候选词条（只返回短 ID 与线索，正文用 GET /entries 读）；带了会话上下文或切面时按它收紧权限并调制排序，并附上当前发言人与本群的事实
 
     Args:
         body (RecallRequest):
@@ -126,7 +126,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: RecallRequest,
 ) -> Response[ErrorResponse | RecallResponse]:
-    """按一段文本召回候选记忆（只返回 URI 与线索，正文用 GET /memories 读）；带了会话上下文时按它收紧权限，并附上当前发言人与本群的事实
+    """按一段文本召回候选词条（只返回短 ID 与线索，正文用 GET /entries 读）；带了会话上下文或切面时按它收紧权限并调制排序，并附上当前发言人与本群的事实
 
     Args:
         body (RecallRequest):
@@ -153,7 +153,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: RecallRequest,
 ) -> ErrorResponse | RecallResponse | None:
-    """按一段文本召回候选记忆（只返回 URI 与线索，正文用 GET /memories 读）；带了会话上下文时按它收紧权限，并附上当前发言人与本群的事实
+    """按一段文本召回候选词条（只返回短 ID 与线索，正文用 GET /entries 读）；带了会话上下文或切面时按它收紧权限并调制排序，并附上当前发言人与本群的事实
 
     Args:
         body (RecallRequest):

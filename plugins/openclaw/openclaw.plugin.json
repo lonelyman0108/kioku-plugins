@@ -8,11 +8,11 @@
       "kioku_boot",
       "kioku_search",
       "kioku_get",
-      "kioku_list",
+      "kioku_browse",
       "kioku_create",
       "kioku_update",
       "kioku_delete",
-      "kioku_move",
+      "kioku_transfer",
       "kioku_credential",
       "kioku_credential_save",
       "kioku_credential_delete"

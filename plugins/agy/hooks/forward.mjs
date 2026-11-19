@@ -11,6 +11,7 @@ import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -157,17 +158,24 @@ export async function forwardAgyEvent(event, rawStdin, env = process.env) {
   const { url: base, key } = profile
   const sessionId =
     typeof input.conversationId === 'string' && input.conversationId
-      ? input.conversationId.slice(0, MAX_SESSION_ID)
+      ? clip(input.conversationId, MAX_SESSION_ID)
       : undefined
-  const body = { event, ...(sessionId ? { sessionId } : {}) }
+  const explicitCwd =
+    (typeof input.cwd === 'string' && input.cwd) ||
+    (Array.isArray(input.workspacePaths) &&
+      typeof input.workspacePaths[0] === 'string' &&
+      input.workspacePaths[0]) ||
+    ''
+  const detectedProject = projectOf(explicitCwd || process.cwd())
+  const deviceKey = deviceKeyOf(env)
+  const body = {
+    event,
+    ...(sessionId ? { sessionId } : {}),
+    ...(deviceKey ? { deviceKey } : {}),
+  }
 
   if (event === 'session.start') {
-    const cwd =
-      (typeof input.cwd === 'string' && input.cwd) ||
-      (Array.isArray(input.workspacePaths) && input.workspacePaths[0]) ||
-      process.cwd()
-    const project = projectOf(cwd)
-    if (Object.keys(project).length) body.project = project
+    if (Object.keys(detectedProject).length) body.project = detectedProject
     const res = await postEvent(base, key, body, timeout)
     const { hostOutput } = await res.json()
     return buildInjectResult(contextOf(hostOutput))
@@ -181,8 +189,13 @@ export async function forwardAgyEvent(event, rawStdin, env = process.env) {
     if (sessionId) {
       const prev = await readState(env, sessionId)
       if (prev?.sig === sig) return {}
-      await writeState(env, sessionId, { sig, prompt: clip(prompt, MAX_PROMPT) }).catch(() => {})
+      await writeState(env, sessionId, {
+        sig,
+        prompt: clip(prompt, MAX_PROMPT),
+        ...(Object.keys(detectedProject).length ? { project: detectedProject } : {}),
+      }).catch(() => {})
     }
+    if (Object.keys(detectedProject).length) body.project = detectedProject
     body.prompt = clip(prompt, MAX_PROMPT)
     const res = await postEvent(base, key, body, timeout)
     const { hostOutput } = await res.json()
@@ -199,6 +212,8 @@ export async function forwardAgyEvent(event, rawStdin, env = process.env) {
     if (!sessionId || !user) return {}
     const { reply } = await readTranscriptTail(input.transcriptPath)
     if (!reply.trim()) return {}
+    const project = explicitCwd ? detectedProject : (prev?.project ?? detectedProject)
+    if (Object.keys(project).length) body.project = project
     body.user = clip(user, MAX_PROMPT)
     body.reply = clip(reply.trim(), MAX_REPLY)
     await postEvent(base, key, body, timeout)

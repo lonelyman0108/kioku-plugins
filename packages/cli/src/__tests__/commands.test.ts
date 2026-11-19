@@ -62,7 +62,7 @@ beforeAll(async () => {
                 runtimeFamily: 'agy',
                 status: 'issued',
                 key: KEY,
-                app: { id: 'a', slug: 'agy', name: 'Antigravity', runtimeFamily: 'agy' },
+                client: { id: 'a', slug: 'agy', name: 'Antigravity', runtimeFamily: 'agy' },
               },
             ],
           }),
@@ -73,12 +73,24 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            spaceId: '11111111-2222-3333-4444-555555555555',
-            spaceName: '默认',
-            app: { id: 'a', slug: 'agy', name: 'Antigravity', runtimeFamily: 'agy' },
+            primaryCircle: {
+              id: '11111111-2222-3333-4444-555555555555',
+              slug: 'personal',
+              name: '默认记忆圈',
+              kind: 'personal',
+            },
+            linkedCircles: [],
+            client: {
+              id: 'a',
+              circleId: '11111111-2222-3333-4444-555555555555',
+              slug: 'agy',
+              name: 'Antigravity',
+              runtimeFamily: 'agy',
+            },
+            persona: null,
             scopes: {
-              readLayers: ['core', 'app', 'user'],
-              writeLayers: ['app', 'user'],
+              readKinds: ['entry', 'fact', 'episode'],
+              writeKinds: ['entry'],
               maxSensitivity: 'private',
               credentials: 'use',
             },

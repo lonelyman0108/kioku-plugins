@@ -59,7 +59,7 @@ def test_callbacks_reach_kioku(monkeypatch, kioku, tmp_path):
     before = len(kioku.requests)
     assert p.prefetch("ok") == ""
     assert len(kioku.requests) == before
-    assert json.loads(p.handle_tool_call("kioku_get", {"uri": "user://a"}, hermes_home="x")) == {
+    assert json.loads(p.handle_tool_call("kioku_get", {"id": "m-234567"}, hermes_home="x")) == {
         "result": "调用了 kioku_get"
     }
     p.sync_turn("问", "答", session_id="s1", messages=[], turn_author={"id": "u"})

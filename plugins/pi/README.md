@@ -1,6 +1,6 @@
 # Kioku 的 pi 扩展
 
-会话开始后的第一次输入前注入 Kioku 的启动加载：通用的规则、人格、本应用的记忆与本人的偏好，以及同一会话最近的会话摘要、近期更新的记忆和与当前项目相关的召回。每次输入前注入召回候选。每轮结束后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要。扩展还注册 Kioku 的 MCP 服务，提供读写记忆的 `kioku_*` 工具。
+会话开始后的第一次输入前注入 Kioku 的启动加载：独立人格与长期规范、当前接入实例可用记忆圈里的正式词条，以及同一会话最近的会话摘要、近期更新的记忆和与当前项目相关的召回。每次输入前注入召回候选。每轮结束后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要。扩展还注册 Kioku 的 MCP 服务，提供读写记忆的 `kioku_*` 工具。
 
 扩展只做转发，提示词和输出格式都由服务端决定，服务端更新后不用重装。
 
@@ -8,7 +8,7 @@
 
 要 pi 1.5 或更新的版本（更早的没有核对过；包名已经从 `@mariozechner/pi-coding-agent` 换成 `@earendil-works/pi-coding-agent`）。
 
-先在 Kioku 管理界面的「应用」页建一个运行时是 pi 的应用，签发访问密钥。然后：
+先在 Kioku 管理界面的「接入实例」页建一个运行时是 pi 的接入实例，签发访问密钥。然后：
 
 ```bash
 # 1. 写下服务地址与访问密钥
@@ -18,7 +18,7 @@ npx @kioku-memory/cli setup pi --server-url https://kioku.example.com
 pi install git:github.com/lonelyman0108/kioku-plugins
 ```
 
-第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login pi --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好空间与权限后确认，不用先在管理界面建应用、复制访问密钥。它先连一次 Kioku 核对，再把地址与访问密钥写进 `~/.config/kioku/pi.json`（权限 600，位置可以用 `KIOKU_CONFIG_DIR` 改）。`--dry-run` 只看要改什么，`--no-check` 不核对，`--undo` 删掉这个文件。
+第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login pi --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好记忆圈与权限后确认，不用先在管理界面建接入实例、复制访问密钥。它先连一次 Kioku 核对，再把地址与访问密钥写进 `~/.config/kioku/pi.json`（权限 600，位置可以用 `KIOKU_CONFIG_DIR` 改）。`--dry-run` 只看要改什么，`--no-check` 不核对，`--undo` 删掉这个文件。
 
 装好之后新开会话，或者在 pi 里 `/reload`。用 `npx @kioku-memory/cli doctor pi` 检查：地址与访问密钥、访问密钥的权限、扩展装了没有、`mcp.json` 里有没有同名的服务。
 

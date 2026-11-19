@@ -8,6 +8,7 @@ import { failureText, KiokuFailure } from './lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -51,6 +52,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   const pending = new Set()
   // 项目的目录名与仓库名，按目录记着
   const projects = new Map()
+  const deviceKey = deviceKeyOf(env)
 
   // 告诉用户一次：有界面时用 pi 的提示，没有时写标准错误。都不进对话
   function tell(ctx, text, level = 'warning') {
@@ -72,7 +74,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
 
   const sessionIdOf = (ctx) => {
     const id = ctx.sessionManager?.getSessionId?.()
-    return typeof id === 'string' && id ? id.slice(0, MAX_SESSION_ID) : undefined
+    return typeof id === 'string' && id ? clip(id, MAX_SESSION_ID) : undefined
   }
 
   function projectFor(cwd) {
@@ -83,13 +85,8 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   // 把一个事件交给服务端，返回要注入的文本（没有时为空字符串）；失败时告诉用户一次原因，返回 undefined
   async function forward(ctx, event, body, signal) {
     try {
-      const res = await postEvent(
-        profile.url,
-        profile.key,
-        { event, ...body },
-        TIMEOUTS[event],
-        signal,
-      )
+      const payload = { event, ...(deviceKey ? { deviceKey } : {}), ...body }
+      const res = await postEvent(profile.url, profile.key, payload, TIMEOUTS[event], signal)
       if (event === 'turn.end') {
         // 响应不用看，但要读掉，连接才还得回去
         await res.body?.cancel().catch(() => {})
@@ -152,28 +149,25 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
     if (!profile) return undefined
     const prompt = typeof event.prompt === 'string' ? event.prompt.trim() : ''
     const sessionId = sessionIdOf(ctx)
-    turn = sessionId ? { sessionId, user: clip(prompt, MAX_PROMPT), users: [], replies: [] } : null
+    const cwd = typeof ctx.cwd === 'string' && ctx.cwd ? ctx.cwd : process.cwd()
+    turn = sessionId
+      ? { sessionId, cwd, user: clip(prompt, MAX_PROMPT), users: [], replies: [] }
+      : null
     // 刚失败过：这次不等，直接让输入过去
     if (now() < quietUntil) return undefined
 
     const wantBoot = bootPending
-    const cwd = typeof ctx.cwd === 'string' && ctx.cwd ? ctx.cwd : process.cwd()
     const signal = ctx.signal
-    const session = sessionId ? { sessionId } : {}
+    const project = await projectFor(cwd)
+    const baseBody = {
+      ...(sessionId ? { sessionId } : {}),
+      ...(Object.keys(project).length ? { project } : {}),
+    }
     // 两个请求一起发：都在用户按下回车之后等着
     const [boot, recall] = await Promise.all([
-      wantBoot
-        ? projectFor(cwd).then((project) =>
-            forward(
-              ctx,
-              'session.start',
-              { ...session, ...(Object.keys(project).length ? { project } : {}) },
-              signal,
-            ),
-          )
-        : undefined,
+      wantBoot ? forward(ctx, 'session.start', baseBody, signal) : undefined,
       prompt
-        ? forward(ctx, 'prompt.submit', { ...session, prompt: clip(prompt, MAX_PROMPT) }, signal)
+        ? forward(ctx, 'prompt.submit', { ...baseBody, prompt: clip(prompt, MAX_PROMPT) }, signal)
         : undefined,
     ])
     // 启动加载没取到时之后的输入再试；取到了（哪怕是空的）就不再取
@@ -208,8 +202,10 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
     // 攒到了用户消息就用它们（含运行中排进来的），没有就用开头的那条输入
     const user = done.users.join('\n').trim() || done.user
     if (!reply || !user) return
+    const project = done.cwd ? await projectFor(done.cwd) : {}
     const sent = forward(ctx, 'turn.end', {
       sessionId: done.sessionId,
+      ...(Object.keys(project).length ? { project } : {}),
       user: clip(user, MAX_PROMPT),
       reply: clip(reply, MAX_REPLY),
     }).finally(() => pending.delete(sent))

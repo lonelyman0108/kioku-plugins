@@ -1,4 +1,4 @@
-// kioku import 认得的来源：各平台自带的长期记忆放在哪、是什么格式、迁进 Kioku 时放到哪个坐标。
+// kioku import 认得的来源：各平台自带的长期记忆放在哪、是什么格式、迁进 Kioku 时生成什么样的词条。
 // 这里只读文件、出条目，不发请求。指令文件（AGENTS.md、CLAUDE.md）不是记忆，不在这里
 
 import { createHash } from 'node:crypto'
@@ -18,8 +18,11 @@ const MAX_FILES = 2000
 
 export interface SourceEntry {
   source: string
-  uri?: string
   title?: string
+  baseTitle?: string
+  legacyUri?: string
+  when?: Record<string, string[]>
+  topics?: string[]
   content?: string
   disclosure?: string
   skipped?: string
@@ -53,6 +56,17 @@ export function titleOf(text: unknown): string {
     .replace(/\p{Cc}+/gu, ' ')
     .trim()
   return Array.from(line).slice(0, MAX_TITLE).join('')
+}
+
+export function titleWithSuffix(base: string, suffix: string): string {
+  const cleanSuffix = titleOf(suffix)
+  const suffixChars = Array.from(cleanSuffix)
+  if (suffixChars.length >= MAX_TITLE) return suffixChars.slice(0, MAX_TITLE).join('')
+  const prefix = Array.from(base)
+    .slice(0, MAX_TITLE - suffixChars.length)
+    .join('')
+    .trimEnd()
+  return `${prefix}${cleanSuffix}`
 }
 
 function clipped(text: unknown, max: number): string {
@@ -134,15 +148,26 @@ export function sections(text: string): Array<{ heading: string | null; text: st
     .filter((part) => part.text)
 }
 
-// 条目：{ source, uri, title, content, disclosure }，或者 { source, skipped: 原因 }
+// 条目：{ source, title, legacyUri, when, topics, content, disclosure }，或者 { source, skipped: 原因 }
 function entry(
   source: string,
   {
-    uri,
     title,
+    baseTitle,
+    legacyUri,
+    when,
+    topics,
     content,
     disclosure,
-  }: { uri: string; title: string; content: string; disclosure?: string },
+  }: {
+    title: string
+    baseTitle?: string
+    legacyUri?: string
+    when?: Record<string, string[]>
+    topics?: string[]
+    content: string
+    disclosure?: string
+  },
 ): SourceEntry {
   const text = content.trim()
   if (!text) return { source, skipped: '没有内容' }
@@ -151,8 +176,11 @@ function entry(
   }
   const item: SourceEntry = {
     source,
-    uri,
     title: titleOf(title) || basename(source),
+    ...(baseTitle ? { baseTitle } : {}),
+    ...(legacyUri ? { legacyUri } : {}),
+    ...(when && Object.keys(when).length ? { when } : {}),
+    ...(topics?.length ? { topics } : {}),
     content: text,
   }
   const hint = clipped(disclosure, MAX_DISCLOSURE)
@@ -217,17 +245,15 @@ export function claudeProjectName(encoded: string, home = homedir()): string {
 }
 
 // Claude Code 的自动记忆：<配置目录>/projects/<项目>/memory/*.md，一个文件一条，文件头里有名字、说明与类型。
-// MEMORY.md 是索引，不是记忆。类型决定放到哪，都带着项目名（不同项目里同名的不互相顶掉）：
-// - user（用户是谁、偏好）→ 本人的 about；project（项目的事）、reference（外部资料在哪）→ 本人下按项目放
-// - feedback（该怎么干活）→ 这个应用下按项目放：别的 agent 用不上
+// MEMORY.md 是索引，不是记忆；带上项目与客户端切面以及主题标签，同时保留旧坐标仅作迁移兜底对照
 async function claudeCode({
   env,
   path,
-  app,
+  client,
 }: {
   env: Env
   path?: string
-  app: string
+  client: string
 }): Promise<SourceReadResult> {
   // 先变成绝对路径：相对路径取上一级的名字会取到 . 或 ..
   const root = resolve(
@@ -243,6 +269,7 @@ async function claudeCode({
         .sort()
         .map((name) => ({ name: claudeProjectName(name), dir: join(root, name, 'memory') }))
   const entries: SourceEntry[] = []
+  const titleProject = new Map<string, string>()
   for (const project of projects) {
     // 项目的 memory 目录是符号链接时不进去
     if (!direct && !(await isRealDir(project.dir))) continue
@@ -261,30 +288,52 @@ async function claudeCode({
         entries.push({ source, skipped: '文件头没有结尾的 ---，分不清哪些是正文' })
         continue
       }
-      const id = segment(meta.name || name.replace(/\.md$/i, ''))
+      const stem = name.replace(/\.md$/i, '')
+      const id = segment(meta.name || stem)
       const type = meta['metadata.type'] || meta.type || ''
-      const uri =
+      const legacyUri =
         type === 'user'
           ? `user://about/${project.name}/${id}`
           : type === 'feedback'
-            ? `app://${app}/feedback/${project.name}/${id}`
+            ? `app://${client}/feedback/${project.name}/${id}`
             : type === 'reference'
               ? `user://reference/${project.name}/${id}`
               : `user://projects/${project.name}/${id}`
-      entries.push(
-        entry(source, {
-          uri,
-          title: meta.description || meta.name || name,
-          content: body,
-          disclosure: meta.description,
-        }),
-      )
+      const when: Record<string, string[]> =
+        type === 'feedback'
+          ? { project: [project.name], runtime: ['claudecode'] }
+          : { project: [project.name] }
+      const topics = ['claude-code', segment(type || 'project')]
+      const baseTitle = titleOf(meta.description || meta.name || stem) || stem
+      const prevProject = titleProject.get(baseTitle)
+      let itemTitle = baseTitle
+      if (prevProject !== undefined && prevProject !== project.name) {
+        const withProj = titleWithSuffix(baseTitle, `（${project.name}）`)
+        const clash = titleProject.get(withProj)
+        itemTitle =
+          clash === undefined || clash === project.name
+            ? withProj
+            : titleWithSuffix(baseTitle, `（${project.name}-${digest(source).slice(2, 6)}）`)
+      }
+      const built = entry(source, {
+        title: itemTitle,
+        ...(itemTitle !== baseTitle ? { baseTitle } : {}),
+        legacyUri,
+        when,
+        topics,
+        content: body,
+        disclosure: meta.description,
+      })
+      if (!built.skipped && !titleProject.has(itemTitle)) {
+        titleProject.set(itemTitle, project.name)
+      }
+      entries.push(built)
     }
   }
   return { root, found: true, entries }
 }
 
-// 一段文字的摘要，做坐标里的标识：内容不变标识就不变
+// 一段文字的摘要，做标题或旧坐标的消歧标识：内容不变标识就不变
 function digest(text: string): string {
   return `m-${createHash('sha256').update(text).digest('hex').slice(0, 10)}`
 }
@@ -293,17 +342,19 @@ interface SourceFileSpec {
   file: string
   prefix: string
   title: string
+  when?: Record<string, string[]>
+  topics: string[]
   single?: boolean
 }
 
-// 一组「文件 → 放到哪」的来源：每个文件按 sections 拆成几条。标识取小节标题；没有标题的、标题重了的取内容的摘要，
-// 不按顺序编号：文件里插一条、删一条之后，别的条的坐标不能跟着变，否则去重就认不出它们了。
-// 代价是没有标题的一段改了内容就是新的一条，旧的留在 Kioku 里
+// 一组「文件 → 迁入条目」的来源：每个文件按 sections 拆成几条。标题优先取小节标题，无小节标题或重名时按内容摘要消歧；
+// 不按顺序编号：文件里插一条、删一条之后，别的条标题不能跟着变，否则去重就认不出它们了。
 async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceReadResult> {
   const info = await stat(root).catch(() => null)
   if (!info?.isDirectory()) return { root, found: false, entries: [] }
   const entries: SourceEntry[] = []
-  for (const { file, prefix, title, single } of files) {
+  const usedTitles = new Set<string>()
+  for (const { file, prefix, title, when, topics, single } of files) {
     const source = join(root, file)
     const read = await readable(source)
     if (!read) continue
@@ -312,15 +363,39 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
       continue
     }
     const parts = single ? [{ heading: null, text: read.text.trim() }] : sections(read.text)
-    const used = new Set<string>()
+    const usedIds = new Set<string>()
     parts.forEach((part, index) => {
       let id = part.heading ? segment(part.heading) : digest(part.text)
-      if (used.has(id)) id = digest(part.text)
-      used.add(id)
+      if (usedIds.has(id)) id = digest(part.text)
+      usedIds.add(id)
+
+      const headingTitle = part.heading ? titleOf(part.heading) : ''
+      const baseTitle = single ? titleOf(title) || title : headingTitle || titleOf(title) || title
+      let itemTitle: string
+      if (single) {
+        itemTitle = baseTitle
+      } else if (parts.length === 1) {
+        itemTitle = baseTitle
+      } else {
+        itemTitle =
+          headingTitle && !usedTitles.has(headingTitle)
+            ? headingTitle
+            : titleWithSuffix(baseTitle, `（${digest(part.text).slice(2, 8)}）`)
+      }
+      if (usedTitles.has(itemTitle)) {
+        itemTitle = titleWithSuffix(
+          baseTitle,
+          `（${digest(`${file}:${index}:${part.text}`).slice(2, 8)}）`,
+        )
+      }
+      usedTitles.add(itemTitle)
+
       entries.push(
         entry(parts.length > 1 ? `${source}（第 ${index + 1} 段）` : source, {
-          uri: single ? prefix : `${prefix}/${id}`,
-          title: part.heading || title,
+          title: itemTitle,
+          legacyUri: single ? prefix : `${prefix}/${id}`,
+          when,
+          topics,
           content: part.text,
         }),
       )
@@ -329,21 +404,31 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
   return { root, found: true, entries }
 }
 
-// Hermes：<主目录>/.hermes/memories 下的 MEMORY.md（agent 自己记的）与 USER.md（用户画像）。
-// 坐标里带着来源的名字：几个来源迁进同一个应用时不落到一起
+// Hermes：<主目录>/.hermes/memories 下的 MEMORY.md（agent 自己记的）与 USER.md（个人偏好）
 function hermes({
   env,
   path,
-  app,
+  client,
 }: {
   env: Env
   path?: string
-  app: string
+  client: string
 }): Promise<SourceReadResult> {
   const root = resolve(path ?? join(env.HERMES_HOME || join(homedir(), '.hermes'), 'memories'))
   return fromFiles(root, [
-    { file: 'MEMORY.md', prefix: `app://${app}/hermes/notes`, title: 'Hermes 的记忆' },
-    { file: 'USER.md', prefix: 'user://about/hermes', title: 'Hermes 记下的用户画像' },
+    {
+      file: 'MEMORY.md',
+      prefix: `app://${client}/hermes/notes`,
+      title: 'Hermes 的记忆',
+      when: { runtime: ['hermes'] },
+      topics: ['hermes', 'notes'],
+    },
+    {
+      file: 'USER.md',
+      prefix: 'user://about/hermes',
+      title: 'Hermes 记下的个人偏好',
+      topics: ['hermes', 'about'],
+    },
   ])
 }
 
@@ -352,11 +437,11 @@ function hermes({
 async function openclaw({
   env,
   path,
-  app,
+  client,
 }: {
   env: Env
   path?: string
-  app: string
+  client: string
 }): Promise<SourceReadResult> {
   const root = resolve(path ?? join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'workspace'))
   const notes = join(root, 'memory')
@@ -369,16 +454,27 @@ async function openclaw({
       const suffix = stem.slice(11)
       return {
         file: join('memory', name),
-        // 和别的来源一样规整成坐标里的一段（长度、连着的连字符）；只差大小写的两个文件会落到同一个坐标，
-        // 后一个在计划里按撞名列出来
-        prefix: `app://${app}/openclaw/journal/${segment(stem)}`,
+        prefix: `app://${client}/openclaw/journal/${segment(stem)}`,
         title: suffix ? `${stem.slice(0, 10)} 的笔记（${suffix}）` : `${stem} 的笔记`,
+        when: { runtime: ['openclaw'] },
+        topics: ['openclaw', 'journal'],
         single: true,
       }
     })
   return fromFiles(root, [
-    { file: 'MEMORY.md', prefix: `app://${app}/openclaw/notes`, title: 'OpenClaw 的记忆' },
-    { file: 'USER.md', prefix: 'user://about/openclaw', title: 'OpenClaw 记下的用户画像' },
+    {
+      file: 'MEMORY.md',
+      prefix: `app://${client}/openclaw/notes`,
+      title: 'OpenClaw 的记忆',
+      when: { runtime: ['openclaw'] },
+      topics: ['openclaw', 'notes'],
+    },
+    {
+      file: 'USER.md',
+      prefix: 'user://about/openclaw',
+      title: 'OpenClaw 记下的个人偏好',
+      topics: ['openclaw', 'about'],
+    },
     ...daily,
   ])
 }
@@ -387,7 +483,7 @@ export const SOURCES: Record<
   string,
   {
     name: string
-    read: (opts: { env: Env; path?: string; app: string }) => Promise<SourceReadResult>
+    read: (opts: { env: Env; path?: string; client: string }) => Promise<SourceReadResult>
   }
 > = {
   'claude-code': { name: 'Claude Code 的自动记忆', read: claudeCode },

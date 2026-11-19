@@ -12,6 +12,7 @@ from typing import cast
 
 if TYPE_CHECKING:
     from ..models.boot_entry import BootEntry
+    from ..models.boot_response_persona_traits_item import BootResponsePersonaTraitsItem
 
 
 T = TypeVar("T", bound="BootResponse")
@@ -23,14 +24,17 @@ class BootResponse:
     Attributes:
         entries (list[BootEntry]):
         omitted (list[str]):
+        persona_traits (list[BootResponsePersonaTraitsItem] | Unset):
     """
 
     entries: list[BootEntry]
     omitted: list[str]
+    persona_traits: list[BootResponsePersonaTraitsItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.boot_entry import BootEntry  # noqa: PLC0415
+        from ..models.boot_response_persona_traits_item import BootResponsePersonaTraitsItem  # noqa: PLC0415
 
         entries = []
         for entries_item_data in self.entries:
@@ -38,6 +42,13 @@ class BootResponse:
             entries.append(entries_item)
 
         omitted = self.omitted
+
+        persona_traits: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.persona_traits, Unset):
+            persona_traits = []
+            for persona_traits_item_data in self.persona_traits:
+                persona_traits_item = persona_traits_item_data.to_dict()
+                persona_traits.append(persona_traits_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -47,12 +58,15 @@ class BootResponse:
                 "omitted": omitted,
             }
         )
+        if persona_traits is not UNSET:
+            field_dict["personaTraits"] = persona_traits
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.boot_entry import BootEntry  # noqa: PLC0415
+        from ..models.boot_response_persona_traits_item import BootResponsePersonaTraitsItem  # noqa: PLC0415
 
         d = dict(src_dict)
         entries = []
@@ -64,9 +78,21 @@ class BootResponse:
 
         omitted = cast(list[str], d.pop("omitted"))
 
+        _persona_traits = d.pop("personaTraits", UNSET)
+        persona_traits: list[BootResponsePersonaTraitsItem] | Unset = UNSET
+        if _persona_traits is not UNSET:
+            persona_traits = []
+            for persona_traits_item_data in _persona_traits:
+                persona_traits_item = BootResponsePersonaTraitsItem.from_dict(
+                    persona_traits_item_data
+                )
+
+                persona_traits.append(persona_traits_item)
+
         boot_response = cls(
             entries=entries,
             omitted=omitted,
+            persona_traits=persona_traits,
         )
 
         boot_response.additional_properties = d

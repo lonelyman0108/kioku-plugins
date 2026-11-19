@@ -9,7 +9,7 @@
 
 ## 安装与配置
 
-先在 Kioku 管理界面的「应用」页建一个运行时是 `Antigravity`（`agy`）的应用，然后：
+先在 Kioku 管理界面的「接入实例」页建一个运行时是 `Antigravity`（`agy`）的接入实例，然后：
 
 ```bash
 # 1. 配好服务地址、访问密钥与全局 mcp_config.json

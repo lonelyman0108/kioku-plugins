@@ -72,7 +72,7 @@ class KiokuMemoryProvider(MemoryProvider):
             },
             {
                 "key": "api_key",
-                "description": "访问密钥：在 Kioku 管理界面为运行时是 hermes 的应用签发",
+                "description": "访问密钥：在 Kioku 管理界面为运行时是 hermes 的接入实例签发",
                 "secret": True,
                 "required": True,
                 "env_var": "KIOKU_API_KEY",

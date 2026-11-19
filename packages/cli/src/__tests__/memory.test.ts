@@ -36,8 +36,17 @@ beforeAll(async () => {
 
       if (url.pathname === '/v1/whoami') {
         return send(200, {
-          app: { id: 'app-1', slug: 'cc', name: 'Claude Code', runtimeFamily: 'claudecode' },
-          scopes: { readLayers: ['user', 'app', 'core'], writeLayers: ['app', 'user'] },
+          primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
+          linkedCircles: [],
+          client: {
+            id: 'app-1',
+            circleId: 'c1',
+            slug: 'cc',
+            name: 'Claude Code',
+            runtimeFamily: 'claudecode',
+          },
+          persona: null,
+          scopes: { readKinds: ['entry', 'fact', 'episode'], writeKinds: ['entry'] },
         })
       }
 
@@ -47,9 +56,14 @@ beforeAll(async () => {
         return send(200, {
           candidates: [
             {
-              uri: 'user://preferences/reply_style',
+              entryId: 'e1',
+              shortId: 'm-234567',
               title: '回复风格偏好',
-              layer: 'user',
+              circleId: 'c1',
+              circleSlug: 'personal',
+              kind: 'entry',
+              matchedWhen: { realm: ['work'] },
+              otherVariantsCount: 1,
               priority: 5,
               disclosure: '需要组织回复时读取',
               score: 0.91,
@@ -61,91 +75,142 @@ beforeAll(async () => {
         })
       }
 
-      if (req.method === 'GET' && url.pathname === '/v1/memories') {
-        const uri = url.searchParams.get('uri') ?? ''
-        if (uri === 'user://preferences/reply_style') {
+      if (req.method === 'GET' && url.pathname === '/v1/entries') {
+        const id = url.searchParams.get('id') ?? ''
+        const allVariants = url.searchParams.get('allVariants') === 'true'
+        if (id === 'm-234567' || id === '回复风格偏好' || id === 'user://preferences/reply_style') {
+          const baseVariant = {
+            id: 'var-1',
+            when: {},
+            whenSignature: '{}',
+            sortOrder: 0,
+            content: '第一行保持简洁\n  - 保留缩进列表\n第三行不要截断：' + 'x'.repeat(230),
+            updatedAt: '2026-01-01T00:00:00Z',
+          }
+          const workVariant = {
+            id: 'var-2',
+            when: { realm: ['work'] },
+            whenSignature: '{"realm":["work"]}',
+            sortOrder: 1,
+            content: '工作场景下先给结论。',
+            updatedAt: '2026-01-02T00:00:00Z',
+          }
           return send(200, {
             id: 'mem-1',
-            uri,
+            shortId: 'm-234567',
+            circleId: 'c1',
+            circleSlug: 'personal',
+            kind: 'entry',
             title: '回复风格偏好',
-            layer: 'user',
             sensitivity: 'private',
-            provenance: 'curated',
+            provenance: 'owner',
             originScope: 'app:cc',
-            content: '第一行保持简洁\n  - 保留缩进列表\n第三行不要截断：' + 'x'.repeat(230),
+            topics: ['prefs'],
+            realms: allVariants ? ['work'] : [],
             priority: 5,
             disclosure: '需要组织回复时读取',
             glossary: ['回复风格'],
             validFrom: '2026-01-01T00:00:00Z',
             validTo: null,
             version: 3,
+            variants: allVariants ? [baseVariant, workVariant] : [baseVariant],
+            otherVariants: allVariants
+              ? []
+              : [{ when: { realm: ['work'] }, whenSignature: '{"realm":["work"]}' }],
+            links: [
+              {
+                shortId: 'm-345678',
+                title: '关联规范',
+                circleId: 'c1',
+                circleSlug: 'personal',
+                kind: 'entry',
+                sensitivity: 'internal',
+                direction: 'outgoing',
+                sourceVariantId: 'var-1',
+              },
+            ],
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-02T00:00:00Z',
           })
         }
-        if (uri === 'user://secrets/token') {
+        if (id === 'm-999999') {
           return send(200, {
             id: 'mem-2',
-            uri,
+            shortId: 'm-999999',
+            circleId: 'c1',
+            circleSlug: 'personal',
+            kind: 'entry',
             title: '私密令牌备注',
-            layer: 'user',
             sensitivity: 'secret',
-            content: null,
+            provenance: 'owner',
+            originScope: 'personal',
+            topics: [],
+            realms: [],
             priority: 1,
             disclosure: null,
             glossary: [],
+            validFrom: '2026-01-01T00:00:00Z',
+            validTo: null,
             version: 1,
+            variants: [
+              {
+                id: 'v-sec',
+                when: {},
+                whenSignature: '{}',
+                sortOrder: 0,
+                content: null,
+                updatedAt: '2026-01-01T00:00:00Z',
+              },
+            ],
+            otherVariants: [],
+            links: [],
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
           })
         }
         return send(404, { error: '记忆不存在或无权读取' })
       }
 
-      if (req.method === 'GET' && url.pathname === '/v1/memories/children') {
-        const of = url.searchParams.get('of') ?? ''
+      if (req.method === 'GET' && url.pathname === '/v1/entries/browse') {
+        const groupBy = url.searchParams.get('groupBy') ?? 'topic'
+        const circle = url.searchParams.get('circle')
+        if (circle === 'missing') {
+          return send(404, { error: '未找到记忆圈：missing' })
+        }
         const auth = req.headers.authorization ?? ''
-        if (of === 'core' && auth === `Bearer ${SCOPED_KEY}`) {
-          return send(403, { error: '没有权限读取通用归属' })
+        if (groupBy === 'realm' && auth === `Bearer ${SCOPED_KEY}`) {
+          return send(403, { error: '没有权限读取该场域' })
         }
-        if (of === 'user') {
-          return send(200, {
-            parent: null,
-            children: [
-              {
-                uri: 'user://preferences',
-                exists: false,
-                id: null,
-                title: null,
-                layer: null,
-                sensitivity: null,
-                priority: null,
-                disclosure: null,
-                childCount: 2,
-              },
-            ],
-            truncated: false,
-          })
-        }
-        if (of === 'user://preferences') {
-          return send(200, {
-            parent: null,
-            children: [
-              {
-                uri: 'user://preferences/reply_style',
-                exists: true,
-                id: 'mem-1',
-                title: '回复风格偏好',
-                layer: 'user',
-                sensitivity: 'private',
-                priority: 5,
-                disclosure: null,
-                childCount: 0,
-              },
-            ],
-            truncated: false,
-          })
-        }
-        return send(200, { parent: null, children: [], truncated: false })
+        return send(200, {
+          groupBy,
+          groups: [
+            {
+              key: 'prefs',
+              label: groupBy === 'realm' ? '通用场域' : 'prefs',
+              count: 1,
+              items: [
+                {
+                  id: 'mem-1',
+                  shortId: 'm-234567',
+                  title: '回复风格偏好',
+                  circleId: 'c1',
+                  circleSlug: 'personal',
+                  kind: 'entry',
+                  sensitivity: 'private',
+                  priority: 5,
+                  topics: ['prefs'],
+                  disclosure: null,
+                  variantCount: 2,
+                  variantsSummary: [{}, { realm: ['work'] }],
+                },
+              ],
+            },
+          ],
+          truncated: false,
+        })
       }
 
-      if (req.method === 'POST' && url.pathname === '/v1/memories') {
+      if (req.method === 'POST' && url.pathname === '/v1/entries') {
         const content = String(body?.content ?? '')
         if (content.includes('mock-secret-marker') && body?.plaintextOk !== true) {
           return send(400, {
@@ -155,15 +220,36 @@ beforeAll(async () => {
         }
         return send(201, {
           id: 'mem-new',
-          uri: body?.uri,
-          title: body?.title ?? 'note',
-          layer: String(body?.uri ?? '').split('://')[0],
-          sensitivity: body?.sensitivity ?? 'internal',
-          content,
+          shortId: 'm-new234',
+          circleId: 'c1',
+          circleSlug: String(body?.circle ?? 'personal'),
+          kind: 'entry',
+          title: body?.title ?? 'm-new234',
+          sensitivity: body?.sensitivity ?? 'private',
+          provenance: 'agent',
+          originScope: 'app:cc',
+          topics: Array.isArray(body?.topics) ? body.topics : [],
+          realms: [],
           priority: body?.priority ?? 2,
           disclosure: body?.disclosure ?? null,
           glossary: [],
+          validFrom: '2026-01-01T00:00:00Z',
+          validTo: null,
           version: 1,
+          variants: [
+            {
+              id: 'v-new',
+              when: (body?.when as Record<string, string[]>) ?? {},
+              whenSignature: '{}',
+              sortOrder: 0,
+              content,
+              updatedAt: '2026-01-01T00:00:00Z',
+            },
+          ],
+          otherVariants: [],
+          links: [],
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
         })
       }
 
@@ -246,12 +332,16 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     await writeProfile('codex', { url: base, key: KEY }, env)
   })
 
-  it('search：格式化 Strata 结果框、空状态与 --json 输出', async () => {
+  it('search：格式化 Strata 结果框、短 ID、匹配切面与 --json 输出', async () => {
     const out1 = captureOut()
     expect(await searchCommand(['回复风格', '--limit', '5'], { env, out: out1.stream })).toBe(0)
-    expect(out1.read()).toContain('回复风格偏好')
-    expect(out1.read()).toContain('user://preferences/reply_style')
-    expect(out1.read()).toContain('0.91')
+    const text = out1.read()
+    expect(text).toContain('回复风格偏好')
+    expect(text).toContain('m-234567')
+    expect(text).toContain('正式词条')
+    expect(text).toContain('realm=work')
+    expect(text).toContain('另有 1 个变体')
+    expect(text).toContain('0.91')
     expect(lastRequests.at(-1)?.body).toEqual({ query: '回复风格', limit: 5 })
 
     const outEmpty = captureOut()
@@ -260,59 +350,99 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
 
     const outJson = captureOut()
     expect(await searchCommand(['回复风格', '--json'], { env, out: outJson.stream })).toBe(0)
-    const parsed = JSON.parse(outJson.read()) as { candidates: Array<{ uri: string }> }
-    expect(parsed.candidates[0].uri).toBe('user://preferences/reply_style')
+    const parsed = JSON.parse(outJson.read()) as { candidates: Array<{ shortId: string }> }
+    expect(parsed.candidates[0].shortId).toBe('m-234567')
   })
 
-  it('get：完整保留多行与缩进正文（不截断于 200 字），坐标置于底部卡片区域', async () => {
+  it('get：支持短 ID、--circle 与 --all-variants，完整保留缩进正文与双链', async () => {
     const out = captureOut()
-    expect(await getCommand(['user://preferences/reply_style'], { env, out: out.stream })).toBe(0)
+    expect(await getCommand(['m-234567'], { env, out: out.stream })).toBe(0)
     const text = out.read()
     expect(text).toContain('回复风格偏好')
+    expect(text).toContain('短 ID：m-234567')
+    expect(text).toContain('记忆圈：personal')
     expect(text).toContain('  - 保留缩进列表')
     expect(text).toContain('x'.repeat(40))
-    expect(text.lastIndexOf('user://preferences/reply_style')).toBeGreaterThan(
-      text.indexOf('回复风格偏好'),
-    )
+    expect(text).toContain('其他切面变体（1）')
+    expect(text).toContain('→ m-345678')
+
+    const allOut = captureOut()
+    expect(
+      await getCommand(['m-234567', '--circle', 'personal', '--all-variants'], {
+        env,
+        out: allOut.stream,
+      }),
+    ).toBe(0)
+    const allText = allOut.read()
+    expect(allText).toContain('── 切面：通用 ──')
+    expect(allText).toContain('── 切面：realm=work ──')
+    expect(allText).toContain('工作场景下先给结论。')
+    expect(lastRequests.at(-1)?.url).toContain('circle=personal')
+    expect(lastRequests.at(-1)?.url).toContain('allVariants=true')
 
     const secretOut = captureOut()
-    expect(await getCommand(['user://secrets/token'], { env, out: secretOut.stream })).toBe(0)
+    expect(await getCommand(['m-999999'], { env, out: secretOut.stream })).toBe(0)
     expect(secretOut.read()).toContain('机密记忆正文不随读取返回')
 
-    await expect(
-      getCommand(['user://missing/one'], { env, out: captureOut().stream }),
-    ).rejects.toThrow(KiokuFailure)
+    await expect(getCommand(['m-404040'], { env, out: captureOut().stream })).rejects.toThrow(
+      KiokuFailure,
+    )
   })
 
-  it('ls：无参按地层顺序展示四类归属（部分无权限时降级提示），有参列出子节点', async () => {
-    const allOut = captureOut()
-    expect(await lsCommand([], { env, out: allOut.stream })).toBe(0)
-    const full = allOut.read()
-    expect(full.indexOf('本人')).toBeLessThan(full.indexOf('应用'))
-    expect(full.indexOf('应用')).toBeLessThan(full.indexOf('人格'))
-    expect(full.indexOf('人格')).toBeLessThan(full.indexOf('通用'))
-    expect(full).toContain('user://preferences')
-    expect(full).toContain('下级 2 项')
+  it('ls：默认按主题分组浏览，支持位置分组维度（含中文别名）与筛选参数', async () => {
+    const defaultOut = captureOut()
+    expect(await lsCommand([], { env, out: defaultOut.stream })).toBe(0)
+    const text = defaultOut.read()
+    expect(text).toContain('记忆目录（按 topic 分组）')
+    expect(text).toContain('prefs（1）')
+    expect(text).toContain('回复风格偏好')
+    expect(text).toContain('m-234567')
+    expect(text).toContain('2 个变体')
+    expect(lastRequests.at(-1)?.url).toBe('/v1/entries/browse?groupBy=topic')
 
-    const subOut = captureOut()
-    expect(await lsCommand(['user://preferences/'], { env, out: subOut.stream })).toBe(0)
-    expect(subOut.read()).toContain('回复风格偏好')
-    expect(lastRequests.at(-1)?.url).toContain('of=user%3A%2F%2Fpreferences')
+    const filteredOut = captureOut()
+    expect(
+      await lsCommand(
+        ['场域', '--circle', 'personal', '--kind', 'entry', '--topic', 'prefs', '--limit', '10'],
+        {
+          env,
+          out: filteredOut.stream,
+        },
+      ),
+    ).toBe(0)
+    expect(filteredOut.read()).toContain('按 realm 分组')
+    expect(lastRequests.at(-1)?.url).toBe(
+      '/v1/entries/browse?groupBy=realm&circle=personal&kind=entry&topic=prefs&limit=10',
+    )
 
     await writeProfile('pi', { url: base, key: SCOPED_KEY }, env)
-    const scopedOut = captureOut()
-    expect(await lsCommand(['--platform', 'pi'], { env, out: scopedOut.stream })).toBe(0)
-    expect(scopedOut.read()).toContain('无权读取')
+    await expect(
+      lsCommand(['realm', '--platform', 'pi'], { env, out: captureOut().stream }),
+    ).rejects.toThrow('没有权限读取该场域')
+
+    await expect(
+      lsCommand(['--circle', 'missing', '--platform', 'pi'], { env, out: captureOut().stream }),
+    ).rejects.toThrow('未找到记忆圈：missing')
+
+    await expect(lsCommand(['invalid-dim'], { env, out: captureOut().stream })).rejects.toThrow(
+      UsageError,
+    )
   })
 
-  it('add：支持参数与管道 stdin，遇到明文拦阻时绝不回显密钥且支持 --plaintext-ok 放行', async () => {
+  it('add：支持标题、切面 --when、主题 --topic、--circle 与明文拦阻检查', async () => {
     const out1 = captureOut()
     expect(
       await addCommand(
         [
-          'user://notes/pipe_test',
-          '--title',
           '管道测试',
+          '--circle',
+          'personal',
+          '--topic',
+          'notes,ci',
+          '--when',
+          'realm=work',
+          '--when',
+          'project=kioku',
           '--sensitivity',
           '私密',
           '--priority',
@@ -328,17 +458,21 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
       ),
     ).toBe(0)
     expect(out1.read()).toContain('已创建记忆')
-    expect(lastRequests.at(-1)?.body).toMatchObject({
-      uri: 'user://notes/pipe_test',
+    expect(out1.read()).toContain('m-new234')
+    expect(lastRequests.at(-1)?.url).toBe('/v1/entries')
+    expect(lastRequests.at(-1)?.body).toEqual({
+      circle: 'personal',
       title: '管道测试',
       content: '通过管道写入的内容',
+      topics: ['notes', 'ci'],
+      when: { realm: ['work'], project: ['kioku'] },
       sensitivity: 'private',
       priority: 4,
     })
 
     const blockedOut = captureOut()
     const secretSample = 'line1\nvalue = mock-secret-marker\n'
-    const codeBlocked = await addCommand(['user://notes/secret_check', '--content', secretSample], {
+    const codeBlocked = await addCommand(['--title', '密钥检查', '--content', secretSample], {
       env,
       out: blockedOut.stream,
       stdin: Object.assign(Readable.from([]), { isTTY: false }),
@@ -350,7 +484,7 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
 
     const retryOut = captureOut()
     const codeOk = await addCommand(
-      ['user://notes/secret_check', '--content', secretSample, '--plaintext-ok'],
+      ['--title', '密钥检查', '--content', secretSample, '--plaintext-ok'],
       {
         env,
         out: retryOut.stream,
@@ -362,7 +496,16 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     expect(lastRequests.at(-1)?.body?.allowPlaintext).toBeUndefined()
 
     await expect(
-      addCommand(['invalid-uri', '--content', 'abc'], { env, out: captureOut().stream }),
+      addCommand(['标题', '--when', 'bad-when', '--content', 'abc'], {
+        env,
+        out: captureOut().stream,
+      }),
+    ).rejects.toThrow(UsageError)
+    await expect(
+      addCommand(['位置标题', '--title', '参数标题', '--content', 'abc'], {
+        env,
+        out: captureOut().stream,
+      }),
     ).rejects.toThrow(UsageError)
   })
 
