@@ -3,6 +3,8 @@
 
 import { emitKeypressEvents } from 'node:readline'
 
+import { upgradePageOf } from '../api.ts'
+import { migrateCommand, planMigration, renderMigrationPlan } from '../commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
 import {
@@ -47,6 +49,7 @@ import {
   connectionText,
   defaultServerUrl,
   effectivePresence,
+  migrationCandidates,
   scanLocalPlatform,
   serverHealth,
   verifyPlatformRemote,
@@ -182,6 +185,8 @@ const DEFAULT_DEPS = {
   removeManagedAgyPlugin,
   setup,
   doctor,
+  planMigration,
+  migrateCommand,
   planImport,
   writeImport,
   removeConflicts,
@@ -516,6 +521,25 @@ function buildDetailBody(
     }
   }
 
+  if (state.server?.mismatch === 'legacy' && state.url) {
+    out.push(sectionHeader('服务端等待数据迁移', width, theme))
+    pushWrapped(theme.error('! 服务端已升级、尚未迁移旧数据'))
+    pushWrapped(`按 o 打开升级页：${upgradePageOf(state.url)}`)
+    out.push('')
+  } else if (state.server?.mismatch === 'older' || state.server?.mismatch === 'newer') {
+    out.push(sectionHeader('服务端代际不匹配', width, theme))
+    pushWrapped(theme.error(`! ${state.server.problem ?? '服务端与命令行代际不兼容'}`))
+    out.push('')
+  } else if (isServerReady(state.server)) {
+    const migrateList = migrationCandidates({ server: state.server, platforms: state.platforms })
+    if (migrateList.length) {
+      out.push(sectionHeader('发现旧版客户端迁移项', width, theme))
+      pushWrapped(theme.warn(`! 检测到 ${migrateList.length} 个客户端需从旧版迁移`))
+      pushWrapped(`按 M 查看计划并一键迁移（${migrateList.map((c) => c.name).join('、')}）`)
+      out.push('')
+    }
+  }
+
   if (!row) {
     out.push('  尚未在本机检出已安装的 AI 客户端。')
     out.push('')
@@ -620,6 +644,13 @@ function buildDetailBody(
           : theme.muted(noCliNote)
   const reenabled = row.reenabledIn ? theme.error(`（被 ./${row.reenabledIn} 重新启用）`) : ''
   out.push(kvLine('自带记忆', `${memLabel}${reenabled}`, width, theme))
+
+  if (row.legacyPlugin?.legacySource) {
+    out.push(kvLine('旧插件来源', theme.warn(`! ${row.legacyPlugin.legacySource}`), width, theme))
+  }
+  if (row.legacyPlugin?.outdatedPlugin) {
+    out.push(kvLine('旧版插件', theme.warn(`! ${row.legacyPlugin.outdatedPlugin}`), width, theme))
+  }
 
   if (row.local !== undefined && row.local !== null) {
     const pendingText = !row.pending
@@ -808,6 +839,12 @@ function renderBottomBar(
     state.platforms.some((p) => p.conflicts?.some((c) => c.removable))
 
   const items: string[] = [theme.keycap('↑↓', '选择')]
+  if (
+    ready &&
+    migrationCandidates({ server: state.server, platforms: state.platforms }).length > 0
+  ) {
+    items.push(theme.keycap('M', '旧版迁移'))
+  }
   if (row && ready) {
     if (row.connection === 'invalid') items.push(theme.keycap('Enter', '重授权'))
     else if (row.connection !== 'ok' || row.otherServer) {
@@ -1398,6 +1435,7 @@ export async function runTui({
           '  ↑ / ↓ 或 j / k      切换客户端',
           '  Enter / c           接入当前客户端（或重新授权已失效访问密钥）',
           '  a                   批量接入多个客户端（浏览器确认一次）',
+          '  M                   迁移旧版客户端插件与已失效访问密钥',
           '  p                   自动安装或更新客户端插件并刷新工具缓存',
           '  d / D               诊断当前客户端 / 诊断全部已安装客户端（doctor）',
           '  i                   扫描并迁入当前客户端的本地记忆',
@@ -1909,6 +1947,55 @@ export async function runTui({
       await refreshAll()
     })
 
+  const actionMigrateLegacy = () =>
+    doAction(async () => {
+      if (!state.url || !isServerReady(state.server)) {
+        setToast('warn', '请先确保服务端已连接并完成迁移与初始化')
+        return
+      }
+      state.busyLabel = '正在生成旧版迁移计划…'
+      paint()
+      const plan = await deps.planMigration(state.url, { env, cwd })
+      state.busyLabel = null
+      if (!plan.items.length) {
+        setToast('info', '本机已接入客户端均已是最新，无需迁移')
+        paint()
+        return
+      }
+      const previewLines = renderMigrationPlan(plan, { columns: Math.min(80, viewport.cols - 6) })
+        .split('\n')
+        .filter(Boolean)
+      const ok = await openConfirmModal({
+        title: '旧版客户端迁移计划',
+        lines: previewLines,
+        question: '确认执行以上迁移？',
+      })
+      if (!ok) return
+
+      state.busyLabel = '正在迁移旧版客户端…'
+      paint()
+      const buf = bufferOut()
+      const code = await deps.migrateCommand(
+        [...plan.items.map((item) => item.id), '--server-url', state.url, '-y'],
+        {
+          env,
+          cwd,
+          out: buf,
+          open: deps.open,
+          authPrompt: tuiAuthPrompt,
+        },
+      )
+      const lines = buf.text().split('\n').filter(Boolean)
+      for (const item of plan.items) {
+        state.resultsById[item.id] = { title: '旧版迁移结果', lines }
+      }
+      setToast(
+        code === 0 ? 'ok' : 'warn',
+        code === 0 ? '旧版客户端迁移完成' : '部分客户端迁移未完成，请看右侧详情',
+      )
+      await refreshAll()
+    })
+
   const actionClean = () =>
     doAction(async () => {
       const row = selectedRowOf(state)
@@ -2284,6 +2371,10 @@ export async function runTui({
       void actionBatchConnect()
       return
     }
+    if (str === 'M') {
+      void actionMigrateLegacy()
+      return
+    }
     if (str === 'p') {
       void actionPlugin()
       return
@@ -2323,8 +2414,10 @@ export async function runTui({
     if (str === 'o') {
       if (!state.url) setToast('warn', '请先按 [s] 设置服务器地址')
       else {
-        deps.open(shownUrl(state.url))
-        setToast('ok', `已在浏览器打开 ${shownUrl(state.url)}`)
+        const target =
+          state.server?.mismatch === 'legacy' ? upgradePageOf(state.url) : shownUrl(state.url)
+        deps.open(target)
+        setToast('ok', `已在浏览器打开 ${target}`)
       }
       return
     }

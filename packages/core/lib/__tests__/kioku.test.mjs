@@ -353,10 +353,9 @@ describe('kioku run', () => {
     mkdirSync(join(root, 'bin'), { recursive: true })
     mkdirSync(join(root, 'lib'))
     copyFileSync(bin, join(root, 'bin', 'kioku'))
-    copyFileSync(
-      fileURLToPath(new URL('../http.mjs', import.meta.url)),
-      join(root, 'lib', 'http.mjs'),
-    )
+    for (const file of ['http.mjs', 'text.mjs']) {
+      copyFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), join(root, 'lib', file))
+    }
     writeFileSync(
       join(root, 'lib', 'kioku.mjs'),
       // 错误的 code 里带着值：直接打印 code 就带出来了

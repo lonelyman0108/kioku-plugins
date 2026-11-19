@@ -14,8 +14,11 @@ import {
   failureText,
   fetchFailure,
   isRedirect,
+  KeyRejected,
   KiokuFailure,
+  LegacyDatabase,
   redirectError,
+  rejectionOf,
 } from './http.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
 import { UsageError } from './usage.mjs'
@@ -203,6 +206,11 @@ async function resolveValues({ url, key }, refs, purpose) {
     data = JSON.parse(text)
   } catch {
     // 不是 JSON 时按没有错误文字处理
+  }
+  // 升级前签发的访问密钥、待迁移的库：用这边的说法，指明下一步
+  const rejected = res.ok ? null : rejectionOf(res.status, data, url)
+  if ((rejected instanceof KeyRejected && rejected.legacy) || rejected instanceof LegacyDatabase) {
+    throw rejected
   }
   if (!res.ok) throw new KiokuFailure(serverError(data, res.status, key))
   const values = valuesOf(data, refs)

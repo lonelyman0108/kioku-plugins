@@ -5,7 +5,14 @@ import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { KeyRejected, whoami } from './api.ts'
+import {
+  generationProblem,
+  KeyRejected,
+  probeServer,
+  SUPPORTED_API,
+  upgradePageOf,
+  whoami,
+} from './api.ts'
 import { conflictToolsText, scanConflicts, type ConflictItem } from './conflicts.ts'
 import {
   KiokuFailure,
@@ -22,6 +29,7 @@ import {
 import { geminiHome } from './gemini.ts'
 import { readCliPreferences } from './identity.ts'
 import { countLocal } from './import.ts'
+import { detectLegacyPlugin, type LegacyPluginFindings } from './legacy.ts'
 import { PLATFORMS } from './platforms.ts'
 import type {
   Env,
@@ -55,6 +63,10 @@ export interface ServerHealthState {
   problem: string | null
   needsSetup?: boolean
   checking?: boolean
+  // 接口代际；连不上时没有
+  generation?: number | null
+  // 代际不对（older / newer）或库待迁移（legacy）：这时 problem 写着下一步
+  mismatch?: 'older' | 'newer' | 'legacy'
 }
 
 export interface PanelServer extends ServerHealthState {
@@ -69,6 +81,9 @@ export interface PlatformRow {
   installKind?: PlatformInstallKind
   hasCli?: boolean
   connection: 'ok' | 'none' | 'invalid' | 'unknown' | 'broken' | 'manual'
+  // connection 为 invalid 时：访问密钥是升级前签发的
+  legacyKey?: boolean
+  legacyPlugin?: LegacyPluginFindings
   url?: string
   otherServer?: boolean
   who?: WhoamiResponse
@@ -93,20 +108,26 @@ export interface PanelState {
   platforms: PlatformRow[]
 }
 
-// 服务器的现状：{ reachable, version, problem, needsSetup }。不要访问密钥
+// 服务器的现状：{ reachable, version, problem, needsSetup, generation, mismatch }。不要访问密钥。
+// 代际不对、库待迁移时 problem 写着下一步，不报成「HTTP 503」
 export async function serverHealth(url: string): Promise<ServerHealthState> {
-  let answer
-  try {
-    answer = await getJson(url, '/v1/health')
-  } catch (err) {
-    return { reachable: false, problem: failureText(err) }
+  const probe = await probeServer(url)
+  if (probe.state === 'unreachable') {
+    return { reachable: false, problem: probe.problem ?? '无法连接' }
   }
-  const version = typeof answer.data?.version === 'string' ? plain(answer.data.version) : null
-  if (answer.status === 503) {
-    return { reachable: true, version, problem: '数据库暂时无法连接' }
+  const { version, generation } = probe
+  const problem = generationProblem(probe, url)
+  if (problem) {
+    const mismatch =
+      generation !== null && generation < SUPPORTED_API
+        ? 'older'
+        : generation !== null && generation > SUPPORTED_API
+          ? 'newer'
+          : 'legacy'
+    return { reachable: true, version, generation, problem, mismatch }
   }
-  if (answer.status !== 200 || answer.data?.status !== 'ok') {
-    return { reachable: false, problem: `不像 Kioku（HTTP ${answer.status}）` }
+  if (probe.state === 'unavailable') {
+    return { reachable: true, version, generation, problem: '数据库暂时无法连接' }
   }
   let needsSetup = false
   try {
@@ -115,7 +136,7 @@ export async function serverHealth(url: string): Promise<ServerHealthState> {
   } catch {
     // 查不到按已初始化算
   }
-  return { reachable: true, version, problem: null, needsSetup }
+  return { reachable: true, version, generation, problem: null, needsSetup }
 }
 
 async function isDir(path: string): Promise<boolean> {
@@ -303,6 +324,16 @@ export async function scanLocalPlatform(
 
   // 只数本地有几条；和 Kioku 比（没迁的有几条）要一条一条地问，选了迁移再比
   if (platform.source) row.local = await countLocal(platform.source, { env }).catch(() => null)
+  const legacyPlugin = await detectLegacyPlugin(id, { env, cwd }).catch(() => null)
+  if (
+    legacyPlugin &&
+    (legacyPlugin.legacySource ||
+      legacyPlugin.outdatedPlugin ||
+      legacyPlugin.staleToolCache ||
+      legacyPlugin.manualInstallDir)
+  ) {
+    row.legacyPlugin = legacyPlugin
+  }
   const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
   if (conflicts.length) row.conflicts = conflicts
   return { row, config }
@@ -320,13 +351,14 @@ export async function verifyPlatformRemote(
     next.connection = 'ok'
   } catch (err) {
     next.connection = err instanceof KeyRejected ? 'invalid' : 'unknown'
+    if (err instanceof KeyRejected && err.legacy) next.legacyKey = true
     next.reason = failureText(err)
   }
   return next
 }
 
 // 一个平台的现状。connection：
-// - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销
+// - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销（legacyKey 为真时是升级前签发的）
 // - unknown：连不上、响应不对，查不了；broken：配置文件读不懂
 // - manual：未写入 profile，但 Claude Code 在 /plugin 里已启用插件
 export async function scanPlatform(
@@ -378,10 +410,11 @@ export function canDisable(row: Pick<PlatformRow, 'connection' | 'memory'>): boo
 
 // 平台接到哪一步，一个短词
 export function connectionText(
-  row: Pick<PlatformRow, 'connection' | 'plugin' | 'otherServer' | 'present'>,
+  row: Pick<PlatformRow, 'connection' | 'plugin' | 'otherServer' | 'present' | 'legacyKey'>,
 ): string {
   if (row.connection === 'manual') return row.plugin ? '插件已启用' : '未接入'
   if (row.connection === 'ok' && row.otherServer) return '接到另一台服务器'
+  if (row.connection === 'invalid' && row.legacyKey) return '旧密钥已失效'
   return (
     {
       ok: '已接入',
@@ -430,6 +463,8 @@ export function platformDetails(row: PlatformRow): {
         : `（未迁移 ${row.pending.pending} 条）`
     details.push(`本地记忆 ${row.local} 条${pending}`)
   }
+  if (row.legacyPlugin?.legacySource) details.push(`旧插件来源 ${row.legacyPlugin.legacySource}`)
+  if (row.legacyPlugin?.outdatedPlugin) details.push(`插件过旧 ${row.legacyPlugin.outdatedPlugin}`)
   if (row.conflicts?.length) {
     details.push(`冲突 ${conflictToolsText(row.conflicts)}`)
   }
@@ -494,6 +529,20 @@ export function renderPanel(
   return lines.join('\n')
 }
 
+// 需要从旧版迁移的客户端：带旧密钥、旧插件市场来源、过旧插件或旧工具清单缓存
+export function migrationCandidates(state: PanelState): PlatformRow[] {
+  return state.platforms.filter(
+    (row) =>
+      !row.otherServer &&
+      Boolean(
+        row.legacyKey ||
+        row.legacyPlugin?.legacySource ||
+        row.legacyPlugin?.outdatedPlugin ||
+        row.legacyPlugin?.staleToolCache,
+      ),
+  )
+}
+
 // 要接入的候选：有自己的配置、还没接到这台服务器的（失效的与仅 /plugin 手动配置的另算）
 export function connectCandidates(state: PanelState): PlatformRow[] {
   return state.platforms.filter(
@@ -518,6 +567,13 @@ export function actionsFor(state: PanelState): PanelAction[] {
   const actions: PanelAction[] = []
   const { server } = state
   const ready = Boolean(server?.reachable && !server.problem && !server.needsSetup)
+  if (server?.mismatch === 'legacy') {
+    actions.push({
+      value: 'open-upgrade',
+      label: '打开管理界面迁移旧数据',
+      hint: upgradePageOf(server.url),
+    })
+  }
   if (!server || !server.reachable) {
     actions.push({ value: 'local', label: '本机起一个 Kioku', hint: '用 Docker' })
   }
@@ -526,6 +582,14 @@ export function actionsFor(state: PanelState): PanelAction[] {
     actions.push({ value: 'open', label: '打开管理界面初始化', hint: '建第一个管理员' })
   }
   if (ready) {
+    const migrateList = migrationCandidates(state)
+    if (migrateList.length) {
+      actions.push({
+        value: 'migrate',
+        label: `从旧版迁移 ${names(migrateList)}（${migrateList.length} 个客户端）`,
+        hint: '更新插件并批量重新授权',
+      })
+    }
     const candidates = connectCandidates(state)
     const present = candidates.filter((row) => row.present)
     if (present.length) {
@@ -536,7 +600,7 @@ export function actionsFor(state: PanelState): PanelAction[] {
     } else if (candidates.length) {
       actions.push({ value: 'connect', label: '接入其他平台', hint: '本机没发现的' })
     }
-    const invalid = state.platforms.filter((row) => row.connection === 'invalid')
+    const invalid = state.platforms.filter((row) => row.connection === 'invalid' && !row.legacyKey)
     if (invalid.length) {
       actions.push({ value: 'reauth', label: `重新授权 ${names(invalid)}（访问密钥已失效）` })
     }

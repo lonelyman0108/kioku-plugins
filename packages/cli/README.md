@@ -40,6 +40,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 | `kioku connect [平台…]` | 一站式授权、停用自带记忆、自动装插件与 MCP 握手验证 |
 | `kioku disconnect <平台>` | 恢复自带记忆、删除凭据配置并安全清理托管插件 |
 | `kioku upgrade [平台…]` | 升级已接入插件并刷新本机 MCP 工具清单缓存 |
+| `kioku migrate [平台…]` | 识别服务端换代并迁移旧插件来源、工具清单缓存与失效访问密钥 |
 | `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限、客户端配置与冲突工具 |
 | `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
 | `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
@@ -51,6 +52,14 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
 每个子命令的完整说明：`kioku <子命令> --help`。支持的平台：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
+
+## 从旧版升级
+
+服务端升级到记忆圈架构之后，旧访问密钥会失效且需要更新各客户端插件：
+
+1. 若服务端尚未完成数据结构升级，打开管理界面 `/legacy-upgrade` 用原管理员账号一键就地迁移。
+2. 在终端执行 `npx @kioku-memory/cli migrate`（支持 `--dry-run` 预览、`-y` 跳过确认）：自动识别旧插件市场来源、过旧插件与旧版 MCP 工具清单缓存，卸载旧来源、安装/更新新版插件、在浏览器一次批量重新签发访问密钥，并运行 `kioku doctor` 完成验证。
+3. 在全屏交互控制台（`kioku`）里，遇到待迁移服务端按 `o` 可直接打开升级页，检测到需迁移客户端按 `M` 可一键迁移。
 
 ## login
 

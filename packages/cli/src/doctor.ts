@@ -2,10 +2,11 @@
 // 单平台默认输出与既有脚本、E2E 合约完全一致（✓ / ! / ✗ 行）；
 // 未指定平台且未从会话认出时可自动巡检全部已接入/已安装平台（或使用 --all），并支持 --json 输出。
 
-import { whoami } from './api.ts'
+import { KeyRejected, ServerMismatch, whoami } from './api.ts'
 import { scanConflicts } from './conflicts.ts'
 import {
   KiokuFailure,
+  LegacyDatabase,
   NotConfigured,
   UsageError,
   failureText,
@@ -15,6 +16,7 @@ import {
   serverUrlProblem,
   shownUrl,
 } from './core.ts'
+import { detectLegacyPlugin } from './legacy.ts'
 import { detectPlatformPresence } from './panel.ts'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.ts'
 import type { Env, SavedProfile, TargetConfig, WhoamiResponse, Writer } from './types.ts'
@@ -79,6 +81,9 @@ function claudeOptionConfig(env: Env): TargetConfig | null {
   return { url, key }
 }
 
+type DoctorIssueCategory =
+  'server_generation' | 'legacy_database' | 'legacy_key' | 'legacy_source' | 'outdated_plugin'
+
 interface DoctorTargetReport {
   id: string | null
   name: string | null
@@ -87,7 +92,11 @@ interface DoctorTargetReport {
   primaryCircle?: WhoamiResponse['primaryCircle']
   client?: WhoamiResponse['client']
   scopes?: WhoamiResponse['scopes']
-  checks: Array<{ level: 'ok' | 'warn' | 'bad' | 'note'; message: string }>
+  checks: Array<{
+    level: 'ok' | 'warn' | 'bad' | 'note'
+    message: string
+    category?: DoctorIssueCategory
+  }>
   failed: boolean
 }
 
@@ -106,13 +115,13 @@ async function inspectOne(
     report.checks.push({ level: 'ok', message: text })
     out?.write(`✓ ${text}\n`)
   }
-  const warn = (text: string) => {
-    report.checks.push({ level: 'warn', message: text })
+  const warn = (text: string, category?: DoctorIssueCategory) => {
+    report.checks.push({ level: 'warn', message: text, ...(category ? { category } : {}) })
     out?.write(`! ${text}\n`)
   }
-  const bad = (text: string) => {
+  const bad = (text: string, category?: DoctorIssueCategory) => {
     report.failed = true
-    report.checks.push({ level: 'bad', message: text })
+    report.checks.push({ level: 'bad', message: text, ...(category ? { category } : {}) })
     out?.write(`✗ ${text}\n`)
   }
   const note = (text: string) => {
@@ -148,7 +157,21 @@ async function inspectOne(
     report.url = shownUrl(config.url)
     if (profile?.file) report.profileFile = profile.file
     ok(`地址 ${report.url}${profile ? `（${profile.file}）` : ''}`)
-    who = await whoami(config)
+    try {
+      who = await whoami(config)
+    } catch (err) {
+      const category: DoctorIssueCategory | undefined =
+        err instanceof LegacyDatabase
+          ? 'legacy_database'
+          : err instanceof ServerMismatch
+            ? err.probe.state === 'legacy'
+              ? 'legacy_database'
+              : 'server_generation'
+            : err instanceof KeyRejected && err.legacy
+              ? 'legacy_key'
+              : undefined
+      bad(failureText(err), category)
+    }
   } catch (err) {
     bad(failureText(err))
   }
@@ -188,7 +211,17 @@ async function inspectOne(
     return report
   }
 
-  const checkConflicts = async () => {
+  const checkConflictsAndLegacy = async () => {
+    const legacy = await detectLegacyPlugin(id, { env, cwd }).catch(() => null)
+    if (legacy?.legacySource) {
+      bad(`旧插件来源：${legacy.legacySource}（运行 kioku migrate 迁移）`, 'legacy_source')
+    }
+    if (legacy?.outdatedPlugin) {
+      warn(
+        `插件过旧：${legacy.outdatedPlugin}（运行 kioku migrate 或 kioku upgrade ${id} 更新）`,
+        'outdated_plugin',
+      )
+    }
     const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
     if (!conflicts.length) return
     for (const item of conflicts) {
@@ -203,13 +236,13 @@ async function inspectOne(
   if (platform.inspect) {
     try {
       await platform.inspect({ env, cwd }, { ok, warn, bad, note })
-      await checkConflicts()
+      await checkConflictsAndLegacy()
     } catch (err) {
       bad(failureText(err))
     }
     return report
   }
-  await checkConflicts()
+  await checkConflictsAndLegacy()
   return report
 }
 

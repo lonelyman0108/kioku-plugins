@@ -4,6 +4,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { assertServerSupported, probeServer, upgradePageOf } from '../api.ts'
 import { ensureNoConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
 import {
@@ -172,6 +173,7 @@ export async function connectCommand(
   }
   const urlProblem = serverUrlProblem(url)
   if (urlProblem) throw new KiokuFailure(urlProblem)
+  await assertServerSupported(url)
   await rememberServerUrl(url, env).catch(() => {})
 
   const readyIds: string[] = []
@@ -463,8 +465,15 @@ export async function localCommand(
 
   if (action === 'status') {
     const state = await composeState(dir, env)
-    const isUp = state === 'running' ? await healthy(LOCAL_URL) : false
+    const probe = state === 'running' ? await probeServer(LOCAL_URL) : null
+    const isUp = probe?.state === 'ok'
     const inited = isUp ? await setupDone(LOCAL_URL) : false
+    const healthLine =
+      probe?.state === 'legacy'
+        ? `待迁移旧数据（打开 ${upgradePageOf(LOCAL_URL)}）`
+        : isUp
+          ? `${LOCAL_URL}（就绪）`
+          : '未就绪'
     const box = renderBox({
       title: '本机 Kioku 服务',
       theme,
@@ -473,7 +482,7 @@ export async function localCommand(
           lines: [
             `目录：${plain(dir)}`,
             `容器：${state === 'running' ? '运行中' : state === 'stopped' ? '已停止' : '未创建'}`,
-            `健康：${isUp ? `${LOCAL_URL}（就绪）` : '未就绪'}`,
+            `健康：${healthLine}`,
             ...(isUp ? [`初始化：${inited ? '已完成' : '待建立第一个管理员'}`] : []),
           ],
         },

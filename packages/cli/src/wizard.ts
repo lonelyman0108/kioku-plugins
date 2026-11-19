@@ -1,6 +1,8 @@
 // 在终端里不带参数运行 kioku 时的向导：一个渐进披露的状态面板，先扫描服务器与本机各平台的现状，
 // 再按缺什么列出动作；接入后自动尝试安装对应平台插件并完成 MCP 握手验证，做完回到面板刷新。
 
+import { upgradePageOf } from './api.ts'
+import { migrateCommand } from './commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.ts'
 import { KiokuFailure, keyFormatError, loadConfig, serverUrlProblem, shownUrl } from './core.ts'
@@ -31,6 +33,7 @@ import {
   canDisable,
   connectCandidates,
   defaultServerUrl,
+  migrationCandidates,
   renderPanel,
   scan,
   serverHealth,
@@ -525,6 +528,35 @@ async function perform(ctx: WizardContext, choice: string, state: PanelState): P
   }
   if (choice === 'open') {
     if (ctx.url) await awaitSetup(ctx, ctx.url, null)
+    return
+  }
+  if (choice === 'open-upgrade') {
+    if (ctx.url) {
+      const page = upgradePageOf(ctx.url)
+      ctx.deps.open(page)
+      ctx.ui.log.info(`已在浏览器打开升级页 ${page}，完成就地迁移后回到控制台继续`)
+    }
+    return
+  }
+  if (choice === 'migrate') {
+    if (!ctx.url) return
+    const candidates = migrationCandidates(state)
+    if (!candidates.length) return
+    const preview = bufferOut()
+    await migrateCommand([...candidates.map((c) => c.id), '--server-url', ctx.url, '--dry-run'], {
+      env: ctx.env,
+      cwd: ctx.cwd,
+      out: preview,
+    })
+    ctx.out.write(`\n${preview.text().replace(/\n?没有写入（--dry-run）$/, '')}\n`)
+    const ok = await ctx.ui.confirm({ message: '确认执行以上迁移计划？', initialValue: true })
+    if (cancelled(ctx.ui, ok) || !ok) return
+    await migrateCommand([...candidates.map((c) => c.id), '--server-url', ctx.url, '-y'], {
+      env: ctx.env,
+      cwd: ctx.cwd,
+      out: ctx.out,
+      open: ctx.deps.open,
+    })
     return
   }
   if (choice === 'connect') return connect(ctx, connectCandidates(state))

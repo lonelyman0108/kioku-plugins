@@ -102,6 +102,7 @@ function userText(entry) {
 
 // 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
 function noticeOf(err) {
+  if (err.kind === 'legacy') return `Kioku 长期记忆不可用：${err.message}。`
   return err.kind === 'key'
     ? 'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 重新填写访问密钥。'
     : `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，运行 kioku login claude-code 或在 /plugin 里为 kioku 修改。`

@@ -103,6 +103,7 @@ async function sweepPending(env) {
 
 // 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
 function noticeOf(err) {
+  if (err.kind === 'legacy') return `Kioku 长期记忆不可用：${err.message}。`
   return `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
 }
 

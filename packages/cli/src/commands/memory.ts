@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { ServerMismatch, generationProblem, probeServer } from '../api.ts'
 import {
   KiokuFailure,
   UsageError,
@@ -14,6 +15,7 @@ import {
   launch,
   plain,
   redirectError,
+  rejectionOf,
 } from '../core.ts'
 import { isInteractiveTty, resolveIdentity } from '../identity.ts'
 import { isCancel, loadPrompts } from '../prompts.ts'
@@ -266,6 +268,14 @@ async function memoryRequest(
   }
   if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), config.url))
+  }
+  const rejected = res.ok ? null : rejectionOf(res.status, data, config.url)
+  if (rejected) throw rejected
+  // 新版接口落到旧版服务端时会回 404 或 5xx：查一眼健康检查识别代际
+  if (res.status === 404 || res.status >= 500) {
+    const probe = await probeServer(config.url)
+    const problem = generationProblem(probe, config.url)
+    if (problem) throw new ServerMismatch(problem, probe)
   }
   return { status: res.status, data }
 }

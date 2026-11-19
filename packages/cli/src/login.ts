@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 
+import { assertServerSupported } from './api.ts'
 import { ensureNoConflicts } from './conflicts.ts'
 import { configure, orphanHint } from './connect.ts'
 import { KiokuFailure, UsageError, fetchFailure, isRedirect, plain, redirectError } from './core.ts'
@@ -111,6 +112,7 @@ export async function requestGrant(
     clientName?: string
   },
 ): Promise<DeviceGrant> {
+  await assertServerSupported(url)
   const { clientName, ...rest } = body
   const { status, data } = await post(url, '/v1/device/authorize', {
     ...rest,

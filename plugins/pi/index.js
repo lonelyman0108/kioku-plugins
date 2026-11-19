@@ -40,6 +40,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   // 地址与访问密钥，扩展加载时读一次；problem 是配置用不了的原因
   let profile = null
   let problem = null
+  let problemIsLegacy = false
   // 已经告诉过用户的问题，同一个不说第二遍
   const told = new Set()
   // 启动加载还没注入：会话开始、压缩之后各注入一次，放在下一次输入的前面
@@ -67,6 +68,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   }
 
   function configNotice() {
+    if (problemIsLegacy) return `Kioku 长期记忆不可用：${problem}。`
     return problem
       ? `Kioku 的配置无法使用，长期记忆不可用：${problem}。${SETUP_HINT}`
       : `Kioku 还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
@@ -99,6 +101,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
       if (err instanceof Misconfigured) {
         // 服务地址返回跳转：之后的请求也一样，当成配置写错，当场告诉用户
         problem = err.message
+        problemIsLegacy = err.kind === 'legacy'
         tell(ctx, configNotice())
       } else {
         quietUntil = now() + BACKOFF

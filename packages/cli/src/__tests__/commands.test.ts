@@ -31,7 +31,7 @@ beforeAll(async () => {
     req.on('end', () => {
       if (req.url === '/v1/health') {
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', version: '0.4.0' }))
+        res.end(JSON.stringify({ status: 'ok', version: '0.4.0', api: 2 }))
         return
       }
       if (req.url === '/v1/setup/status') {

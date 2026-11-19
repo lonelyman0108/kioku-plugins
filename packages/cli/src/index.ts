@@ -23,6 +23,7 @@ import {
   SEARCH_USAGE,
   searchCommand,
 } from './commands/memory.ts'
+import { MIGRATE_USAGE, migrateCommand } from './commands/migrate.ts'
 import { STATUS_USAGE, statusCommand } from './commands/status.ts'
 import { KiokuFailure, run, UsageError } from './core.ts'
 import { doctor, DOCTOR_USAGE } from './doctor.ts'
@@ -49,6 +50,7 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
   connect     一站式接入：浏览器授权、配置写入、安装插件与 MCP 握手测试
   disconnect  断开某个平台的接入，恢复自带记忆并清理托管插件
   upgrade     升级已安装插件并刷新 MCP 工具清单缓存
+  migrate     识别并迁移旧版插件来源、缓存与已失效访问密钥
   doctor      诊断地址、访问密钥权限与各平台配置（支持 --all / --json）
   clean       检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP）
 
@@ -133,6 +135,7 @@ export async function main(
     return guarded('disconnect', DISCONNECT_USAGE, (a) => disconnectCommand(a), rest)
   }
   if (sub === 'upgrade') return guarded('upgrade', UPGRADE_USAGE, (a) => upgradeCommand(a), rest)
+  if (sub === 'migrate') return guarded('migrate', MIGRATE_USAGE, (a) => migrateCommand(a), rest)
   if (sub === 'local') return guarded('local', LOCAL_USAGE, (a) => localCommand(a), rest)
   if (sub === 'open') return guarded('open', OPEN_USAGE, (a) => openCommand(a), rest)
   if (sub === 'login') return guarded('login', LOGIN_USAGE, (a) => login(a), rest)

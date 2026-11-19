@@ -75,6 +75,7 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku connect [平台…]` | 一站式接入：浏览器授权、停用自带记忆、自动装插件与 MCP 握手验证 |
 | `kioku disconnect <平台>` | 断开接入、恢复自带记忆并安全清理托管安装的插件 |
 | `kioku upgrade [平台…]` | 更新已安装插件并刷新本机 MCP 工具清单缓存 |
+| `kioku migrate [平台…]` | 识别并迁移旧插件市场来源、过旧插件、旧工具清单缓存与失效访问密钥 |
 | `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限与各客户端配置 |
 | `kioku search <查询>` | 日常记忆检索（召回候选并在交互终端展开详情） |
 | `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）或精确标题读取单条记忆完整属性与正文 |
@@ -90,6 +91,12 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku run -e 变量=<标识>#<字段> -- <命令>` | 取凭据的值放进环境变量交给命令，agent 看不到明文 |
 
 完整说明见 [命令行](packages/cli/README.md)。Claude Code 插件自带凭据取值与生命周期脚本；日常与全功能命令行推荐 `npx @kioku-memory/cli` 或全局安装 `@kioku-memory/cli`。
+
+## 从旧版升级
+
+- 服务端升级到记忆圈与多维切面架构后，打开管理界面 `/legacy-upgrade` 用原管理员账号即可一键就地迁移，旧表保留在 `kioku_legacy` 中。
+- 服务端迁移完成后，在终端运行 `npx @kioku-memory/cli migrate`（或在交互控制台按 `M`）：自动清理 `lonelyman0108/kioku` 旧插件市场来源与旧工具清单缓存、更新插件、在浏览器内批量重新授权并用 `kioku doctor` 验证。
+- 若服务端仍为重构前版本（v0.5.0 及更早），新版命令行会主动提示升级服务端或改用 `npx @kioku-memory/cli@0.5`。
 
 ## 设计取向
 

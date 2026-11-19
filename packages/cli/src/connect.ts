@@ -2,6 +2,7 @@
 // 向导走浏览器授权，几个平台一起申请、只确认一次；服务端不认这种写法时逐个平台申请。
 // kioku install 的访问密钥从环境变量来，直接写下。插件不替用户装，只列出要运行的命令
 
+import { assertServerSupported } from './api.ts'
 import { KiokuFailure, plain } from './core.ts'
 import {
   deviceLogin,
@@ -91,6 +92,7 @@ export async function connectPlatforms(
     authPrompt?: DeviceAuthPrompt
   },
 ): Promise<ConnectResult[]> {
+  await assertServerSupported(url)
   const io = { env, out, cwd, url }
   const login = {
     out,

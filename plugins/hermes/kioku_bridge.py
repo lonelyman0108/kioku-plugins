@@ -103,6 +103,19 @@ def _failure_kind(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def _error_code(exc: urllib.error.HTTPError) -> str | None:
+    """读取服务端错误响应里的 code 字段，格式不对时忽略。"""
+    try:
+        raw = exc.read(4096)
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = payload.get("code")
+    return code if isinstance(code, str) and code else None
+
+
 class KiokuClient:
     """向 Kioku 发请求。每次调用都可能抛 KiokuFailure。"""
 
@@ -142,6 +155,16 @@ class KiokuClient:
                 raise KiokuFailure(
                     f"Kioku 返回了跳转（{exc.code}），把地址改成跳转之后的地址"
                 ) from None
+            if exc.code in (401, 503):
+                code = _error_code(exc)
+                if exc.code == 401 and code == "legacy_key":
+                    raise KiokuFailure(
+                        "访问密钥是升级前签发的，已失效：运行 npx @kioku-memory/cli migrate 重新接入"
+                    ) from None
+                if exc.code == 503 and code == "legacy_database":
+                    raise KiokuFailure(
+                        f"服务端已升级、尚未迁移旧数据：打开 {self.url}/legacy-upgrade 按引导迁移，完成后运行 kioku migrate 重新接入"
+                    ) from None
             raise KiokuFailure(f"Kioku 返回 HTTP {exc.code}") from None
         except KiokuFailure:
             raise

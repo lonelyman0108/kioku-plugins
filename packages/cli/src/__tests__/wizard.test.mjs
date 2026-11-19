@@ -80,7 +80,7 @@ beforeAll(async () => {
       else if (req.url === '/v1/device/token') {
         reply = answers.length > 1 ? answers.shift() : answers[0]
       } else if (req.url === '/v1/health')
-        reply = { status: 200, body: { status: 'ok', version: '0.1.0' } }
+        reply = { status: 200, body: { status: 'ok', version: '0.1.0', api: 2 } }
       else if (req.url === '/v1/setup/status') reply = { status: 200, body: { needsSetup: false } }
       else if (req.url === '/v1/whoami') {
         const key = (req.headers.authorization ?? '').replace(/^Bearer /, '')

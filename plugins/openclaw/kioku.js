@@ -244,8 +244,13 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       // 上报失败不拦之后的召回：它不在输入前等着，慢一点不碍事
       if (event !== 'turn.end') quietUntil = now() + BACKOFF
       // 服务地址返回跳转多半是地址写错了，说明怎么改；也可能只是一时的（维护页），所以照样隔一阵再试
-      if (err instanceof Misconfigured) tell(`Kioku 这次没有生效：${err.message}。${SETUP_HINT}`)
-      else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
+      if (err instanceof Misconfigured) {
+        tell(
+          err.kind === 'legacy'
+            ? `Kioku 长期记忆不可用：${err.message}。`
+            : `Kioku 这次没有生效：${err.message}。${SETUP_HINT}`,
+        )
+      } else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
       return undefined
     }
   }

@@ -5,7 +5,14 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 
-import { fetchFailure, isRedirect, KiokuFailure, redirectError } from './http.mjs'
+import {
+  fetchFailure,
+  isRedirect,
+  jsonOrNull,
+  KiokuFailure,
+  redirectError,
+  rejectionOf,
+} from './http.mjs'
 import { profileDir, profileFile } from './profile.mjs'
 import { plain } from './text.mjs'
 
@@ -49,7 +56,9 @@ export async function mcpCall({ url, key }, method, params, timeout, signal) {
   if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
   }
-  if (res.status === 401) throw new KiokuFailure('访问密钥无效或已吊销')
+  // 401 与库待迁移的 503 带着错误码：升级前的访问密钥、待迁移的库各有说法
+  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text), url)
+  if (rejected) throw rejected
   if (!res.ok) throw new KiokuFailure(`Kioku 返回 HTTP ${res.status}`)
   let data
   try {

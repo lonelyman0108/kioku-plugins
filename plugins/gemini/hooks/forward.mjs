@@ -179,10 +179,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     })
     .catch((err) => {
       if (event === 'session.start' && err instanceof Misconfigured) {
-        writeContext(
-          event,
-          `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`,
-        )
+        const text =
+          err.kind === 'legacy'
+            ? `Kioku 长期记忆不可用：${err.message}。`
+            : `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
+        writeContext(event, text)
       }
       process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
     })
