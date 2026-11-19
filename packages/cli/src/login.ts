@@ -320,7 +320,7 @@ export function openBrowser(address: string): void {
 const HOST_SUFFIX = /\.(?:local|localdomain|lan|home|internal)$/i
 
 // 机器名是自报的：去掉控制字符与 .local 这类后缀，太长就截断；什么都不剩时用 kioku-cli。
-// 服务端把它显示在确认页上，新建的应用默认叫「平台名 · 机器名」
+// 服务端把它显示在确认页上，新建的接入实例默认叫「平台名 · 机器名」
 export function machineName(clientName: unknown): string {
   const name = Array.from(plain(clientName).replace(HOST_SUFFIX, '').trim())
     .slice(0, 64)

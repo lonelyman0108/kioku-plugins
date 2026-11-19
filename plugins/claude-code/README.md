@@ -1,6 +1,6 @@
 # Kioku 的 Claude Code 插件
 
-会话开始时注入 Kioku 的启动加载：通用的规则、人格、本应用的记忆与本人的偏好，以及同一会话最近的会话摘要、近期更新的记忆和与当前项目相关的召回。每轮输入时注入召回候选。每轮回复后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要：摘要归访问密钥所属的成员、私密，只给这个成员不带会话上下文的访问密钥，30 天后清除。另外提供 `kioku_*` MCP 工具读写记忆，以及 [`kioku run`](#kioku-run)：把凭据的值经环境变量交给要跑的命令，值不进对话记录，也不发给模型。
+会话开始时注入 Kioku 的启动加载：独立人格与长期规范、当前接入实例可用记忆圈里的正式词条，以及同一会话最近的会话摘要、近期更新的记忆和与当前项目相关的召回。每轮输入时注入召回候选。每轮回复后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要：摘要归访问密钥所属的成员、私密，只给这个成员不带会话上下文的访问密钥，30 天后清除。另外提供 `kioku_*` MCP 工具读写记忆，以及 [`kioku run`](#kioku-run)：把凭据的值经环境变量交给要跑的命令，值不进对话记录，也不发给模型。
 
 插件只做转发，提示词和输出格式都由服务端决定，服务端更新后不用重装插件。
 
@@ -17,7 +17,7 @@
 启用时填写两项配置，之后可以在 `/plugin` 里修改（**或直接留空，改由终端运行 `kioku connect claude-code` / `kioku login claude-code` 自动写入 `~/.config/kioku/claude-code.json`**）：
 
 - **Kioku 服务地址**：例如 `https://kioku.example.com`，不带 `/v1`，末尾不要斜杠
-- **访问密钥**：在管理界面的「应用」页为运行时是 claudecode 的应用签发。`/plugin` 里填的访问密钥存在系统的凭据存储里，不写进 `settings.json`
+- **访问密钥**：在管理界面的「接入实例」页为运行时是 claudecode 的接入实例签发。`/plugin` 里填的访问密钥存在系统的凭据存储里，不写进 `settings.json`
 
 当 `/plugin` 两项配置留空时，插件的生命周期钩子、`mcp-stdio.mjs` MCP 包装脚本与会话里的 `kioku` 命令会自动回退读取 `~/.config/kioku/claude-code.json`（由 `kioku connect claude-code` / `kioku login claude-code` / `kioku setup claude-code` 写入，权限仅本人可读写）；若 `/plugin` 里明确填写了配置，则优先使用 `/plugin` 中的值。
 

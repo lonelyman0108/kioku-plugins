@@ -10,6 +10,12 @@ describe('deviceKeyOf', () => {
     expect(deviceKeyOf({ KIOKU_DEVICE_KEY: 'a'.repeat(150) })).toHaveLength(128)
   })
 
+  it('截断到 128 个 UTF-16 码元时不切开代理对', () => {
+    const val = deviceKeyOf({ KIOKU_DEVICE_KEY: `${'a'.repeat(127)}🚀tail` })
+    expect(val).toBe('a'.repeat(127))
+    expect(deviceKeyOf({ KIOKU_DEVICE_KEY: `${'a'.repeat(126)}🚀` })).toBe(`${'a'.repeat(126)}🚀`)
+  })
+
   it('未设置或只有空白与控制字符时退回本机主机名', () => {
     const expected = hostname().trim().slice(0, 128) || undefined
     expect(deviceKeyOf({})).toBe(expected)

@@ -271,10 +271,10 @@ async function memoryRequest(
 }
 
 function throwForStatus(status: number, data: Record<string, unknown> | null, key: string): never {
-  if (status === 401) throw new KiokuFailure('访问密钥无效或已吊销')
-  if (status === 403) throw new KiokuFailure('当前访问密钥无权执行此操作')
-  if (status === 404) throw new KiokuFailure('记忆不存在，或当前访问密钥无权读取')
   const detail = maskKeyText(data?.error, key)
+  if (status === 401) throw new KiokuFailure(detail || '访问密钥无效或已吊销')
+  if (status === 403) throw new KiokuFailure(detail || '当前访问密钥无权执行此操作')
+  if (status === 404) throw new KiokuFailure(detail || '记忆不存在，或当前访问密钥无权读取')
   throw new KiokuFailure(detail || `Kioku 返回 HTTP ${status}`)
 }
 

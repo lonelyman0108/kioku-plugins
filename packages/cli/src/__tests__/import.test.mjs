@@ -45,11 +45,15 @@ function encodeShortId(n) {
 let seq = 0
 
 function findInStore(circle, ref) {
-  for (const item of store.values()) {
-    if (circle && item.circleSlug !== circle) continue
-    if (item.shortId === ref || item.title === ref || item.legacyUri === ref) return item
-  }
-  return null
+  const candidates = [...store.values()].filter((item) => !circle || item.circleSlug === circle)
+  const byId = candidates.find((item) => item.shortId === ref)
+  if (byId) return { entry: byId }
+  const byLegacy = candidates.find((item) => item.legacyUri === ref)
+  if (byLegacy) return { entry: byLegacy }
+  const byTitle = candidates.filter((item) => item.title === ref)
+  if (byTitle.length === 1) return { entry: byTitle[0] }
+  if (byTitle.length > 1) return { conflict: byTitle.length }
+  return {}
 }
 
 beforeAll(async () => {
@@ -87,8 +91,11 @@ beforeAll(async () => {
         })
       }
       if (req.method === 'GET' && url.pathname === '/v1/entries') {
-        const found = findInStore(url.searchParams.get('circle'), url.searchParams.get('id'))
-        return found ? send(200, found) : send(404, { error: '不存在或不可见' })
+        const resMatch = findInStore(url.searchParams.get('circle'), url.searchParams.get('id'))
+        if (resMatch.conflict) {
+          return send(409, { error: '标题匹配到多条词条，请改用短 ID 访问' })
+        }
+        return resMatch.entry ? send(200, resMatch.entry) : send(404, { error: '不存在或不可见' })
       }
       const key = body?.title ?? body?.id
       const rejected = rejects.get(key)
@@ -137,7 +144,7 @@ beforeAll(async () => {
       }
 
       if (req.method === 'PATCH' && url.pathname === '/v1/entries') {
-        const existing = findInStore(body.circle, body.id)
+        const { entry: existing } = findInStore(body.circle, body.id)
         if (!existing) return send(404, { error: '不存在或不可见' })
         const when = body.when ?? {}
         const sig = canonicalSig(when)
@@ -638,5 +645,123 @@ describe('kioku import：读文件与写入的边界', () => {
     const ccResult = await run(['--from', 'claude-code', '--platform', 'claude-code', '--yes'])
     expect(ccResult.code).toBe(0)
     expect(requests.every((r) => r.auth === 'Bearer kioku_cc_key')).toBe(true)
+  })
+
+  it('跨项目同名描述自动按项目消歧，且已有重复标题时优先按 legacyUri 匹配避免 409', async () => {
+    memory('-x-code-alpha', 'same', 'user', 'Alpha 正文', '相同描述')
+    memory('-x-code-beta', 'same', 'user', 'Beta 正文', '相同描述')
+    const first = await run(['--from', 'claude-code', '--yes'])
+    expect(first.code).toBe(0)
+    expect(first.text).toContain('写入 2 条')
+    expect(writes().map((r) => r.body.title)).toEqual(['相同描述', '相同描述（x-code-beta）'])
+
+    // 即使 store 里另有一条带有相同标题且 legacyUri 不同的词条，按 legacyUri 优先仍能精确命中而不报 409
+    store.set('personal::m-dup1', {
+      id: 'uuid-dup1',
+      shortId: 'm-dup1',
+      circleId: 'c1',
+      circleSlug: 'personal',
+      kind: 'entry',
+      title: '冲突标题',
+      legacyUri: 'user://about/x-code-kioku/dup-note',
+      sensitivity: 'private',
+      version: 2,
+      variants: [
+        {
+          id: 'var-d1',
+          when: { project: ['x-code-kioku'] },
+          whenSignature: '{"project":["x-code-kioku"]}',
+          sortOrder: 0,
+          content: '旧版内容',
+        },
+      ],
+    })
+    store.set('personal::m-dup2', {
+      id: 'uuid-dup2',
+      shortId: 'm-dup2',
+      circleId: 'c1',
+      circleSlug: 'personal',
+      kind: 'entry',
+      title: '冲突标题',
+      legacyUri: 'user://about/other-project/dup-note',
+      sensitivity: 'private',
+      version: 1,
+      variants: [
+        {
+          id: 'var-d2',
+          when: { project: ['other-project'] },
+          whenSignature: '{"project":["other-project"]}',
+          sortOrder: 0,
+          content: '别的项目',
+        },
+      ],
+    })
+    memory('-x-code-kioku', 'dup-note', 'user', '旧版内容', '冲突标题')
+    requests = []
+    const matched = await run([
+      '--from',
+      'claude-code',
+      '--path',
+      join(dir, 'claude/projects/-x-code-kioku/memory'),
+      '--yes',
+    ])
+    expect(matched.code).toBe(0)
+    expect(matched.text).toContain('已有，内容一样  冲突标题（m-dup1）')
+  })
+
+  it('fromFiles 超长重名标题保留摘要后缀且不截断尾标，--overwrite 替换通用切片时传 removeVariantWhens', async () => {
+    const longHeading = '超'.repeat(80)
+    file(
+      'hermes/memories/MEMORY.md',
+      `## ${longHeading}\n第一段正文\n\n## ${longHeading}\n第二段正文\n`,
+    )
+    const oldHome = env.HERMES_HOME
+    env = { ...env, HERMES_HOME: join(dir, 'hermes') }
+    try {
+      const hermesRun = await run(['--from', 'hermes', '--yes'])
+      expect(hermesRun.code).toBe(0)
+      expect(hermesRun.text).toContain('写入 2 条')
+      const createdTitles = writes().map((r) => r.body.title)
+      expect(createdTitles[0]).toBe(longHeading)
+      expect(createdTitles[1]).toMatch(/^超{72}（[0-9a-f]{6}）$/)
+    } finally {
+      env = { ...env, HERMES_HOME: oldHome }
+    }
+
+    store.set('personal::m-gen1', {
+      id: 'uuid-gen1',
+      shortId: 'm-gen1',
+      circleId: 'c1',
+      circleSlug: 'personal',
+      kind: 'entry',
+      title: '待升级切片',
+      sensitivity: 'private',
+      version: 5,
+      variants: [
+        {
+          id: 'var-g1',
+          when: {},
+          whenSignature: '{}',
+          sortOrder: 0,
+          content: '通用旧正文',
+        },
+      ],
+    })
+    memory('-x-code-kioku', 'upgrade-me', 'user', '新项目正文', '待升级切片')
+    requests = []
+    const upgraded = await run(['--from', 'claude-code', '--overwrite', '--yes'])
+    expect(upgraded.code).toBe(0)
+    expect(writes()).toHaveLength(1)
+    expect(writes()[0]).toMatchObject({
+      method: 'PATCH',
+      path: '/v1/entries',
+      body: {
+        id: 'm-gen1',
+        content: '新项目正文',
+        when: { project: ['x-code-kioku'] },
+        removeVariantWhens: [{}],
+        expectedVersion: 5,
+      },
+    })
   })
 })

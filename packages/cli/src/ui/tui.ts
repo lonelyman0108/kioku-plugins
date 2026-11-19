@@ -548,7 +548,8 @@ function buildDetailBody(
           : typeof primaryCircle.id === 'string'
             ? plain(primaryCircle.id).slice(0, 8)
             : '主场记忆圈'
-    const linked = linkedCircles.length > 0 ? ` · 关联 ${linkedCircles.length} 圈` : ''
+    const linkedCount = Array.isArray(linkedCircles) ? linkedCircles.length : 0
+    const linked = linkedCount > 0 ? ` · 关联 ${linkedCount} 圈` : ''
     const acct =
       typeof row.who.accountName === 'string' && row.who.accountName
         ? ` · ${theme.muted(`账号 ${plain(row.who.accountName)}`)}`
@@ -1851,7 +1852,7 @@ export async function runTui({
         if ((!config || (state.url && config.url !== state.url)) && state.url) {
           const secret = await openTextModal({
             title: `填写 ${row.name} 访问密钥`,
-            prompt: `${row.name} 所属应用的访问密钥（记忆将迁入该应用）`,
+            prompt: `${row.name} 所属接入实例的访问密钥（记忆将写入其主场记忆圈）`,
             secret: true,
             validate: (text) => keyFormatError((text ?? '').trim()) ?? undefined,
           })

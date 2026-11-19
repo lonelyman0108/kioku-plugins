@@ -87,12 +87,12 @@ def test_private_and_group_contexts_are_reported_as_is():
 
 
 def test_boot_is_cached_per_session(monkeypatch):
-    bridge, sent = bridge_with(answer("人格与基础规则"))
+    bridge, sent = bridge_with(answer("独立人格与长期规范"))
     clock = [1000.0]
     monkeypatch.setattr("astrbot_plugin_kioku.bridge.time.monotonic", lambda: clock[0])
-    assert asyncio.run(bridge.boot(GROUP)) == "人格与基础规则"
-    assert asyncio.run(bridge.boot(GROUP)) == "人格与基础规则"
-    assert asyncio.run(bridge.boot(PRIVATE)) == "人格与基础规则"
+    assert asyncio.run(bridge.boot(GROUP)) == "独立人格与长期规范"
+    assert asyncio.run(bridge.boot(GROUP)) == "独立人格与长期规范"
+    assert asyncio.run(bridge.boot(PRIVATE)) == "独立人格与长期规范"
     assert [s["event"] for s in sent] == ["session.start", "session.start"]
     clock[0] += BOOT_TTL_SECONDS + 1
     asyncio.run(bridge.boot(GROUP))

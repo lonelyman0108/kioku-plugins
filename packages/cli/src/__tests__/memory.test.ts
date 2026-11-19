@@ -173,6 +173,10 @@ beforeAll(async () => {
 
       if (req.method === 'GET' && url.pathname === '/v1/entries/browse') {
         const groupBy = url.searchParams.get('groupBy') ?? 'topic'
+        const circle = url.searchParams.get('circle')
+        if (circle === 'missing') {
+          return send(404, { error: '未找到记忆圈：missing' })
+        }
         const auth = req.headers.authorization ?? ''
         if (groupBy === 'realm' && auth === `Bearer ${SCOPED_KEY}`) {
           return send(403, { error: '没有权限读取该场域' })
@@ -414,7 +418,11 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     await writeProfile('pi', { url: base, key: SCOPED_KEY }, env)
     await expect(
       lsCommand(['realm', '--platform', 'pi'], { env, out: captureOut().stream }),
-    ).rejects.toThrow('无权执行')
+    ).rejects.toThrow('没有权限读取该场域')
+
+    await expect(
+      lsCommand(['--circle', 'missing', '--platform', 'pi'], { env, out: captureOut().stream }),
+    ).rejects.toThrow('未找到记忆圈：missing')
 
     await expect(lsCommand(['invalid-dim'], { env, out: captureOut().stream })).rejects.toThrow(
       UsageError,

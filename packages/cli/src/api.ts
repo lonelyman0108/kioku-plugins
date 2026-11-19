@@ -31,11 +31,19 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
   const record = data as Partial<WhoamiResponse> | null
   if (
     typeof record?.client?.runtimeFamily !== 'string' ||
+    typeof record?.client?.slug !== 'string' ||
+    typeof record?.client?.name !== 'string' ||
     typeof record?.primaryCircle?.id !== 'string' ||
+    typeof record?.primaryCircle?.slug !== 'string' ||
+    typeof record?.primaryCircle?.name !== 'string' ||
+    (record.linkedCircles !== undefined && !Array.isArray(record.linkedCircles)) ||
     record.scopes === null ||
     typeof record.scopes !== 'object'
   ) {
     throw new KiokuFailure('Kioku 的响应格式不对')
   }
-  return record as WhoamiResponse
+  return {
+    ...(record as WhoamiResponse),
+    linkedCircles: Array.isArray(record.linkedCircles) ? record.linkedCircles : [],
+  }
 }

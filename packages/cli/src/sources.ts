@@ -57,6 +57,17 @@ export function titleOf(text: unknown): string {
   return Array.from(line).slice(0, MAX_TITLE).join('')
 }
 
+function titleWithSuffix(base: string, suffix: string): string {
+  const cleanSuffix = titleOf(suffix)
+  const suffixChars = Array.from(cleanSuffix)
+  if (suffixChars.length >= MAX_TITLE) return suffixChars.slice(0, MAX_TITLE).join('')
+  const prefix = Array.from(base)
+    .slice(0, MAX_TITLE - suffixChars.length)
+    .join('')
+    .trimEnd()
+  return `${prefix}${cleanSuffix}`
+}
+
 function clipped(text: unknown, max: number): string {
   return Array.from(String(text ?? '').trim())
     .slice(0, max)
@@ -254,6 +265,7 @@ async function claudeCode({
         .sort()
         .map((name) => ({ name: claudeProjectName(name), dir: join(root, name, 'memory') }))
   const entries: SourceEntry[] = []
+  const titleProject = new Map<string, string>()
   for (const project of projects) {
     // 项目的 memory 目录是符号链接时不进去
     if (!direct && !(await isRealDir(project.dir))) continue
@@ -272,7 +284,8 @@ async function claudeCode({
         entries.push({ source, skipped: '文件头没有结尾的 ---，分不清哪些是正文' })
         continue
       }
-      const id = segment(meta.name || name.replace(/\.md$/i, ''))
+      const stem = name.replace(/\.md$/i, '')
+      const id = segment(meta.name || stem)
       const type = meta['metadata.type'] || meta.type || ''
       const legacyUri =
         type === 'user'
@@ -287,9 +300,16 @@ async function claudeCode({
           ? { project: [project.name], runtime: ['claudecode'] }
           : { project: [project.name] }
       const topics = ['claude-code', segment(type || 'project')]
+      const baseTitle = titleOf(meta.description || meta.name || stem) || stem
+      const prevProject = titleProject.get(baseTitle)
+      let itemTitle = baseTitle
+      if (prevProject !== undefined && prevProject !== project.name) {
+        itemTitle = titleWithSuffix(baseTitle, `（${project.name}）`)
+      }
+      if (!titleProject.has(itemTitle)) titleProject.set(itemTitle, project.name)
       entries.push(
         entry(source, {
-          title: meta.description || meta.name || name.replace(/\.md$/i, ''),
+          title: itemTitle,
           legacyUri,
           when,
           topics,
@@ -338,21 +358,23 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
       if (usedIds.has(id)) id = digest(part.text)
       usedIds.add(id)
 
+      const headingTitle = part.heading ? titleOf(part.heading) : ''
+      const baseTitle = single ? titleOf(title) || title : headingTitle || titleOf(title) || title
       let itemTitle: string
       if (single) {
-        itemTitle = titleOf(title)
+        itemTitle = baseTitle
       } else if (parts.length === 1) {
-        itemTitle = titleOf(part.heading || title) || title
+        itemTitle = baseTitle
       } else {
-        const headingTitle = part.heading ? titleOf(part.heading) : ''
         itemTitle =
           headingTitle && !usedTitles.has(headingTitle)
             ? headingTitle
-            : titleOf(`${headingTitle || title}（${digest(part.text).slice(2, 8)}）`)
+            : titleWithSuffix(baseTitle, `（${digest(part.text).slice(2, 8)}）`)
       }
       if (usedTitles.has(itemTitle)) {
-        itemTitle = titleOf(
-          `${itemTitle}（${digest(`${file}:${index}:${part.text}`).slice(2, 8)}）`,
+        itemTitle = titleWithSuffix(
+          baseTitle,
+          `（${digest(`${file}:${index}:${part.text}`).slice(2, 8)}）`,
         )
       }
       usedTitles.add(itemTitle)

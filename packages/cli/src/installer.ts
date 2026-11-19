@@ -351,8 +351,8 @@ export function formatHandshakeLines(report: HandshakeReport): string[] {
     : who.primaryCircle.slug
       ? plain(who.primaryCircle.slug)
       : plain(who.primaryCircle.id).slice(0, 8)
-  const linkedNote =
-    who.linkedCircles.length > 0 ? `（含 ${who.linkedCircles.length} 个关联圈）` : ''
+  const linkedCount = Array.isArray(who.linkedCircles) ? who.linkedCircles.length : 0
+  const linkedNote = linkedCount > 0 ? `（含 ${linkedCount} 个关联圈）` : ''
   const readScopes = (who.scopes.readKinds ?? []).map(kindLabel).join('、') || '无'
   const writeScopes = (who.scopes.writeKinds ?? []).map(kindLabel).join('、') || '无'
   const maxSens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal')

@@ -161,7 +161,8 @@ async function inspectOne(
     ok(
       `访问密钥可用：接入实例 ${plain(client.name)}（${plain(client.slug)}），运行时 ${plain(client.runtimeFamily)}`,
     )
-    const linked = linkedCircles.length > 0 ? `，关联 ${linkedCircles.length} 个客场圈` : ''
+    const linkedCount = Array.isArray(linkedCircles) ? linkedCircles.length : 0
+    const linked = linkedCount > 0 ? `，关联 ${linkedCount} 个客场圈` : ''
     out?.write(
       `  主场记忆圈：${plain(primaryCircle.name)}（${plain(primaryCircle.slug)}）${linked}\n`,
     )

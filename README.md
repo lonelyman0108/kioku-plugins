@@ -77,9 +77,9 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku upgrade [平台…]` | 更新已安装插件并刷新本机 MCP 工具清单缓存 |
 | `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限与各客户端配置 |
 | `kioku search <查询>` | 日常记忆检索（召回候选并在交互终端展开详情） |
-| `kioku get <坐标>` | 按坐标读取单条记忆完整属性与正文 |
-| `kioku ls [坐标或归属]` | 按地层顺序（本人、应用、人格、通用）浏览记忆目录 |
-| `kioku add [坐标]` | 写入新记忆（支持 `--content`、管道标准输入、编辑器与明文拦阻确认） |
+| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）或精确标题读取单条记忆完整属性与正文 |
+| `kioku ls [分组维度]` | 按主题（`topic`）、场域（`realm`）、记忆圈（`circle`）、物种（`kind`）等维度分组浏览记忆目录 |
+| `kioku add [标题]` | 写入新记忆（支持 `--circle`、`--when`、`--topic`、管道标准输入与明文拦阻确认） |
 | `kioku local [up\|down\|status\|logs]` | 使用 Docker Compose 管理本机 Kioku 服务 |
 | `kioku open` | 在默认浏览器中打开 Kioku 管理界面 |
 | `kioku login <平台>` | 浏览器授权签发访问密钥并写好本机配置 |

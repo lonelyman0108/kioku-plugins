@@ -36,7 +36,7 @@ export function deviceKeyOf(env = process.env) {
       raw = ''
     }
   }
-  const clean = stripControl(raw).trim().slice(0, MAX_NAME)
+  const clean = clip(stripControl(raw).trim(), MAX_NAME).trim()
   return clean || undefined
 }
 
@@ -71,7 +71,7 @@ export function clip(text, max) {
 export function projectOf(cwd) {
   const project = {}
   const dirName = basename(cwd)
-  if (dirName) project.dirName = dirName.slice(0, MAX_NAME)
+  if (dirName) project.dirName = clip(dirName, MAX_NAME)
   try {
     const remote = execFileSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
       encoding: 'utf8',
@@ -79,7 +79,7 @@ export function projectOf(cwd) {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim()
     const repoName = /([^/:]+?)(?:\.git)?$/.exec(remote)?.[1]
-    if (repoName) project.repoName = repoName.slice(0, MAX_NAME)
+    if (repoName) project.repoName = clip(repoName, MAX_NAME)
   } catch {
     // 不是 git 仓库或没有 origin
   }
@@ -90,7 +90,7 @@ export function projectOf(cwd) {
 export function projectOfAsync(cwd) {
   const project = {}
   const dirName = basename(cwd)
-  if (dirName) project.dirName = dirName.slice(0, MAX_NAME)
+  if (dirName) project.dirName = clip(dirName, MAX_NAME)
   return new Promise((resolve) => {
     execFile(
       'git',
@@ -98,7 +98,7 @@ export function projectOfAsync(cwd) {
       { encoding: 'utf8', timeout: 1500 },
       (err, stdout) => {
         const repoName = err ? undefined : /([^/:]+?)(?:\.git)?$/.exec(stdout.trim())?.[1]
-        if (repoName) project.repoName = repoName.slice(0, MAX_NAME)
+        if (repoName) project.repoName = clip(repoName, MAX_NAME)
         resolve(project)
       },
     )

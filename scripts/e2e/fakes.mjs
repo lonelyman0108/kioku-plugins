@@ -12,11 +12,16 @@ export const RECALL_MARK = 'KIOKU-E2E-RECALL'
 
 const TOOLS = [
   {
+    name: 'kioku_boot',
+    description: '获取启动加载上下文',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'kioku_get',
     description: '读一条记忆',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: '短 ID 或标题' } },
+      properties: { id: { type: 'string', description: '短 ID、标题或旧坐标' } },
       required: ['id'],
     },
   },
@@ -38,12 +43,64 @@ const TOOLS = [
     },
   },
   {
-    name: 'kioku_transfer',
-    description: '迁移记忆',
+    name: 'kioku_create',
+    description: '新建一条记忆',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: '短 ID' } },
+      properties: { content: { type: 'string', description: '正文' } },
+    },
+  },
+  {
+    name: 'kioku_update',
+    description: '修改一条记忆',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '短 ID 或标题' } },
       required: ['id'],
+    },
+  },
+  {
+    name: 'kioku_delete',
+    description: '删除一条记忆',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '短 ID 或标题' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'kioku_transfer',
+    description: '跨圈迁移记忆',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '短 ID' },
+        to_circle: { type: 'string', description: '目标记忆圈 slug' },
+      },
+      required: ['id', 'to_circle'],
+    },
+  },
+  {
+    name: 'kioku_credential',
+    description: '列出或按标识取用凭据',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'kioku_credential_save',
+    description: '保存或更新一条凭据',
+    inputSchema: {
+      type: 'object',
+      properties: { identifier: { type: 'string', description: '凭据标识' } },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'kioku_credential_delete',
+    description: '删除一条凭据',
+    inputSchema: {
+      type: 'object',
+      properties: { identifier: { type: 'string', description: '凭据标识' } },
+      required: ['identifier'],
     },
   },
 ]
@@ -121,12 +178,39 @@ export async function startFakeKioku(runtimeFamily) {
   const requests = []
   const hostOutput = (event, context) => {
     if (!context) return { mode: 'none', value: null }
-    if (runtimeFamily !== 'codex') return { mode: 'return_value', value: { context } }
     const hookEventName = event === 'session.start' ? 'SessionStart' : 'UserPromptSubmit'
-    return {
-      mode: 'stdout_json',
-      value: { hookSpecificOutput: { hookEventName, additionalContext: context } },
+    if (runtimeFamily === 'claudecode') {
+      return event === 'session.start'
+        ? {
+            mode: 'stdout_json',
+            value: { hookSpecificOutput: { hookEventName, additionalContext: context } },
+          }
+        : { mode: 'stdout_text', value: context }
     }
+    if (runtimeFamily === 'codex') {
+      return {
+        mode: 'stdout_json',
+        value: { hookSpecificOutput: { hookEventName, additionalContext: context } },
+      }
+    }
+    if (runtimeFamily === 'gemini') {
+      return {
+        mode: 'stdout_json',
+        value: {
+          hookSpecificOutput: {
+            hookEventName: event === 'session.start' ? 'SessionStart' : 'BeforeAgent',
+            additionalContext: context,
+          },
+        },
+      }
+    }
+    if (runtimeFamily === 'agy') {
+      return {
+        mode: 'stdout_json',
+        value: { injectSteps: [{ systemMessage: { systemMessage: context } }] },
+      }
+    }
+    return { mode: 'return_value', value: { context } }
   }
   const server = await listen((req, res, raw) => {
     const authorized = req.headers.authorization === `Bearer ${KEY}`

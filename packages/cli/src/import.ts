@@ -69,6 +69,7 @@ export interface ComparedEntry extends UsableSourceEntry {
   reason?: string
   version?: number
   shortId?: string
+  replaceGenericVariant?: boolean
 }
 
 export interface ImportPlan {
@@ -200,17 +201,20 @@ async function fetchEntry(
   return request(config, 'GET', `/v1/entries?${params.toString()}`)
 }
 
-// 和 Kioku 里现有的比：new 没有，same 有且对应切面正文一样，differs 有但不一样（含读不到正文的机密）
+// 和 Kioku 里现有的比：优先按旧 URI 精确匹配，404 时再按标题兜底；
+// new 没有，same 有且对应切面正文一样，differs 有但不一样（含读不到正文的机密）
 async function compare(
   config: TargetConfig,
   circleSlug: string,
   item: UsableSourceEntry,
 ): Promise<ComparedEntry> {
-  let { status, data } = await fetchEntry(config, item.title, circleSlug)
+  let { status, data } = item.legacyUri
+    ? await fetchEntry(config, item.legacyUri, circleSlug)
+    : await fetchEntry(config, item.title, circleSlug)
   if (status === 404 && item.legacyUri) {
-    const legacy = await fetchEntry(config, item.legacyUri, circleSlug)
-    status = legacy.status
-    data = legacy.data
+    const byTitle = await fetchEntry(config, item.title, circleSlug)
+    status = byTitle.status
+    data = byTitle.data
   }
   if (status === 404) return { ...item, state: 'new' }
   if (status !== 200) {
@@ -220,15 +224,19 @@ async function compare(
   const variants = Array.isArray(data?.variants)
     ? (data.variants as Array<{ whenSignature?: unknown; content?: unknown }>)
     : []
-  const matched =
-    variants.find((v) => v?.whenSignature === sig) ??
-    (variants.length === 1 && variants[0]?.whenSignature === '{}' ? variants[0] : undefined)
+  const exactMatch = variants.find((v) => v?.whenSignature === sig)
+  const genericFallback =
+    !exactMatch && sig !== '{}' && variants.length === 1 && variants[0]?.whenSignature === '{}'
+      ? variants[0]
+      : undefined
+  const matched = exactMatch ?? genericFallback
   const same = typeof matched?.content === 'string' && matched.content.trim() === item.content
   return {
     ...item,
     state: same ? 'same' : 'differs',
     version: typeof data?.version === 'number' ? data.version : undefined,
     shortId: typeof data?.shortId === 'string' ? data.shortId : undefined,
+    ...(!same && genericFallback ? { replaceGenericVariant: true } : {}),
   }
 }
 
@@ -257,6 +265,7 @@ async function write(
       ? await request(config, 'PATCH', '/v1/entries', {
           id: item.shortId ?? item.title,
           ...commonFields,
+          ...(item.replaceGenericVariant ? { removeVariantWhens: [{}] } : {}),
           ...(Number.isInteger(item.version) ? { expectedVersion: item.version } : {}),
         })
       : await request(config, 'POST', '/v1/entries', commonFields)

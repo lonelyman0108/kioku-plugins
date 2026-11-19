@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 把 Kioku 仓库里生成的 Python 客户端复制进 AstrBot 插件，并记下来源提交。
-# Kioku 改了应用调用的接口、重新生成 sdks/python 之后，在这里跑一次：
+# Kioku 改了接入实例调用的接口、重新生成 sdks/python 之后，在这里跑一次：
 #   scripts/sync-client.sh <Kioku 仓库的路径>
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -1,6 +1,6 @@
 // 没有自己的密钥存储的平台（Codex、pi 这类），地址与访问密钥放在本机的一个文件里：
 // <配置目录>/kioku/<平台>.json，只给本人读写。kioku setup 写它，各平台的钩子与 kioku doctor 读它。
-// 一个平台一个文件：每个平台在 Kioku 里是各自的应用，访问密钥不共用
+// 一个平台一个文件：每个平台在 Kioku 里是各自的接入实例，访问密钥不共用
 
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'

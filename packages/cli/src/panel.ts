@@ -405,8 +405,9 @@ export function platformDetails(row: PlatformRow): {
     facts.push(`接入实例 ${plain(client.name)}（${plain(client.slug)}）`)
     const circle = circleText(row.who)
     if (circle) facts.push(`记忆圈 ${circle}`)
-    if (row.who.linkedCircles.length > 0) {
-      facts.push(`关联 ${row.who.linkedCircles.length} 个客场圈`)
+    const linkedCount = Array.isArray(row.who.linkedCircles) ? row.who.linkedCircles.length : 0
+    if (linkedCount > 0) {
+      facts.push(`关联 ${linkedCount} 个客场圈`)
     }
     if (typeof row.who.accountName === 'string' && row.who.accountName) {
       facts.push(`账号 ${plain(row.who.accountName)}`)

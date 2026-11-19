@@ -18,7 +18,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 
 - **职责分工**：本控制台专注于本机各 AI 客户端的插件接入、配置文件、冲突清理、连通性诊断与本地记忆迁移；记忆目录编排、人格继承、访问密钥签发与凭据管理等服务端功能可在控制台内按 `o` 打开 Kioku 网页管理界面。
 - **顶栏服务器状态**：自动读取已配置的服务器地址或 `KIOKU_SERVER_URL`，异步检查连接、版本与管理员初始化状态；按 `s` 更换地址，未配置或连不上本机时按 `l` 通过 Docker 启动本机实例。
-- **左列表 + 右详情与渐进加载**：立即渲染本机检出的客户端并折叠未检出项（`Tab` 展开/折叠），后台并发校验各客户端访问密钥并在右侧实时更新应用身份、读写归属、权限上限、插件状态、冲突与本地记忆统计。
+- **左列表 + 右详情与渐进加载**：立即渲染本机检出的客户端并折叠未检出项（`Tab` 展开/折叠），后台并发校验各客户端访问密钥并在右侧实时更新接入实例、主场/客场记忆圈、读写物种、敏感级上限、插件状态、冲突与本地记忆统计。
 
 底栏按当前选中客户端状态提供单键快捷操作（`Enter` 接入或重授权、`a` 批量接入、`p` 安装/更新插件、`d` 诊断、`i` 迁移本地记忆、`x` 清理冲突工具、`u` 断开并恢复自带记忆、`y` 复制安装命令、`?` 查看全部快捷键）。执行修改类动作前先弹出确认框，浏览器授权确认框与进度等待同样在工作台弹出层内完成：
 
@@ -33,9 +33,9 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 | 子命令 | 作用 |
 |---|---|
 | `kioku search <查询>` | 召回相关记忆（语义、全文与关键词），交互终端回车查看正文，支持 `--json` |
-| `kioku get <坐标>` | 按坐标读取单条记忆完整属性与正文，支持 `--json` |
-| `kioku ls [坐标或归属]` | 按地层顺序（本人、应用、人格、通用）或指定前缀浏览目录节点 |
-| `kioku add [坐标]` | 写入新记忆，支持管道标准输入、`$EDITOR`、明文凭据拦阻与 `--plaintext-ok` |
+| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）、旧坐标或精确标题读取单条记忆属性、切面变体与双链，支持 `--json` |
+| `kioku ls [分组维度]` | 按主题、场域、环境、记忆圈或物种动态分组浏览记忆目录 |
+| `kioku add [标题]` | 写入新记忆，支持 `--circle`、`--when`、`--topic`、标准输入与明文拦阻确认 |
 | `kioku status [--json]` | 只读输出服务端与本机各客户端接入概况 |
 | `kioku connect [平台…]` | 一站式授权、停用自带记忆、自动装插件与 MCP 握手验证 |
 | `kioku disconnect <平台>` | 恢复自带记忆、删除凭据配置并安全清理托管插件 |
@@ -218,25 +218,25 @@ kioku import --from claude-code --select    # 交互勾选本次要迁入的条�
 kioku import --from claude-code -y          # 免确认直接写入
 ```
 
-先读本地的记忆文件，列出每条会放到哪个坐标、Kioku 里有没有，确认之后才写。本地的文件不删、不改。
+先读本地的记忆文件，列出每条将写入的标题、切面与目标记忆圈（默认写入访问密钥所属接入实例的主场记忆圈，也可用 `--circle <记忆圈>` 指定），确认之后才写。本地的文件不删、不改。
 
-| 来源 | 读什么 | 放到哪 |
+| 来源 | 读什么 | 写入什么切面与主题 |
 |---|---|---|
-| `claude-code` | `~/.claude/projects/*/memory/*.md`（`MEMORY.md` 是索引，不读） | 按文件头里的类型：`user` → `user://about/<项目>/<名字>`；`project` → `user://projects/<项目>/<名字>`；`reference` → `user://reference/<项目>/<名字>`；`feedback` → `app://<应用>/feedback/<项目>/<名字>` |
-| `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` → `app://<应用>/hermes/notes/…`；`USER.md` → `user://about/hermes/…` |
-| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记（`<日期>.md`、`<日期>-<名字>.md`） | `MEMORY.md` → `app://<应用>/openclaw/notes/…`；`USER.md` → `user://about/openclaw/…`；按日期的笔记 → `app://<应用>/openclaw/journal/<文件名>`，一个文件一条 |
+| `claude-code` | `~/.claude/projects/*/memory/*.md`（`MEMORY.md` 是索引，不读） | 默认带 `project=<项目>`（`feedback` 类型额外带 `runtime=claudecode`），主题标 `claude-code` 与类型；重名跨项目自动按项目后缀消歧 |
+| `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` 带 `runtime=hermes`、主题 `hermes` / `notes`；`USER.md` 不限运行时、主题 `hermes` / `about` |
+| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记（`<日期>.md`、`<日期>-<名字>.md`） | `MEMORY.md` 与按日期笔记带 `runtime=openclaw`（主题 `openclaw` / `notes`、`journal`）；`USER.md` 不限运行时、主题 `openclaw` / `about` |
 
-- `<应用>` 是访问密钥所属的应用的标识。偏「这个 agent 该怎么干活」的放在应用下，别的 agent 用不上；关于用户本人和项目的放在本人下，各个 agent 都读得到。
-- `<项目>` 取自 Claude Code 的项目目录名，去掉主目录与 `Documents`、`code` 这类常见的上级目录。分不清的两个项目（例如 `~/code/dev-proxy` 与 `~/code/proxy`）会得到同一个名字，同名的记忆会在计划里标出来，不会悄悄顶掉。
-- Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。有标题的用标题做标识；没有标题的用内容的摘要，所以文件里插一条、删一条不影响别的条，但改了某一段的内容会新建一条、旧的留着。Hermes 的位置与分隔符已经对着它的源码核对过（0.19.0），OpenClaw 的位置与文件名对着真实的安装核对过（2026.6.35）。OpenClaw 的 `USER.md` 是它生成的模板，没填过的话计划里会列出模板本身，不想要就先别迁。
+- 关于用户本人和项目的记忆不绑运行时切面，其他接入实例也可以直接按记忆圈与主题召回；偏某个运行时习惯的条目会带上对应 `runtime` 切面。同时为每个来源保留 `legacyUri` 兼容标识，已从旧版迁入或曾按旧 URI 导入过的条目会自动匹配。
+- `<项目>` 取自 Claude Code 的项目目录名，去掉主目录与 `Documents`、`code` 这类常见的上级目录。两个项目如果撞了同一个描述标题，后一条会自动附上 `（<项目名>）` 后缀，不会悄悄顶掉。
+- Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。有标题的保留小节标题；没有标题或重名的小节自动附上内容摘要后缀（超长标题会先截短前缀再拼后缀），所以文件里插一条、删一条不影响别的条。Hermes 的位置与分隔符已经对着它的源码核对过（0.19.0），OpenClaw 的位置与文件名对着真实的安装核对过（2026.6.35）。OpenClaw 的 `USER.md` 是它生成的模板，没填过的话计划里会列出模板本身，不想要就先别迁。
 - 标题与触发场景取文件头里的说明。写进去的记忆优先级是默认的，不进启动加载；要进的在管理界面里改。
-- **重复运行不重复写**：坐标由来源决定，已经有、内容一样的跳过；已经有、内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才覆盖。
+- **重复运行不重复写**：优先按来源对应的兼容 `legacyUri` 精确匹配，未命中再按标题匹配目标记忆圈里同切面变体。已有且内容一样的跳过；内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才带着版本号覆盖（若原词条仅有通用 `{}` 切片而本地带有切面条件，会一并替换通用切片）。
 - **疑似明文凭据的不写**：列出是哪个文件、正文第几行、哪一类，不带值。先把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次。
-- 不迁的会列出原因：正文超过 2 万字、没有内容、名字规整之后和别的一条撞了、文件头没有结尾。
+- 不迁的会列出原因：正文超过 2 万字、没有内容、文件头没有结尾，或同一批里完全重名的重复项。
 - 只读普通的文本文件：符号链接不跟（它可以指到记忆目录之外的文件），太大的、不是文本的不读。
 - 写到一半连不上时停下来，说明写了多少、还剩多少；重新运行会接着写。
 - 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
-- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。记忆迁进这个访问密钥所属的应用。
+- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。记忆迁进目标记忆圈（默认为主场记忆圈）。
 - 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
@@ -254,7 +254,7 @@ macOS 与 Linux 上各平台都用真实的模型实测过。Windows 上跑过�
 `kioku doctor codex`、`kioku doctor gemini`、`kioku doctor agy`、`kioku doctor opencode`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
-- `KIOKU_API_KEY`：在 Kioku 管理界面的「应用」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件
+- `KIOKU_API_KEY`：在 Kioku 管理界面的「接入实例」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件
 
 在 Claude Code 里，插件在会话开始时已经配好这两项。`setup` 只改本机的设置文件，用不到它们。
 
