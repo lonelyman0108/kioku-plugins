@@ -17,7 +17,13 @@ import {
 import { isInteractiveTty } from './identity.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
 import { isCancel, loadPrompts } from './prompts.ts'
-import { sourceNames, type SourceEntry, SOURCES, UNSUPPORTED_SOURCES } from './sources.ts'
+import {
+  sourceNames,
+  type SourceEntry,
+  SOURCES,
+  titleWithSuffix,
+  UNSUPPORTED_SOURCES,
+} from './sources.ts'
 import type { Env, Reader, TargetConfig, Writer } from './types.ts'
 
 export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--circle <记忆圈>]
@@ -57,6 +63,7 @@ export interface ImportOptions {
 export interface UsableSourceEntry {
   source: string
   title: string
+  baseTitle?: string
   legacyUri?: string
   when?: Record<string, string[]>
   topics?: string[]
@@ -201,26 +208,76 @@ async function fetchEntry(
   return request(config, 'GET', `/v1/entries?${params.toString()}`)
 }
 
-// 和 Kioku 里现有的比：优先按旧 URI 精确匹配，404 时再按标题兜底；
+function isDisjointProjectEntry(
+  data: Record<string, unknown> | null,
+  item: UsableSourceEntry,
+): boolean {
+  const itemProjects = item.when?.project
+  if (!Array.isArray(itemProjects) || itemProjects.length === 0) return false
+  const variants = Array.isArray(data?.variants)
+    ? (data.variants as Array<{ when?: { project?: unknown }; whenSignature?: unknown }>)
+    : []
+  if (!variants.length) return false
+  const sig = whenSignature(item.when)
+  if (variants.some((v) => v?.whenSignature === sig)) return false
+  if (variants.length === 1 && variants[0]?.whenSignature === '{}') return false
+  return variants.every((v) => {
+    const projs = v?.when?.project
+    return Array.isArray(projs) && projs.length > 0 && !itemProjects.some((p) => projs.includes(p))
+  })
+}
+
+// 和 Kioku 里现有的比：优先按旧 URI 精确匹配，404 时再按标题兜底（跨项目重名自动转项目后缀，避免顶掉其他项目词条）；
 // new 没有，same 有且对应切面正文一样，differs 有但不一样（含读不到正文的机密）
 async function compare(
   config: TargetConfig,
   circleSlug: string,
   item: UsableSourceEntry,
 ): Promise<ComparedEntry> {
-  let { status, data } = item.legacyUri
-    ? await fetchEntry(config, item.legacyUri, circleSlug)
-    : await fetchEntry(config, item.title, circleSlug)
-  if (status === 404 && item.legacyUri) {
-    const byTitle = await fetchEntry(config, item.title, circleSlug)
-    status = byTitle.status
-    data = byTitle.data
-  }
-  if (status === 404) return { ...item, state: 'new' }
-  if (status !== 200) {
-    return { ...item, state: 'failed', reason: serverText(data, status, config.key) }
-  }
   const sig = whenSignature(item.when)
+  let effectiveTitle = item.title
+  let matchedByLegacy = false
+  let res: { status: number; data: Record<string, unknown> | null }
+  if (item.legacyUri) {
+    res = await fetchEntry(config, item.legacyUri, circleSlug)
+    matchedByLegacy = res.status === 200
+    if (res.status === 404) res = await fetchEntry(config, effectiveTitle, circleSlug)
+  } else {
+    res = await fetchEntry(config, effectiveTitle, circleSlug)
+  }
+  if (!matchedByLegacy) {
+    const proj = item.when?.project?.[0]
+    if (
+      proj &&
+      !effectiveTitle.endsWith(`（${proj}）`) &&
+      (res.status === 409 || (res.status === 200 && isDisjointProjectEntry(res.data, item)))
+    ) {
+      const projTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
+      if (projTitle !== effectiveTitle) {
+        effectiveTitle = projTitle
+        res = await fetchEntry(config, effectiveTitle, circleSlug)
+      }
+    } else if (res.status === 404 && item.baseTitle && item.baseTitle !== effectiveTitle) {
+      const baseRes = await fetchEntry(config, item.baseTitle, circleSlug)
+      const baseVariants = Array.isArray(baseRes.data?.variants)
+        ? (baseRes.data.variants as Array<{ whenSignature?: unknown }>)
+        : []
+      if (baseRes.status === 200 && baseVariants.some((v) => v?.whenSignature === sig)) {
+        effectiveTitle = item.baseTitle
+        res = baseRes
+      }
+    }
+  }
+  const { status, data } = res
+  if (status === 404) return { ...item, title: effectiveTitle, state: 'new' }
+  if (status !== 200) {
+    return {
+      ...item,
+      title: effectiveTitle,
+      state: 'failed',
+      reason: serverText(data, status, config.key),
+    }
+  }
   const variants = Array.isArray(data?.variants)
     ? (data.variants as Array<{ whenSignature?: unknown; content?: unknown }>)
     : []
@@ -233,6 +290,7 @@ async function compare(
   const same = typeof matched?.content === 'string' && matched.content.trim() === item.content
   return {
     ...item,
+    title: effectiveTitle,
     state: same ? 'same' : 'differs',
     version: typeof data?.version === 'number' ? data.version : undefined,
     shortId: typeof data?.shortId === 'string' ? data.shortId : undefined,

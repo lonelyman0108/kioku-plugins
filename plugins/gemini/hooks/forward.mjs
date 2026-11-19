@@ -125,7 +125,7 @@ export async function forwardGeminiEvent(event, rawStdin, env = process.env) {
   const { url: base, key } = profile
   const sessionId =
     typeof input.session_id === 'string' && input.session_id
-      ? input.session_id.slice(0, MAX_SESSION_ID)
+      ? clip(input.session_id, MAX_SESSION_ID)
       : undefined
   const explicitCwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : ''
   const detectedProject = projectOf(explicitCwd || process.cwd())

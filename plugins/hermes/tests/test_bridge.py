@@ -7,6 +7,7 @@ from hermes.kioku_bridge import (
     KiokuFailure,
     KiokuSession,
     context_of,
+    device_key_of,
     is_trivial,
     key_problem,
     server_url_problem,
@@ -239,7 +240,9 @@ def test_long_text_is_clipped(kioku):
     s.flush()
     assert len(body_of(kioku, "prompt.submit")["prompt"]) == 20_000
     assert len(body_of(kioku, "turn.end")["user"]) == 20_000
-    assert len(body_of(kioku, "turn.end")["reply"]) == 20_000
+    assert len(body_of(kioku, "turn.end")["reply"]) == 10_000
+    assert len(body_of(kioku, "turn.end")["reply"].encode("utf-16-le")) == 40_000
+    assert device_key_of({"KIOKU_DEVICE_KEY": ("a" * 127) + "🚀tail"}) == "a" * 127
 
 
 def test_event_stream_answers_from_the_tool_endpoint(kioku):

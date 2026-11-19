@@ -74,7 +74,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
 
   const sessionIdOf = (ctx) => {
     const id = ctx.sessionManager?.getSessionId?.()
-    return typeof id === 'string' && id ? id.slice(0, MAX_SESSION_ID) : undefined
+    return typeof id === 'string' && id ? clip(id, MAX_SESSION_ID) : undefined
   }
 
   function projectFor(cwd) {

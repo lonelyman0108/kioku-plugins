@@ -140,7 +140,7 @@ async function main(event) {
 
   const body = { event, ...(deviceKey ? { deviceKey } : {}) }
   if (typeof input.session_id === 'string' && input.session_id) {
-    body.sessionId = input.session_id.slice(0, MAX_SESSION_ID)
+    body.sessionId = clip(input.session_id, MAX_SESSION_ID)
   }
   if (event === 'turn.end') {
     // 一轮结束：把这一轮交给服务端写会话摘要，不带会话上下文；什么都不写到标准输出（Stop 钩子的输出能让它接着说）。

@@ -37,8 +37,11 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
     typeof record?.primaryCircle?.slug !== 'string' ||
     typeof record?.primaryCircle?.name !== 'string' ||
     (record.linkedCircles !== undefined && !Array.isArray(record.linkedCircles)) ||
-    record.scopes === null ||
-    typeof record.scopes !== 'object'
+    !record.scopes ||
+    typeof record.scopes !== 'object' ||
+    Array.isArray(record.scopes) ||
+    (record.scopes.readKinds !== undefined && !Array.isArray(record.scopes.readKinds)) ||
+    (record.scopes.writeKinds !== undefined && !Array.isArray(record.scopes.writeKinds))
   ) {
     throw new KiokuFailure('Kioku 的响应格式不对')
   }

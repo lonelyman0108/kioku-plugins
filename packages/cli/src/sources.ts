@@ -19,6 +19,7 @@ const MAX_FILES = 2000
 export interface SourceEntry {
   source: string
   title?: string
+  baseTitle?: string
   legacyUri?: string
   when?: Record<string, string[]>
   topics?: string[]
@@ -57,7 +58,7 @@ export function titleOf(text: unknown): string {
   return Array.from(line).slice(0, MAX_TITLE).join('')
 }
 
-function titleWithSuffix(base: string, suffix: string): string {
+export function titleWithSuffix(base: string, suffix: string): string {
   const cleanSuffix = titleOf(suffix)
   const suffixChars = Array.from(cleanSuffix)
   if (suffixChars.length >= MAX_TITLE) return suffixChars.slice(0, MAX_TITLE).join('')
@@ -152,6 +153,7 @@ function entry(
   source: string,
   {
     title,
+    baseTitle,
     legacyUri,
     when,
     topics,
@@ -159,6 +161,7 @@ function entry(
     disclosure,
   }: {
     title: string
+    baseTitle?: string
     legacyUri?: string
     when?: Record<string, string[]>
     topics?: string[]
@@ -174,6 +177,7 @@ function entry(
   const item: SourceEntry = {
     source,
     title: titleOf(title) || basename(source),
+    ...(baseTitle ? { baseTitle } : {}),
     ...(legacyUri ? { legacyUri } : {}),
     ...(when && Object.keys(when).length ? { when } : {}),
     ...(topics?.length ? { topics } : {}),
@@ -304,19 +308,26 @@ async function claudeCode({
       const prevProject = titleProject.get(baseTitle)
       let itemTitle = baseTitle
       if (prevProject !== undefined && prevProject !== project.name) {
-        itemTitle = titleWithSuffix(baseTitle, `（${project.name}）`)
+        const withProj = titleWithSuffix(baseTitle, `（${project.name}）`)
+        const clash = titleProject.get(withProj)
+        itemTitle =
+          clash === undefined || clash === project.name
+            ? withProj
+            : titleWithSuffix(baseTitle, `（${project.name}-${digest(source).slice(2, 6)}）`)
       }
-      if (!titleProject.has(itemTitle)) titleProject.set(itemTitle, project.name)
-      entries.push(
-        entry(source, {
-          title: itemTitle,
-          legacyUri,
-          when,
-          topics,
-          content: body,
-          disclosure: meta.description,
-        }),
-      )
+      const built = entry(source, {
+        title: itemTitle,
+        ...(itemTitle !== baseTitle ? { baseTitle } : {}),
+        legacyUri,
+        when,
+        topics,
+        content: body,
+        disclosure: meta.description,
+      })
+      if (!built.skipped && !titleProject.has(itemTitle)) {
+        titleProject.set(itemTitle, project.name)
+      }
+      entries.push(built)
     }
   }
   return { root, found: true, entries }

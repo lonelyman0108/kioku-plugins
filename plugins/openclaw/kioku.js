@@ -267,7 +267,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
     const prompt = typeof event?.prompt === 'string' ? event.prompt.trim() : ''
     const sessionId =
       typeof ctx.sessionId === 'string' && ctx.sessionId
-        ? ctx.sessionId.slice(0, MAX_SESSION_ID)
+        ? clip(ctx.sessionId, MAX_SESSION_ID)
         : undefined
     if (sessionId && typeof ctx.runId === 'string' && ctx.runId) {
       const start = Array.isArray(event?.messages) ? event.messages.length : undefined

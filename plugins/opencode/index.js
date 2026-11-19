@@ -163,7 +163,7 @@ export async function createKiokuPlugin({
     if (state.startupPromise) return state.startupPromise
     state.startupPromise = forward(
       'session.start',
-      { sessionId: sessionID.slice(0, MAX_SESSION_ID) },
+      { sessionId: clip(sessionID, MAX_SESSION_ID) },
       state.controller.signal,
     )
       .then((text) => {
@@ -266,7 +266,7 @@ export async function createKiokuPlugin({
           await forward(
             'turn.end',
             {
-              sessionId: id.slice(0, MAX_SESSION_ID),
+              sessionId: clip(id, MAX_SESSION_ID),
               user: clip(user, MAX_PROMPT),
               reply: clip(reply, MAX_REPLY),
             },
@@ -307,7 +307,7 @@ export async function createKiokuPlugin({
         const text = await forward(
           'prompt.submit',
           {
-            sessionId: parsed.sessionID.slice(0, MAX_SESSION_ID),
+            sessionId: clip(parsed.sessionID, MAX_SESSION_ID),
             prompt: clip(parsed.prompt, MAX_PROMPT),
           },
           state.controller.signal,

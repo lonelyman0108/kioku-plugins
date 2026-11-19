@@ -158,7 +158,7 @@ export async function forwardAgyEvent(event, rawStdin, env = process.env) {
   const { url: base, key } = profile
   const sessionId =
     typeof input.conversationId === 'string' && input.conversationId
-      ? input.conversationId.slice(0, MAX_SESSION_ID)
+      ? clip(input.conversationId, MAX_SESSION_ID)
       : undefined
   const explicitCwd =
     (typeof input.cwd === 'string' && input.cwd) ||

@@ -45,8 +45,11 @@ class KiokuFailure(Exception):
 
 
 def clip(text: str, limit: int) -> str:
-    """按码点截断（Python 的字符串本来就按码点算，不会切开一个字）。"""
-    return text if len(text) <= limit else text[:limit]
+    """按 UTF-16 码元截断：服务端按 JS 字符串长度校验，表情等字符占两个码元，不切开代理对。"""
+    units = text.encode("utf-16-le", "surrogatepass")
+    if len(units) <= limit * 2:
+        return text
+    return units[: limit * 2].decode("utf-16-le", "ignore")
 
 
 def server_url_problem(url: str) -> str | None:
@@ -214,7 +217,7 @@ def device_key_of(env: Mapping[str, str] | None = None) -> str:
             raw = socket.gethostname()
         except OSError:
             raw = ""
-    return _strip_control(raw).strip()[:MAX_NAME]
+    return clip(_strip_control(raw).strip(), MAX_NAME).strip()
 
 
 def project_of(cwd: str | None) -> dict[str, str]:
@@ -224,7 +227,7 @@ def project_of(cwd: str | None) -> dict[str, str]:
     project: dict[str, str] = {}
     name = os.path.basename(os.path.normpath(cwd))
     if name:
-        project["dirName"] = name[:MAX_NAME]
+        project["dirName"] = clip(name, MAX_NAME)
     try:
         remote = subprocess.run(
             ["git", "-C", cwd, "remote", "get-url", "origin"],
@@ -235,7 +238,7 @@ def project_of(cwd: str | None) -> dict[str, str]:
         ).stdout.strip()
         match = re.search(r"([^/:]+?)(?:\.git)?$", remote)
         if match and match.group(1):
-            project["repoName"] = match.group(1)[:MAX_NAME]
+            project["repoName"] = clip(match.group(1), MAX_NAME)
     except (OSError, subprocess.SubprocessError):
         # 没有 git、超时：只带目录名
         return project

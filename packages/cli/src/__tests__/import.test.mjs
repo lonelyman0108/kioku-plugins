@@ -146,20 +146,25 @@ beforeAll(async () => {
       if (req.method === 'PATCH' && url.pathname === '/v1/entries') {
         const { entry: existing } = findInStore(body.circle, body.id)
         if (!existing) return send(404, { error: '不存在或不可见' })
+        const bySig = new Map((existing.variants ?? []).map((v) => [v.whenSignature, v]))
+        if (Array.isArray(body.removeVariantWhens)) {
+          for (const rem of body.removeVariantWhens) {
+            bySig.delete(canonicalSig(rem))
+          }
+        }
         const when = body.when ?? {}
         const sig = canonicalSig(when)
         existing.version += 1
         existing.title = body.title ?? existing.title
-        existing.variants = [
-          {
-            id: existing.variants[0]?.id ?? 'var-1',
-            when,
-            whenSignature: sig,
-            sortOrder: 0,
-            content: body.content,
-            updatedAt: '2026-01-02T00:00:00Z',
-          },
-        ]
+        bySig.set(sig, {
+          id: existing.variants?.[0]?.id ?? 'var-1',
+          when,
+          whenSignature: sig,
+          sortOrder: bySig.size,
+          content: body.content,
+          updatedAt: '2026-01-02T00:00:00Z',
+        })
+        existing.variants = [...bySig.values()]
         return send(200, existing)
       }
 
@@ -763,5 +768,90 @@ describe('kioku import：读文件与写入的边界', () => {
         expectedVersion: 5,
       },
     })
+    expect(store.get('personal::m-gen1').variants).toHaveLength(1)
+    expect(store.get('personal::m-gen1').variants[0].whenSignature).toBe(
+      '{"project":["x-code-kioku"]}',
+    )
+  })
+
+  it('分批 --path 导入、字母序更靠前的新项目与字面后缀冲突都不顶掉已有项目词条', async () => {
+    memory('-x-code-alpha', 'spec', 'user', 'Alpha 规范正文', '编码规范')
+    const first = await run([
+      '--from',
+      'claude-code',
+      '--path',
+      join(dir, 'claude/projects/-x-code-alpha/memory'),
+      '--yes',
+    ])
+    expect(first.text).toContain('写入 1 条')
+
+    memory('-x-code-beta', 'spec', 'user', 'Beta 规范正文', '编码规范')
+    requests = []
+    const second = await run([
+      '--from',
+      'claude-code',
+      '--path',
+      join(dir, 'claude/projects/-x-code-beta/memory'),
+      '--yes',
+    ])
+    expect(second.code).toBe(0)
+    expect(second.text).toContain('写入 1 条')
+    expect(writes()).toHaveLength(1)
+    expect(writes()[0]).toMatchObject({
+      method: 'POST',
+      path: '/v1/entries',
+      body: {
+        title: '编码规范（x-code-beta）',
+        when: { project: ['x-code-beta'] },
+      },
+    })
+    const repeat = await run([
+      '--from',
+      'claude-code',
+      '--path',
+      join(dir, 'claude/projects/-x-code-beta/memory'),
+      '--yes',
+    ])
+    expect(repeat.text).toContain('已有，内容一样  编码规范（x-code-beta）')
+
+    // 若原本只迁过 x-code-gamma 的裸标题「架构」，之后新增字母序更靠前的 x-code-aaa 同名记忆，
+    // 全量重跑时 x-code-aaa 自动带项目后缀新建，x-code-gamma 仍经 baseTitle 认出已有裸标题而不重复
+    store.set('personal::m-gamma1', {
+      id: 'uuid-gamma1',
+      shortId: 'm-gamma1',
+      circleId: 'c1',
+      circleSlug: 'personal',
+      kind: 'entry',
+      title: '架构',
+      sensitivity: 'private',
+      version: 1,
+      variants: [
+        {
+          id: 'var-gam',
+          when: { project: ['x-code-gamma'] },
+          whenSignature: '{"project":["x-code-gamma"]}',
+          sortOrder: 0,
+          content: 'Gamma 正文',
+        },
+      ],
+    })
+    memory('-x-code-aaa', 'arch', 'user', 'AAA 新正文', '架构')
+    memory('-x-code-gamma', 'arch', 'user', 'Gamma 正文', '架构')
+    requests = []
+    const fullScan = await run(['--from', 'claude-code', '--yes'])
+    expect(fullScan.text).toContain('已有，内容一样  架构（m-gamma1）')
+    expect(writes().map((w) => w.body.title)).toContain('架构（x-code-aaa）')
+
+    // 同一批内若前一个项目字面恰好叫「部署（x-code-beta）」，后一个项目「部署」自动带哈希后缀而不被丢弃
+    memory('-x-code-alpha', 'deploy-1', 'user', 'Alpha 部署', '部署')
+    memory('-x-code-alpha', 'deploy-2', 'user', 'Alpha 字面后缀', '部署（x-code-beta）')
+    memory('-x-code-beta', 'deploy-1', 'user', 'Beta 部署', '部署')
+    requests = []
+    const clash = await run(['--from', 'claude-code', '--yes'])
+    const writtenTitles = writes().map((w) => w.body.title)
+    expect(writtenTitles).toContain('部署')
+    expect(writtenTitles).toContain('部署（x-code-beta）')
+    expect(writtenTitles.some((t) => /^部署（x-code-beta-[0-9a-f]{4}）$/.test(t))).toBe(true)
+    expect(clash.text).not.toContain('和前面的一条重名')
   })
 })

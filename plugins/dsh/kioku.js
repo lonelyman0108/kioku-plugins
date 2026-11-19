@@ -46,7 +46,7 @@ const fromUser = (message) => message?.role === 'user' && message.source?.kind =
 function sessionOf(agent) {
   const header = agent?.session?.header
   if (!header || header.origin === 'subagent' || header.delegationDepth > 0) return undefined
-  return typeof header.id === 'string' && header.id ? header.id.slice(0, MAX_SESSION_ID) : undefined
+  return typeof header.id === 'string' && header.id ? clip(header.id, MAX_SESSION_ID) : undefined
 }
 
 // 这一轮说了什么：{ user, reply }。从这一轮开始的那条记录到下一轮开始之前，用户说的与助手说的文字各连成一段

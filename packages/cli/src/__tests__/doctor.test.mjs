@@ -153,6 +153,13 @@ describe('kioku doctor', () => {
         '✗ Kioku 的响应格式不对',
       ],
       [
+        () => ({
+          status: 200,
+          body: { ...WHO, scopes: [] },
+        }),
+        '✗ Kioku 的响应格式不对',
+      ],
+      [
         () => ({ status: 301, headers: { location: 'https://kioku.example.com/v1/whoami' } }),
         '✗ Kioku 返回了跳转（301），把地址改成跳转之后的地址（例如 https://kioku.example.com）',
       ],
