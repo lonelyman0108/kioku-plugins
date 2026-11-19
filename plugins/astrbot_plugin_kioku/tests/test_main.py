@@ -26,7 +26,7 @@ def plugin_with(sent: list[dict], boot: bool = True) -> KiokuPlugin:
             200,
             json={
                 "hostOutput": {"mode": "return_value" if value else "none", "value": value},
-                "nodeUris": [],
+                "shortIds": [],
             },
         )
 

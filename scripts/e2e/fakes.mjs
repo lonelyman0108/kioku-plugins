@@ -16,8 +16,8 @@ const TOOLS = [
     description: '读一条记忆',
     inputSchema: {
       type: 'object',
-      properties: { uri: { type: 'string', description: '坐标' } },
-      required: ['uri'],
+      properties: { id: { type: 'string', description: '短 ID 或标题' } },
+      required: ['id'],
     },
   },
   {
@@ -27,6 +27,23 @@ const TOOLS = [
       type: 'object',
       properties: { query: { type: 'string', description: '查询' } },
       required: ['query'],
+    },
+  },
+  {
+    name: 'kioku_browse',
+    description: '浏览记忆目录',
+    inputSchema: {
+      type: 'object',
+      properties: { circle: { type: 'string', description: '记忆圈' } },
+    },
+  },
+  {
+    name: 'kioku_transfer',
+    description: '迁移记忆',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '短 ID' } },
+      required: ['id'],
     },
   },
 ]
@@ -74,6 +91,18 @@ const text = (value, min, max) =>
 function eventProblem(body) {
   if (!body || typeof body !== 'object') return '不是 JSON 对象'
   const optionalId = body.sessionId === undefined || text(body.sessionId, 0, 200)
+  if (body.deviceKey !== undefined && !text(body.deviceKey, 1, 128)) return 'deviceKey 不对'
+  if (body.project !== undefined) {
+    if (!body.project || typeof body.project !== 'object' || Array.isArray(body.project)) {
+      return 'project 不对'
+    }
+    if (body.project.dirName !== undefined && !text(body.project.dirName, 1, 128)) {
+      return 'project.dirName 不对'
+    }
+    if (body.project.repoName !== undefined && !text(body.project.repoName, 1, 128)) {
+      return 'project.repoName 不对'
+    }
+  }
   if (body.event === 'session.start') return optionalId ? null : 'sessionId 不对'
   if (body.event === 'prompt.submit') {
     if (!optionalId) return 'sessionId 不对'
@@ -112,11 +141,27 @@ export async function startFakeKioku(runtimeFamily) {
     if (!authorized) return json(res, 401, { error: '访问密钥无效' })
     if (req.url === '/v1/whoami') {
       return json(res, 200, {
-        app: { id: 'app', slug: runtimeFamily, name: `e2e ${runtimeFamily}`, runtimeFamily },
+        primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
+        linkedCircles: [],
+        client: {
+          id: 'app',
+          circleId: 'c1',
+          slug: runtimeFamily,
+          name: `e2e ${runtimeFamily}`,
+          runtimeFamily,
+          ownerAccountId: 'a1',
+          defaultPersonaId: null,
+          config: { personMemoryMode: 'strict', recordPrompt: false },
+        },
+        persona: null,
+        contextFacets: {},
+        resolvedFacets: {},
+        vocabulary: [],
         scopes: {
-          readLayers: ['core', 'app', 'user'],
-          writeLayers: ['app', 'user'],
+          readKinds: ['entry'],
+          writeKinds: ['entry'],
           maxSensitivity: 'private',
+          allowedRealms: null,
           admin: false,
           credentials: 'none',
         },
@@ -135,7 +180,7 @@ export async function startFakeKioku(runtimeFamily) {
           : body?.event === 'prompt.submit'
             ? `${RECALL_MARK}：这是召回`
             : ''
-      return json(res, 200, { hostOutput: hostOutput(body?.event, context), nodeUris: [] })
+      return json(res, 200, { hostOutput: hostOutput(body?.event, context), shortIds: [] })
     }
     if (req.url === '/v1/mcp') {
       if (req.method !== 'POST') {

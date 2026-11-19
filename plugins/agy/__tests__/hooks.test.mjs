@@ -143,8 +143,20 @@ describe('Antigravity Kioku 钩子', () => {
       'turn.end',
       'prompt.submit',
     ])
+    expect(events[0]).toMatchObject({
+      event: 'session.start',
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
+    })
+    expect(events[1]).toMatchObject({
+      event: 'prompt.submit',
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
+    })
     expect(events[2]).toMatchObject({
       sessionId: 'conv-1',
+      deviceKey: expect.any(String),
+      project: { dirName: expect.any(String) },
       user: '查网关端口',
       reply: '在 18920 端口。',
     })

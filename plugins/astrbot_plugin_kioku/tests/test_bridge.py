@@ -52,7 +52,7 @@ def answer(context: str):
         200,
         json={
             "hostOutput": {"mode": "return_value", "value": {"context": context}},
-            "nodeUris": [],
+            "shortIds": [],
         },
     )
 
@@ -135,7 +135,7 @@ def test_long_text_is_clipped_by_utf16_length():
 def test_turn_end_reports_the_reply_and_skips_empty_turns():
     bridge, sent = bridge_with(
         lambda _r: httpx.Response(
-            200, json={"hostOutput": {"mode": "none", "value": None}, "nodeUris": []}
+            200, json={"hostOutput": {"mode": "none", "value": None}, "shortIds": []}
         )
     )
     asyncio.run(bridge.turn_end(GROUP, "还没定"))

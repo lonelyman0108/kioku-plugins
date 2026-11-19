@@ -41,14 +41,27 @@ const GRANT = {
   expiresIn: 600,
   interval: 3,
 }
-const app = (family) => ({ id: 'a', slug: family, name: `${family} 应用`, runtimeFamily: family })
-const who = (family) => ({
-  spaceId: '0f1e2d3c-0000-4000-8000-000000000000',
-  app: app(family),
-  scopes: { readLayers: [], writeLayers: [], maxSensitivity: 'internal', credentials: 'none' },
+const client = (family) => ({
+  id: 'a',
+  circleId: '0f1e2d3c-0000-4000-8000-000000000000',
+  slug: family,
+  name: `${family} 接入实例`,
+  runtimeFamily: family,
+})
+const who = (family, circleName = '') => ({
+  primaryCircle: {
+    id: '0f1e2d3c-0000-4000-8000-000000000000',
+    slug: '',
+    name: circleName,
+    kind: 'personal',
+  },
+  linkedCircles: [],
+  client: client(family),
+  persona: null,
+  scopes: { readKinds: [], writeKinds: [], maxSensitivity: 'internal', credentials: 'none' },
 })
 
-// 假的 Kioku：访问密钥写成 key-<运行时>，whoami 据此回应用；key-revoked 回 401
+// 假的 Kioku：访问密钥写成 key-<运行时>，whoami 据此回接入实例；key-revoked 回 401
 let server
 let base
 let requests
@@ -75,7 +88,7 @@ beforeAll(async () => {
           key === 'key-revoked'
             ? { status: 401, body: { error: 'invalid' } }
             : { status: 200, body: who(key.replace(/^key-/, '')) }
-      } else if (req.url.startsWith('/v1/memories')) reply = { status: 404, body: {} }
+      } else if (req.url.startsWith('/v1/entries')) reply = { status: 404, body: {} }
       else reply = { status: 404, body: {} }
       res.writeHead(reply.status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(reply.body ?? {}))
@@ -234,8 +247,8 @@ describe('几个平台一起的浏览器授权', () => {
         body: {
           status: 'approved',
           keys: [
-            { runtimeFamily: 'pi', status: 'issued', key: 'key-pi', app: app('pi') },
-            { runtimeFamily: 'dsh', status: 'issued', key: 'key-dsh', app: app('dsh') },
+            { runtimeFamily: 'pi', status: 'issued', key: 'key-pi', client: client('pi') },
+            { runtimeFamily: 'dsh', status: 'issued', key: 'key-dsh', client: client('dsh') },
           ],
         },
       },
@@ -254,7 +267,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect(text).toContain('✓ 已确认，签发了 2 个访问密钥')
     expect(text).not.toContain('key-pi')
     expect(resultsText(results)).toBe(
-      '已接入：pi（应用 pi 应用）、DeepSeek Harness（应用 dsh 应用）',
+      '已接入：pi（接入实例 pi 接入实例）、DeepSeek Harness（接入实例 dsh 接入实例）',
     )
   })
 
@@ -266,9 +279,9 @@ describe('几个平台一起的浏览器授权', () => {
         body: {
           status: 'approved',
           keys: [
-            { runtimeFamily: 'pi', status: 'issued', key: 'key-pi', app: app('pi') },
+            { runtimeFamily: 'pi', status: 'issued', key: 'key-pi', client: client('pi') },
             { runtimeFamily: 'dsh', status: 'skipped' },
-            { runtimeFamily: 'codex', status: 'denied', reason: '应用\n不可用' },
+            { runtimeFamily: 'codex', status: 'denied', reason: '接入实例\n不可用' },
             // 没申请的不收
             { runtimeFamily: 'hermes', status: 'issued', key: 'key-hermes' },
           ],
@@ -277,9 +290,9 @@ describe('几个平台一起的浏览器授权', () => {
     ]
     const { results } = await connect(['pi', 'dsh', 'codex', 'openclaw'])
     expect(results).toEqual([
-      { id: 'pi', status: 'connected', app: app('pi') },
+      { id: 'pi', status: 'connected', client: client('pi') },
       { id: 'dsh', status: 'skipped', reason: '确认页上没有勾选' },
-      { id: 'codex', status: 'denied', reason: '应用 不可用' },
+      { id: 'codex', status: 'denied', reason: '接入实例 不可用' },
       { id: 'openclaw', status: 'skipped', reason: '确认页上没有勾选' },
     ])
     expect(await readProfile('dsh', env)).toBeNull()
@@ -287,7 +300,7 @@ describe('几个平台一起的浏览器授权', () => {
   })
 
   it('确认了却一个都没签发（例如确认人已停用）：每个平台都是被拒绝，不算接上', async () => {
-    const reason = '确认人已不在空间或已停用'
+    const reason = '确认人已不在记忆圈或已停用'
     answers = [
       {
         status: 200,
@@ -331,8 +344,8 @@ describe('几个平台一起的浏览器授权', () => {
         ? { status: 400, body: { error: 'runtimeFamily：Invalid input' } }
         : { status: 201, body: GRANT }
     answers = [
-      { status: 200, body: { status: 'approved', key: 'key-pi', app: app('pi') } },
-      { status: 200, body: { status: 'approved', key: 'key-dsh', app: app('dsh') } },
+      { status: 200, body: { status: 'approved', key: 'key-pi', client: client('pi') } },
+      { status: 200, body: { status: 'approved', key: 'key-dsh', client: client('dsh') } },
     ]
     const { results, text } = await connect(['pi', 'dsh'])
     expect(text).toContain('服务端版本较旧，需要逐个确认')
@@ -365,7 +378,7 @@ describe('几个平台一起的浏览器授权', () => {
         status: 200,
         body: {
           status: 'approved',
-          keys: [{ runtimeFamily: 'pi', status: 'issued', key: 'key-pi', app: app('pi') }],
+          keys: [{ runtimeFamily: 'pi', status: 'issued', key: 'key-pi', client: client('pi') }],
         },
       },
     ]
@@ -392,7 +405,7 @@ describe('几个平台一起的浏览器授权', () => {
         status: 200,
         body: {
           status: 'approved',
-          keys: [{ runtimeFamily: 'pi', status: 'issued', key: 'key-pi', app: app('pi') }],
+          keys: [{ runtimeFamily: 'pi', status: 'issued', key: 'key-pi', client: client('pi') }],
         },
       },
     ]
@@ -400,7 +413,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect(results[0].status).toBe('failed')
     expect(results[0].reason).toMatch(/没有找到 Hermes 的目录/)
     expect(results[1].status).toBe('failed')
-    expect(results[1].reason).toMatch(/吊销它（应用 pi 应用）/)
+    expect(results[1].reason).toMatch(/吊销它（接入实例 pi 接入实例）/)
     const asked = requests.filter((r) => r.url === '/v1/device/authorize')
     expect(asked[0].body.platforms).toEqual([{ runtimeFamily: 'pi' }])
   })
@@ -453,14 +466,14 @@ describe('面板', () => {
     expect(row('hermes')).toMatchObject({ connection: 'ok', local: 2, memory: null, plugin: false })
     // 扫描时不和 Kioku 逐条比对
     expect(row('hermes').pending).toBeUndefined()
-    expect(requests.some((r) => r.url.startsWith('/v1/memories'))).toBe(false)
+    expect(requests.some((r) => r.url.startsWith('/v1/entries'))).toBe(false)
     expect(row('claude-code')).toMatchObject({ present: true, connection: 'none', memory: 'on' })
     expect(row('claude-code').local).toBe(1)
     expect(row('openclaw')).toMatchObject({ present: false, connection: 'none', plugin: null })
 
     const text = renderPanel(state)
     expect(text).toContain(`服务器：${base}（可连接 · 版本 0.1.0）`)
-    expect(text).toContain('pi：已接入 · 应用 pi 应用（pi） · 空间 0f1e2d3c')
+    expect(text).toContain('pi：已接入 · 接入实例 pi 接入实例（pi） · 记忆圈 0f1e2d3c')
     expect(text).toContain('DeepSeek Harness：已失效 · 访问密钥无效或已吊销')
     expect(text).toMatch(/Codex：无法判断 · http:\/\/127\.0\.0\.1:9 · 无法连接 Kioku/)
     expect(text).toContain('插件 未安装 · 自带记忆 无法判断 · 本地记忆 2 条')
@@ -519,18 +532,18 @@ describe('面板', () => {
     expect(values).not.toContain('claude-connect')
   })
 
-  it('服务端给了账号名与空间名时显示名字', () => {
+  it('服务端给了账号名与记忆圈名时显示名字', () => {
     const row = {
       id: 'pi',
       name: 'pi',
       present: true,
       connection: 'ok',
-      who: { ...who('pi'), accountName: '小林', spaceName: '个人' },
+      who: { ...who('pi', '个人'), accountName: '小林' },
       plugin: true,
       memory: 'none',
     }
     const text = renderPanel({ server: null, platforms: [row] })
-    expect(text).toContain('pi：已接入 · 应用 pi 应用（pi） · 空间 个人 · 账号 小林')
+    expect(text).toContain('pi：已接入 · 接入实例 pi 接入实例（pi） · 记忆圈 个人 · 账号 小林')
   })
 
   it('比对失败时未迁移写「无法判断」，迁移照常提供', () => {
@@ -826,7 +839,7 @@ describe('向导', () => {
   })
 
   it('一个平台都没接上时结果里写明', async () => {
-    const reason = '确认人已不在空间或已停用'
+    const reason = '确认人已不在记忆圈或已停用'
     const ui = fakeUi(['connect', ['pi'], true, 'exit'])
     await wizard({
       ui,
@@ -1090,7 +1103,7 @@ describe('向导', () => {
         defaultServerUrl: async () => base,
         scan: async () => ({ ...state('ok'), platforms: [claude] }),
         connectPlatforms: async () => [
-          { id: 'claude-code', status: 'connected', app: { name: 'Claude Code' } },
+          { id: 'claude-code', status: 'connected', client: { name: 'Claude Code' } },
         ],
       },
     })

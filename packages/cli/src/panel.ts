@@ -361,10 +361,11 @@ const PLUGIN_NAMES = new Map<boolean | null, string>([
 ])
 const MEMORY_NAMES: Record<string, string> = { off: '已停用', on: '未停用', none: '无' }
 
-// 访问密钥属于哪个空间：服务端给了空间名就用名字，否则用 id 的前 8 位
-function spaceText(who: WhoamiResponse): string | null {
-  if (typeof who.spaceName === 'string' && who.spaceName) return plain(who.spaceName)
-  return typeof who.spaceId === 'string' ? plain(who.spaceId).slice(0, 8) : null
+// 访问密钥属于哪个主场记忆圈：服务端给了名称就用名称，否则用 slug 或 id 前 8 位
+function circleText(who: WhoamiResponse): string | null {
+  if (who.primaryCircle.name) return plain(who.primaryCircle.name)
+  if (who.primaryCircle.slug) return plain(who.primaryCircle.slug)
+  return typeof who.primaryCircle.id === 'string' ? plain(who.primaryCircle.id).slice(0, 8) : null
 }
 
 // 能不能停用：配过（不管现在能不能用），或者 Claude Code 的自动记忆停着
@@ -400,14 +401,17 @@ export function platformDetails(row: PlatformRow): {
   const head = connectionText(row)
   const facts: string[] = []
   if (row.connection === 'ok' && row.who) {
-    const app = row.who.app
-    facts.push(`应用 ${plain(app.name)}（${plain(app.slug)}）`)
-    const space = spaceText(row.who)
-    if (space) facts.push(`空间 ${space}`)
+    const client = row.who.client
+    facts.push(`接入实例 ${plain(client.name)}（${plain(client.slug)}）`)
+    const circle = circleText(row.who)
+    if (circle) facts.push(`记忆圈 ${circle}`)
+    if (row.who.linkedCircles.length > 0) {
+      facts.push(`关联 ${row.who.linkedCircles.length} 个客场圈`)
+    }
     if (typeof row.who.accountName === 'string' && row.who.accountName) {
       facts.push(`账号 ${plain(row.who.accountName)}`)
     }
-    if (app.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) facts.push('应用的运行时不对')
+    if (client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) facts.push('接入实例的运行时不对')
   }
   if (row.otherServer && row.url) facts.push(shownUrl(row.url))
   if (row.reason) facts.push(row.reason)
@@ -456,15 +460,16 @@ export function renderPanel(
       if (server.needsSetup) facts.push('未初始化')
     }
     lines.push(`服务器：${shownUrl(server.url)}（${facts.join(' · ')}）`)
-    const spaces = [
+    const circles = [
       ...new Set(
         state.platforms
           .filter((row) => row.connection === 'ok' && row.who)
-          .map((row) => spaceText(row.who!))
+          .map((row) => circleText(row.who!))
           .filter((s): s is string => Boolean(s)),
       ),
     ]
-    if (spaces.length > 1) lines.push(`访问密钥分属 ${spaces.length} 个空间：${spaces.join('、')}`)
+    if (circles.length > 1)
+      lines.push(`访问密钥分属 ${circles.length} 个记忆圈：${circles.join('、')}`)
   }
   lines.push('')
   const uninstalled: PlatformRow[] = []

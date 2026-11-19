@@ -11,6 +11,8 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+    from ..models.lifecycle_project import LifecycleProject
+    from ..models.recall_request_facets import RecallRequestFacets
     from ..models.session_context import SessionContext
 
 
@@ -23,20 +25,42 @@ class RecallRequest:
     Attributes:
         query (str):
         limit (int | Unset):
+        facets (RecallRequestFacets | Unset):
+        cross_circle (bool | Unset):  Default: True.
+        include_subjects (bool | Unset):  Default: True.
+        project (LifecycleProject | Unset):
         context (SessionContext | Unset):
     """
 
     query: str
     limit: int | Unset = UNSET
+    facets: RecallRequestFacets | Unset = UNSET
+    cross_circle: bool | Unset = True
+    include_subjects: bool | Unset = True
+    project: LifecycleProject | Unset = UNSET
     context: SessionContext | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
+        from ..models.recall_request_facets import RecallRequestFacets  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         query = self.query
 
         limit = self.limit
+
+        facets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.facets, Unset):
+            facets = self.facets.to_dict()
+
+        cross_circle = self.cross_circle
+
+        include_subjects = self.include_subjects
+
+        project: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.project, Unset):
+            project = self.project.to_dict()
 
         context: dict[str, Any] | Unset = UNSET
         if not isinstance(self.context, Unset):
@@ -51,6 +75,14 @@ class RecallRequest:
         )
         if limit is not UNSET:
             field_dict["limit"] = limit
+        if facets is not UNSET:
+            field_dict["facets"] = facets
+        if cross_circle is not UNSET:
+            field_dict["crossCircle"] = cross_circle
+        if include_subjects is not UNSET:
+            field_dict["includeSubjects"] = include_subjects
+        if project is not UNSET:
+            field_dict["project"] = project
         if context is not UNSET:
             field_dict["context"] = context
 
@@ -58,12 +90,32 @@ class RecallRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
+        from ..models.recall_request_facets import RecallRequestFacets  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         d = dict(src_dict)
         query = d.pop("query")
 
         limit = d.pop("limit", UNSET)
+
+        _facets = d.pop("facets", UNSET)
+        facets: RecallRequestFacets | Unset
+        if isinstance(_facets, Unset):
+            facets = UNSET
+        else:
+            facets = RecallRequestFacets.from_dict(_facets)
+
+        cross_circle = d.pop("crossCircle", UNSET)
+
+        include_subjects = d.pop("includeSubjects", UNSET)
+
+        _project = d.pop("project", UNSET)
+        project: LifecycleProject | Unset
+        if isinstance(_project, Unset):
+            project = UNSET
+        else:
+            project = LifecycleProject.from_dict(_project)
 
         _context = d.pop("context", UNSET)
         context: SessionContext | Unset
@@ -75,6 +127,10 @@ class RecallRequest:
         recall_request = cls(
             query=query,
             limit=limit,
+            facets=facets,
+            cross_circle=cross_circle,
+            include_subjects=include_subjects,
+            project=project,
             context=context,
         )
 

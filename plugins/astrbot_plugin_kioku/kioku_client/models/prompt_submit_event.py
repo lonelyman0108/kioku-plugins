@@ -12,6 +12,7 @@ from ..models.prompt_submit_event_event import PromptSubmitEventEvent
 from typing import cast
 
 if TYPE_CHECKING:
+    from ..models.lifecycle_project import LifecycleProject
     from ..models.session_context import SessionContext
 
 
@@ -25,16 +26,21 @@ class PromptSubmitEvent:
         event (PromptSubmitEventEvent):
         prompt (str):
         session_id (str | Unset):
+        device_key (str | Unset):
+        project (LifecycleProject | Unset):
         context (SessionContext | Unset):
     """
 
     event: PromptSubmitEventEvent
     prompt: str
     session_id: str | Unset = UNSET
+    device_key: str | Unset = UNSET
+    project: LifecycleProject | Unset = UNSET
     context: SessionContext | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         event = self.event.value
@@ -42,6 +48,12 @@ class PromptSubmitEvent:
         prompt = self.prompt
 
         session_id = self.session_id
+
+        device_key = self.device_key
+
+        project: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.project, Unset):
+            project = self.project.to_dict()
 
         context: dict[str, Any] | Unset = UNSET
         if not isinstance(self.context, Unset):
@@ -57,6 +69,10 @@ class PromptSubmitEvent:
         )
         if session_id is not UNSET:
             field_dict["sessionId"] = session_id
+        if device_key is not UNSET:
+            field_dict["deviceKey"] = device_key
+        if project is not UNSET:
+            field_dict["project"] = project
         if context is not UNSET:
             field_dict["context"] = context
 
@@ -64,6 +80,7 @@ class PromptSubmitEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         d = dict(src_dict)
@@ -72,6 +89,15 @@ class PromptSubmitEvent:
         prompt = d.pop("prompt")
 
         session_id = d.pop("sessionId", UNSET)
+
+        device_key = d.pop("deviceKey", UNSET)
+
+        _project = d.pop("project", UNSET)
+        project: LifecycleProject | Unset
+        if isinstance(_project, Unset):
+            project = UNSET
+        else:
+            project = LifecycleProject.from_dict(_project)
 
         _context = d.pop("context", UNSET)
         context: SessionContext | Unset
@@ -84,6 +110,8 @@ class PromptSubmitEvent:
             event=event,
             prompt=prompt,
             session_id=session_id,
+            device_key=device_key,
+            project=project,
             context=context,
         )
 

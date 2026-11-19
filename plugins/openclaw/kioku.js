@@ -8,6 +8,7 @@ import { failureText, KiokuFailure } from './lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -27,11 +28,11 @@ export const TOOL_NAMES = [
   'kioku_boot',
   'kioku_search',
   'kioku_get',
-  'kioku_list',
+  'kioku_browse',
   'kioku_create',
   'kioku_update',
   'kioku_delete',
-  'kioku_move',
+  'kioku_transfer',
   'kioku_credential',
   'kioku_credential_save',
   'kioku_credential_delete',
@@ -227,10 +228,12 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
     detach(refreshing)
   }
 
+  const deviceKey = deviceKeyOf(env)
   // 把一个事件交给服务端，返回要注入的文本（没有时为空字符串）；失败时说一次原因，返回 undefined
   async function forward(event, body) {
     try {
-      const res = await postEvent(profile.url, profile.key, { event, ...body }, TIMEOUTS[event])
+      const payload = { event, ...(deviceKey ? { deviceKey } : {}), ...body }
+      const res = await postEvent(profile.url, profile.key, payload, TIMEOUTS[event])
       if (event === 'turn.end') {
         // 响应不用看，但要读掉，连接才还得回去
         await res.body?.cancel().catch(() => {})

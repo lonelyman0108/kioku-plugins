@@ -13,7 +13,7 @@ import {
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, Writer } from './types.ts'
 
-export interface ConnectApp {
+export interface ConnectClient {
   name?: string
   slug?: string
 }
@@ -22,13 +22,13 @@ export interface ConnectResult {
   id: string
   status: 'connected' | 'manual' | 'skipped' | 'denied' | 'failed'
   reason?: string
-  app?: ConnectApp | null
+  client?: ConnectClient | null
 }
 
 // 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着。kioku login 也用它
-export function orphanHint(app?: ConnectApp | null): string {
-  const name = app?.name ? `（应用 ${plain(app.name)}）` : ''
-  return `访问密钥已经签发、但没有写下：到管理界面的应用页吊销它${name}，解决上面的问题后重新运行`
+export function orphanHint(client?: ConnectClient | null): string {
+  const name = client?.name ? `（接入实例 ${plain(client.name)}）` : ''
+  return `访问密钥已经签发、但没有写下：到管理界面的接入实例页吊销它${name}，解决上面的问题后重新运行`
 }
 
 // 用给定的地址与访问密钥配好一个平台。setup 的输出写到 out；hints 为假时不打印「接下来装上」，
@@ -51,17 +51,17 @@ export function configure(
 async function settle(
   id: string,
   key: string,
-  app: ConnectApp | null | undefined,
+  client: ConnectClient | null | undefined,
   io: { env: Env; out: Writer; cwd: string; url: string },
 ): Promise<ConnectResult> {
   io.out.write(`\n${PLATFORMS[id].name}\n`)
   try {
     await configure(id, { url: io.url, key }, io)
-    return { id, status: 'connected', app }
+    return { id, status: 'connected', client }
   } catch (err) {
     // 别的错误照旧抛出（由入口报内部错误），不当成一个平台的失败吞掉
     if (!(err instanceof KiokuFailure)) throw err
-    return { id, status: 'failed', reason: `${err.message}。${orphanHint(app)}` }
+    return { id, status: 'failed', reason: `${err.message}。${orphanHint(client)}` }
   }
 }
 
@@ -144,7 +144,8 @@ export async function connectPlatforms(
     }
     for (const id of batch) {
       const answer = answers.find((item) => item.runtimeFamily === PLATFORMS[id].runtimeFamily)
-      if (answer?.status === 'issued') results.set(id, await settle(id, answer.key, answer.app, io))
+      if (answer?.status === 'issued')
+        results.set(id, await settle(id, answer.key, answer.client, io))
       else if (answer?.status === 'denied') {
         results.set(id, { id, status: 'denied', reason: answer.reason || '没有签发' })
       } else results.set(id, { id, status: 'skipped', reason: '确认页上没有勾选' })
@@ -183,7 +184,7 @@ export function resultsText(results: ConnectResult[]): string {
     const group = results.filter((item) => item.status === status)
     if (!group.length) continue
     const names = group.map((item) => {
-      const detail = item.reason ?? (item.app?.name ? `应用 ${plain(item.app.name)}` : '')
+      const detail = item.reason ?? (item.client?.name ? `接入实例 ${plain(item.client.name)}` : '')
       return detail ? `${PLATFORMS[item.id].name}（${detail}）` : PLATFORMS[item.id].name
     })
     lines.push(`${STATUS_NAMES[status]}：${names.join('、')}`)

@@ -11,10 +11,24 @@ import { setup } from '../setup.ts'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  app: { id: 'a', slug: 'openclaw', name: 'OpenClaw', runtimeFamily: 'openclaw' },
+  primaryCircle: {
+    id: '00000000-0000-4000-8000-000000000001',
+    slug: 'personal',
+    name: '个人圈',
+    kind: 'personal',
+  },
+  linkedCircles: [],
+  client: {
+    id: 'a',
+    circleId: '00000000-0000-4000-8000-000000000001',
+    slug: 'openclaw',
+    name: 'OpenClaw',
+    runtimeFamily: 'openclaw',
+  },
+  persona: null,
   scopes: {
-    readLayers: ['core'],
-    writeLayers: ['app'],
+    readKinds: ['entry'],
+    writeKinds: ['entry'],
     maxSensitivity: 'internal',
     credentials: 'none',
   },

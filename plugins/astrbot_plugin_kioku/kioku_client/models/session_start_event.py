@@ -25,12 +25,14 @@ class SessionStartEvent:
     Attributes:
         event (SessionStartEventEvent):
         session_id (str | Unset):
+        device_key (str | Unset):
         context (SessionContext | Unset):
         project (LifecycleProject | Unset):
     """
 
     event: SessionStartEventEvent
     session_id: str | Unset = UNSET
+    device_key: str | Unset = UNSET
     context: SessionContext | Unset = UNSET
     project: LifecycleProject | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -42,6 +44,8 @@ class SessionStartEvent:
         event = self.event.value
 
         session_id = self.session_id
+
+        device_key = self.device_key
 
         context: dict[str, Any] | Unset = UNSET
         if not isinstance(self.context, Unset):
@@ -60,6 +64,8 @@ class SessionStartEvent:
         )
         if session_id is not UNSET:
             field_dict["sessionId"] = session_id
+        if device_key is not UNSET:
+            field_dict["deviceKey"] = device_key
         if context is not UNSET:
             field_dict["context"] = context
         if project is not UNSET:
@@ -76,6 +82,8 @@ class SessionStartEvent:
         event = SessionStartEventEvent(d.pop("event"))
 
         session_id = d.pop("sessionId", UNSET)
+
+        device_key = d.pop("deviceKey", UNSET)
 
         _context = d.pop("context", UNSET)
         context: SessionContext | Unset
@@ -94,6 +102,7 @@ class SessionStartEvent:
         session_start_event = cls(
             event=event,
             session_id=session_id,
+            device_key=device_key,
             context=context,
             project=project,
         )

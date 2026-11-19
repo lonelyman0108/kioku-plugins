@@ -11,7 +11,7 @@ TOOLS = {
         {
             "name": "kioku_get",
             "description": "读一条记忆",
-            "inputSchema": {"type": "object", "properties": {"uri": {"type": "string"}}},
+            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
         },
         {"name": "kioku_search", "description": "搜索"},
         {"description": "没有名字的不算"},
@@ -37,7 +37,7 @@ class FakeKioku:
                 if text
                 else {"mode": "none", "value": None}
             )
-            return 200, {"hostOutput": output}, {}
+            return 200, {"hostOutput": output, "shortIds": []}, {}
         if body.get("method") == "tools/list":
             return 200, {"jsonrpc": "2.0", "id": 1, "result": TOOLS}, {}
         result = {"content": [{"type": "text", "text": f"调用了 {body['params']['name']}"}]}

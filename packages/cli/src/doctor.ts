@@ -18,7 +18,7 @@ import {
 import { detectPlatformPresence } from './panel.ts'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.ts'
 import type { Env, SavedProfile, TargetConfig, WhoamiResponse, Writer } from './types.ts'
-import { capabilityLabel, layerLabel } from './ui/theme.ts'
+import { capabilityLabel, kindLabel } from './ui/theme.ts'
 
 export const DOCTOR_USAGE = `用法：kioku doctor [平台] [--all] [--json]
 
@@ -43,9 +43,9 @@ function named(names: Record<string, string>, value: string | undefined): string
   return Object.hasOwn(names, key) ? names[key] : plain(key)
 }
 
-function layersText(layers: string[] | undefined): string {
-  if (!Array.isArray(layers) || !layers.length) return '无'
-  return layers.map((layer) => layerLabel(layer)).join('、')
+function kindsText(kinds: string[] | undefined): string {
+  if (!Array.isArray(kinds) || !kinds.length) return '无'
+  return kinds.map((kind) => kindLabel(kind)).join('、')
 }
 
 export function parseDoctorArgs(argv: string[]): {
@@ -84,7 +84,8 @@ interface DoctorTargetReport {
   name: string | null
   url?: string
   profileFile?: string
-  app?: WhoamiResponse['app']
+  primaryCircle?: WhoamiResponse['primaryCircle']
+  client?: WhoamiResponse['client']
   scopes?: WhoamiResponse['scopes']
   checks: Array<{ level: 'ok' | 'warn' | 'bad' | 'note'; message: string }>
   failed: boolean
@@ -153,19 +154,30 @@ async function inspectOne(
   }
 
   if (who) {
-    const { app, scopes } = who
-    report.app = app
+    const { primaryCircle, linkedCircles, client, scopes } = who
+    report.primaryCircle = primaryCircle
+    report.client = client
     report.scopes = scopes
     ok(
-      `访问密钥可用：应用 ${plain(app.name)}（${plain(app.slug)}），运行时 ${plain(app.runtimeFamily)}`,
+      `访问密钥可用：接入实例 ${plain(client.name)}（${plain(client.slug)}），运行时 ${plain(client.runtimeFamily)}`,
     )
-    out?.write(`  读：${layersText(scopes.readLayers)}\n`)
-    out?.write(`  写：${layersText(scopes.writeLayers)}\n`)
+    const linked = linkedCircles.length > 0 ? `，关联 ${linkedCircles.length} 个客场圈` : ''
+    out?.write(
+      `  主场记忆圈：${plain(primaryCircle.name)}（${plain(primaryCircle.slug)}）${linked}\n`,
+    )
+    out?.write(`  读：${kindsText(scopes.readKinds)}\n`)
+    out?.write(`  写：${kindsText(scopes.writeKinds)}\n`)
     out?.write(`  最高敏感级：${named(SENSITIVITIES, scopes.maxSensitivity)}\n`)
+    if (Array.isArray(scopes.allowedRealms)) {
+      const realms = scopes.allowedRealms.length
+        ? scopes.allowedRealms.map((r) => plain(r)).join('、')
+        : '空（受限）'
+      out?.write(`  场域白名单：${realms}\n`)
+    }
     out?.write(`  凭据：${capabilityLabel(scopes.credentials)}\n`)
-    if (platform && app.runtimeFamily !== platform.runtimeFamily) {
+    if (platform && client.runtimeFamily !== platform.runtimeFamily) {
       warn(
-        `这个应用的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面为 ${platform.name} 另建一个应用`,
+        `这个接入实例的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面为 ${platform.name} 另建一个接入实例`,
       )
     }
   }

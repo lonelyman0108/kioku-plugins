@@ -8,9 +8,13 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..models.recall_candidate_layer import RecallCandidateLayer
+from ..models.recall_candidate_kind import RecallCandidateKind
 from ..models.recall_via import RecallVia
 from typing import cast
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from ..models.recall_candidate_matched_when import RecallCandidateMatchedWhen
 
 
 T = TypeVar("T", bound="RecallCandidate")
@@ -20,32 +24,57 @@ T = TypeVar("T", bound="RecallCandidate")
 class RecallCandidate:
     """
     Attributes:
-        uri (str):
+        entry_id (UUID):
+        short_id (str):
         title (str):
-        layer (RecallCandidateLayer):
+        circle_id (UUID):
+        circle_slug (None | str):
+        kind (RecallCandidateKind):
+        matched_when (RecallCandidateMatchedWhen):
+        other_variants_count (int):
         priority (int):
         disclosure (None | str):
         score (float):
         via (list[RecallVia]):
         cues (list[str]):
+        cross_group (bool | Unset):
     """
 
-    uri: str
+    entry_id: UUID
+    short_id: str
     title: str
-    layer: RecallCandidateLayer
+    circle_id: UUID
+    circle_slug: None | str
+    kind: RecallCandidateKind
+    matched_when: RecallCandidateMatchedWhen
+    other_variants_count: int
     priority: int
     disclosure: None | str
     score: float
     via: list[RecallVia]
     cues: list[str]
+    cross_group: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        uri = self.uri
+        from ..models.recall_candidate_matched_when import RecallCandidateMatchedWhen  # noqa: PLC0415
+
+        entry_id = str(self.entry_id)
+
+        short_id = self.short_id
 
         title = self.title
 
-        layer = self.layer.value
+        circle_id = str(self.circle_id)
+
+        circle_slug: None | str
+        circle_slug = self.circle_slug
+
+        kind = self.kind.value
+
+        matched_when = self.matched_when.to_dict()
+
+        other_variants_count = self.other_variants_count
 
         priority = self.priority
 
@@ -61,13 +90,20 @@ class RecallCandidate:
 
         cues = self.cues
 
+        cross_group = self.cross_group
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "uri": uri,
+                "entryId": entry_id,
+                "shortId": short_id,
                 "title": title,
-                "layer": layer,
+                "circleId": circle_id,
+                "circleSlug": circle_slug,
+                "kind": kind,
+                "matchedWhen": matched_when,
+                "otherVariantsCount": other_variants_count,
                 "priority": priority,
                 "disclosure": disclosure,
                 "score": score,
@@ -75,17 +111,36 @@ class RecallCandidate:
                 "cues": cues,
             }
         )
+        if cross_group is not UNSET:
+            field_dict["crossGroup"] = cross_group
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.recall_candidate_matched_when import RecallCandidateMatchedWhen  # noqa: PLC0415
+
         d = dict(src_dict)
-        uri = d.pop("uri")
+        entry_id = UUID(d.pop("entryId"))
+
+        short_id = d.pop("shortId")
 
         title = d.pop("title")
 
-        layer = RecallCandidateLayer(d.pop("layer"))
+        circle_id = UUID(d.pop("circleId"))
+
+        def _parse_circle_slug(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        circle_slug = _parse_circle_slug(d.pop("circleSlug"))
+
+        kind = RecallCandidateKind(d.pop("kind"))
+
+        matched_when = RecallCandidateMatchedWhen.from_dict(d.pop("matchedWhen"))
+
+        other_variants_count = d.pop("otherVariantsCount")
 
         priority = d.pop("priority")
 
@@ -107,15 +162,23 @@ class RecallCandidate:
 
         cues = cast(list[str], d.pop("cues"))
 
+        cross_group = d.pop("crossGroup", UNSET)
+
         recall_candidate = cls(
-            uri=uri,
+            entry_id=entry_id,
+            short_id=short_id,
             title=title,
-            layer=layer,
+            circle_id=circle_id,
+            circle_slug=circle_slug,
+            kind=kind,
+            matched_when=matched_when,
+            other_variants_count=other_variants_count,
             priority=priority,
             disclosure=disclosure,
             score=score,
             via=via,
             cues=cues,
+            cross_group=cross_group,
         )
 
         recall_candidate.additional_properties = d

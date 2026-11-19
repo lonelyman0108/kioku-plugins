@@ -302,7 +302,7 @@ async function migrate(ctx: WizardContext, id: string): Promise<void> {
     config = await deps.loadConfig(env).catch(() => null)
     if ((!config || (ctx.url && config.url !== ctx.url)) && ctx.url) {
       const key = await ui.password({
-        message: `${platform.name} 用的访问密钥（记忆迁进它所属的应用）`,
+        message: `${platform.name} 用的访问密钥（记忆迁进它所属的记忆圈）`,
         validate: (text) => keyFormatError((text ?? '').trim()) ?? undefined,
       })
       if (cancelled(ui, key)) return

@@ -66,11 +66,24 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            spaceId: '00000000-0000-4000-8000-000000000001',
-            app: { id: 'a', slug: family, name: family, runtimeFamily: family },
+            primaryCircle: {
+              id: '00000000-0000-4000-8000-000000000001',
+              slug: 'personal',
+              name: '个人圈',
+              kind: 'personal',
+            },
+            linkedCircles: [],
+            client: {
+              id: 'a',
+              circleId: '00000000-0000-4000-8000-000000000001',
+              slug: family,
+              name: family,
+              runtimeFamily: family,
+            },
+            persona: null,
             scopes: {
-              readLayers: ['core', 'app', 'user'],
-              writeLayers: ['app', 'user'],
+              readKinds: ['entry'],
+              writeKinds: ['entry'],
               maxSensitivity: 'internal',
               credentials: 'none',
             },
@@ -91,7 +104,7 @@ let dir
 let env
 beforeEach(() => {
   requests = []
-  answers = [{ status: 200, body: { status: 'approved', key: KEY, app: { name: 'agy' } } }]
+  answers = [{ status: 200, body: { status: 'approved', key: KEY, client: { name: 'agy' } } }]
   dir = mkdtempSync(join(tmpdir(), 'kioku-clean-'))
   const home = join(dir, 'home')
   mkdirSync(home, { recursive: true })

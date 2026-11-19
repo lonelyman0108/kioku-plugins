@@ -8,7 +8,7 @@ const TIMEOUT = 8000
 // 服务端明说访问密钥不能用（401）：和连不上、响应不对分开，向导据此标「已失效」
 export class KeyRejected extends KiokuFailure {}
 
-// 这个访问密钥对应的应用与权限；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出
+// 这个访问密钥对应的接入实例与权限；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出
 export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse> {
   let res: Response
   let data: unknown
@@ -30,7 +30,8 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
   if (!res.ok) throw new KiokuFailure(`Kioku 返回 HTTP ${res.status}`)
   const record = data as Partial<WhoamiResponse> | null
   if (
-    typeof record?.app?.runtimeFamily !== 'string' ||
+    typeof record?.client?.runtimeFamily !== 'string' ||
+    typeof record?.primaryCircle?.id !== 'string' ||
     record.scopes === null ||
     typeof record.scopes !== 'object'
   ) {

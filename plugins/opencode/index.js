@@ -10,6 +10,7 @@ import { failureText, KiokuFailure } from './lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -99,6 +100,8 @@ export async function createKiokuPlugin({
   let loggedError = null
   const sessions = new Map()
   const cwd = worktree || directory || process.cwd()
+  const deviceKey = deviceKeyOf(env)
+  const projectPromise = projectOfAsync(cwd)
 
   function logOnce(reason) {
     if (loggedError === reason) return
@@ -134,13 +137,14 @@ export async function createKiokuPlugin({
     if (!profile) return undefined
     if (now() < quietUntil) return undefined
     try {
-      const res = await postEvent(
-        profile.url,
-        profile.key,
-        { event, ...body },
-        TIMEOUTS[event],
-        signal,
-      )
+      const project = await projectPromise
+      const payload = {
+        event,
+        ...(deviceKey ? { deviceKey } : {}),
+        ...(Object.keys(project).length ? { project } : {}),
+        ...body,
+      }
+      const res = await postEvent(profile.url, profile.key, payload, TIMEOUTS[event], signal)
       loggedError = null
       const json = await res.json().catch(() => null)
       return contextOf(json?.hostOutput) ?? null
@@ -157,17 +161,11 @@ export async function createKiokuPlugin({
     const state = stateOf(sessionID)
     if (state.systemContext !== null) return Promise.resolve(state.systemContext)
     if (state.startupPromise) return state.startupPromise
-    state.startupPromise = projectOfAsync(cwd)
-      .then((project) =>
-        forward(
-          'session.start',
-          {
-            sessionId: sessionID.slice(0, MAX_SESSION_ID),
-            ...(Object.keys(project).length ? { project } : {}),
-          },
-          state.controller.signal,
-        ),
-      )
+    state.startupPromise = forward(
+      'session.start',
+      { sessionId: sessionID.slice(0, MAX_SESSION_ID) },
+      state.controller.signal,
+    )
       .then((text) => {
         if (typeof text === 'string') state.systemContext = text
         return typeof text === 'string' ? text : null

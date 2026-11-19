@@ -18,8 +18,22 @@ const GRANT = {
   interval: 3,
 }
 const WHO = {
-  app: { id: 'a', slug: 'pi', name: 'pi', runtimeFamily: 'pi' },
-  scopes: { readLayers: [], writeLayers: [], maxSensitivity: 'internal', credentials: 'none' },
+  primaryCircle: {
+    id: '00000000-0000-4000-8000-000000000001',
+    slug: 'personal',
+    name: '个人圈',
+    kind: 'personal',
+  },
+  linkedCircles: [],
+  client: {
+    id: 'a',
+    circleId: '00000000-0000-4000-8000-000000000001',
+    slug: 'pi',
+    name: 'pi',
+    runtimeFamily: 'pi',
+  },
+  persona: null,
+  scopes: { readKinds: [], writeKinds: [], maxSensitivity: 'internal', credentials: 'none' },
 }
 
 // 假的 Kioku：申请、轮询与 whoami。answers 是轮询依次得到的回答，用完之后一直是最后一个
@@ -61,7 +75,7 @@ let opened
 beforeEach(() => {
   requests = []
   authorize = () => ({ status: 201, body: GRANT })
-  answers = [{ status: 200, body: { status: 'approved', key: KEY, app: WHO.app } }]
+  answers = [{ status: 200, body: { status: 'approved', key: KEY, client: WHO.client } }]
   slept = []
   clock = 0
   opened = []
@@ -122,7 +136,7 @@ describe('kioku login', () => {
       serverUrl: base,
       apiKey: KEY,
     })
-    expect(result.text).toContain('✓ 已确认：应用 pi（pi）')
+    expect(result.text).toContain('✓ 已确认：接入实例 pi（pi）')
     expect(result.text).not.toContain(KEY)
     expect(result.text).not.toContain('device-code-1')
   })
@@ -235,7 +249,7 @@ describe('kioku login', () => {
   })
 
   it('访问密钥取到了、配置却写不下：报错里说明要去吊销；能提前看出来的在申请之前就拦下', async () => {
-    answers = [{ status: 200, body: { status: 'approved', key: 'bad key', app: WHO.app } }]
+    answers = [{ status: 200, body: { status: 'approved', key: 'bad key', client: WHO.client } }]
     await expect(run(['pi', '--server-url', base])).rejects.toThrow(/格式不对.*已经签发.*吊销/)
     // Codex 的 config.toml 写不进去：不申请
     mkdirSync(join(dir, 'codex'))
@@ -266,14 +280,17 @@ describe('kioku login', () => {
     expect(readdirSync(dir)).toEqual(['pi'])
   })
 
-  it('确认码、应用名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
+  it('确认码、接入实例名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
     authorize = () => ({ status: 201, body: { ...GRANT, userCode: 'BCDF\n✓ 假的一行' } })
     answers = [
-      { status: 200, body: { status: 'approved', key: KEY, app: { name: '甲\n乙', slug: 'pi' } } },
+      {
+        status: 200,
+        body: { status: 'approved', key: KEY, client: { name: '甲\n乙', slug: 'pi' } },
+      },
     ]
     const result = await run(['pi', '--server-url', base], { clientName: 'lap\ntop‮' })
     expect(result.text).toContain('确认码：BCDF ✓ 假的一行\n')
-    expect(result.text).toContain('应用 甲 乙（pi）')
+    expect(result.text).toContain('接入实例 甲 乙（pi）')
     expect(requests[0].body.clientName).toBe('lap top')
   })
 
@@ -290,7 +307,11 @@ describe('kioku login', () => {
     answers = [
       {
         status: 200,
-        body: { status: 'approved', key: KEY, app: { ...WHO.app, runtimeFamily: 'claudecode' } },
+        body: {
+          status: 'approved',
+          key: KEY,
+          client: { ...WHO.client, runtimeFamily: 'claudecode' },
+        },
       },
     ]
     const result = await run(['claude-code', '--server-url', base, '--no-browser'])

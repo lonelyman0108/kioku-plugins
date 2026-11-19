@@ -10,8 +10,8 @@ from ..types import UNSET, Unset
 
 from ..models.who_am_i_scopes_credentials import WhoAmIScopesCredentials
 from ..models.who_am_i_scopes_max_sensitivity import WhoAmIScopesMaxSensitivity
-from ..models.who_am_i_scopes_read_layers_item import WhoAmIScopesReadLayersItem
-from ..models.who_am_i_scopes_write_layers_item import WhoAmIScopesWriteLayersItem
+from ..models.who_am_i_scopes_read_kinds_item import WhoAmIScopesReadKindsItem
+from ..models.who_am_i_scopes_write_kinds_item import WhoAmIScopesWriteKindsItem
 from typing import cast
 
 
@@ -22,34 +22,45 @@ T = TypeVar("T", bound="WhoAmIScopes")
 class WhoAmIScopes:
     """
     Attributes:
-        read_layers (list[WhoAmIScopesReadLayersItem]):
-        write_layers (list[WhoAmIScopesWriteLayersItem]):
+        read_kinds (list[WhoAmIScopesReadKindsItem]):
+        write_kinds (list[WhoAmIScopesWriteKindsItem]):
         max_sensitivity (WhoAmIScopesMaxSensitivity):
         admin (bool):
+        allowed_realms (list[str] | None | Unset):
         credentials (WhoAmIScopesCredentials | Unset):  Default: WhoAmIScopesCredentials.NONE.
     """
 
-    read_layers: list[WhoAmIScopesReadLayersItem]
-    write_layers: list[WhoAmIScopesWriteLayersItem]
+    read_kinds: list[WhoAmIScopesReadKindsItem]
+    write_kinds: list[WhoAmIScopesWriteKindsItem]
     max_sensitivity: WhoAmIScopesMaxSensitivity
     admin: bool
+    allowed_realms: list[str] | None | Unset = UNSET
     credentials: WhoAmIScopesCredentials | Unset = WhoAmIScopesCredentials.NONE
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        read_layers = []
-        for read_layers_item_data in self.read_layers:
-            read_layers_item = read_layers_item_data.value
-            read_layers.append(read_layers_item)
+        read_kinds = []
+        for read_kinds_item_data in self.read_kinds:
+            read_kinds_item = read_kinds_item_data.value
+            read_kinds.append(read_kinds_item)
 
-        write_layers = []
-        for write_layers_item_data in self.write_layers:
-            write_layers_item = write_layers_item_data.value
-            write_layers.append(write_layers_item)
+        write_kinds = []
+        for write_kinds_item_data in self.write_kinds:
+            write_kinds_item = write_kinds_item_data.value
+            write_kinds.append(write_kinds_item)
 
         max_sensitivity = self.max_sensitivity.value
 
         admin = self.admin
+
+        allowed_realms: list[str] | None | Unset
+        if isinstance(self.allowed_realms, Unset):
+            allowed_realms = UNSET
+        elif isinstance(self.allowed_realms, list):
+            allowed_realms = self.allowed_realms
+
+        else:
+            allowed_realms = self.allowed_realms
 
         credentials: str | Unset = UNSET
         if not isinstance(self.credentials, Unset):
@@ -59,12 +70,14 @@ class WhoAmIScopes:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "readLayers": read_layers,
-                "writeLayers": write_layers,
+                "readKinds": read_kinds,
+                "writeKinds": write_kinds,
                 "maxSensitivity": max_sensitivity,
                 "admin": admin,
             }
         )
+        if allowed_realms is not UNSET:
+            field_dict["allowedRealms"] = allowed_realms
         if credentials is not UNSET:
             field_dict["credentials"] = credentials
 
@@ -73,23 +86,40 @@ class WhoAmIScopes:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        read_layers = []
-        _read_layers = d.pop("readLayers")
-        for read_layers_item_data in _read_layers:
-            read_layers_item = WhoAmIScopesReadLayersItem(read_layers_item_data)
+        read_kinds = []
+        _read_kinds = d.pop("readKinds")
+        for read_kinds_item_data in _read_kinds:
+            read_kinds_item = WhoAmIScopesReadKindsItem(read_kinds_item_data)
 
-            read_layers.append(read_layers_item)
+            read_kinds.append(read_kinds_item)
 
-        write_layers = []
-        _write_layers = d.pop("writeLayers")
-        for write_layers_item_data in _write_layers:
-            write_layers_item = WhoAmIScopesWriteLayersItem(write_layers_item_data)
+        write_kinds = []
+        _write_kinds = d.pop("writeKinds")
+        for write_kinds_item_data in _write_kinds:
+            write_kinds_item = WhoAmIScopesWriteKindsItem(write_kinds_item_data)
 
-            write_layers.append(write_layers_item)
+            write_kinds.append(write_kinds_item)
 
         max_sensitivity = WhoAmIScopesMaxSensitivity(d.pop("maxSensitivity"))
 
         admin = d.pop("admin")
+
+        def _parse_allowed_realms(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                allowed_realms_type_0 = cast(list[str], data)
+
+                return allowed_realms_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        allowed_realms = _parse_allowed_realms(d.pop("allowedRealms", UNSET))
 
         _credentials = d.pop("credentials", UNSET)
         credentials: WhoAmIScopesCredentials | Unset
@@ -99,10 +129,11 @@ class WhoAmIScopes:
             credentials = WhoAmIScopesCredentials(_credentials)
 
         who_am_i_scopes = cls(
-            read_layers=read_layers,
-            write_layers=write_layers,
+            read_kinds=read_kinds,
+            write_kinds=write_kinds,
             max_sensitivity=max_sensitivity,
             admin=admin,
+            allowed_realms=allowed_realms,
             credentials=credentials,
         )
 

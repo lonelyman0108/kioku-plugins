@@ -77,7 +77,7 @@ beforeEach(() => {
         }
   dir = mkdtempSync(join(tmpdir(), 'kioku-openclaw-'))
   mkdirSync(join(dir, 'kioku'))
-  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku') }
+  env = { KIOKU_CONFIG_DIR: join(dir, 'kioku'), KIOKU_DEVICE_KEY: 'openclaw-dev' }
   profile({ serverUrl: `${base}/`, apiKey: KEY })
 })
 afterEach(async () => {
@@ -263,6 +263,7 @@ describe('OpenClaw 插件：注入与上报', () => {
     await emit('agent_end', { success: true, messages }, gateway())
     expect(bodyOf('turn.end')).toEqual({
       event: 'turn.end',
+      deviceKey: 'openclaw-dev',
       sessionId: 's1',
       user: '今天做什么',
       reply: '先查一下\n做甲',

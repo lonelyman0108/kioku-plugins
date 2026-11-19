@@ -135,11 +135,14 @@ describe('工具清单与调用', () => {
         ],
         isError: true,
       })
-    expect(await callTool(target(), 'kioku_get', { uri: 'core://a' })).toEqual({
+    expect(await callTool(target(), 'kioku_get', { id: 'm-234567' })).toEqual({
       text: '第一段\n第二段',
       isError: true,
     })
-    expect(requests[0].body.params).toEqual({ name: 'kioku_get', arguments: { uri: 'core://a' } })
+    expect(requests[0].body.params).toEqual({
+      name: 'kioku_get',
+      arguments: { id: 'm-234567' },
+    })
     reply = () => result({})
     expect(await callTool(target(), 'kioku_get')).toEqual({ text: '', isError: false })
     expect(requests[1].body.params.arguments).toEqual({})

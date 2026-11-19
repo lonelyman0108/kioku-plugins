@@ -11,11 +11,12 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import threading
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -197,6 +198,25 @@ def context_of(output: Any) -> str:
     return text if isinstance(text, str) else ""
 
 
+def _strip_control(text: str) -> str:
+    return "".join(
+        ch for ch in text if ord(ch) >= 0x20 and ord(ch) != 0x7F and not (0x80 <= ord(ch) <= 0x9F)
+    )
+
+
+def device_key_of(env: Mapping[str, str] | None = None) -> str:
+    """本机设备标识：优先读 KIOKU_DEVICE_KEY，否则取主机名并清理控制字符。"""
+    source = os.environ if env is None else env
+    override = source.get("KIOKU_DEVICE_KEY")
+    raw = override if isinstance(override, str) else ""
+    if not _strip_control(raw).strip():
+        try:
+            raw = socket.gethostname()
+        except OSError:
+            raw = ""
+    return _strip_control(raw).strip()[:MAX_NAME]
+
+
 def project_of(cwd: str | None) -> dict[str, str]:
     """当前项目的目录名与 git 仓库名，服务端用它们召回与项目相关的记忆；取不到的就不带。"""
     if not cwd:
@@ -280,6 +300,8 @@ class KiokuSession:
         self.primary = True
         self.inactive_reason = ""
         self._boot = ""
+        self._device_key = device_key_of()
+        self._project: dict[str, str] = {}
         self._tools: list[dict[str, Any]] = []
         self._pending: list[threading.Thread] = []
         self._started = False
@@ -311,6 +333,7 @@ class KiokuSession:
             logger.warning("Kioku 未生效：%s", exc)
             return
         self.active = True
+        self._device_key = device_key_of()
         cwd = kwargs.get("cwd")
         # 启动加载在这里取，有时限。工具清单不在这里补取：登记工具的归属只在 provider 注册时做一次，
         # 那时没取到的话，之后再给模型看这些工具也调不通
@@ -319,15 +342,19 @@ class KiokuSession:
         job.join(TIMEOUTS["session.start"] + 1.0)
 
     def _body(self) -> dict[str, Any]:
-        return {"sessionId": self.session_id} if self.session_id else {}
+        body: dict[str, Any] = {}
+        if self.session_id:
+            body["sessionId"] = self.session_id
+        if self._device_key:
+            body["deviceKey"] = self._device_key
+        if self._project:
+            body["project"] = self._project
+        return body
 
     def _load_boot(self, cwd: str | None) -> None:
         try:
-            body = self._body()
-            project = project_of(cwd if isinstance(cwd, str) else None)
-            if project:
-                body["project"] = project
-            self._boot = self._client.event("session.start", body)  # type: ignore[union-attr]
+            self._project = project_of(cwd if isinstance(cwd, str) else None)
+            self._boot = self._client.event("session.start", self._body())  # type: ignore[union-attr]
         except KiokuFailure as exc:
             logger.warning("Kioku session.start 未生效：%s", exc)
 

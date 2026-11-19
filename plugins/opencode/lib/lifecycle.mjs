@@ -4,6 +4,7 @@
 // 也不跟着跳转走，访问密钥只发给配置的地址
 
 import { execFile, execFileSync } from 'node:child_process'
+import { hostname } from 'node:os'
 import { basename } from 'node:path'
 
 import { fetchFailure, isRedirect, keyFormatError, KiokuFailure, redirectError } from './http.mjs'
@@ -15,6 +16,29 @@ export const MAX_PROMPT = 20_000
 export const MAX_REPLY = 20_000
 export const MAX_SESSION_ID = 200
 const MAX_NAME = 128
+
+function stripControl(text) {
+  let out = ''
+  for (const ch of text) {
+    const code = ch.charCodeAt(0)
+    if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) out += ch
+  }
+  return out
+}
+
+export function deviceKeyOf(env = process.env) {
+  const override = typeof env?.KIOKU_DEVICE_KEY === 'string' ? env.KIOKU_DEVICE_KEY : ''
+  let raw = override
+  if (!stripControl(raw).trim()) {
+    try {
+      raw = hostname()
+    } catch {
+      raw = ''
+    }
+  }
+  const clean = stripControl(raw).trim().slice(0, MAX_NAME)
+  return clean || undefined
+}
 
 // 配置写错了：访问密钥格式不对（kind 为 key），或者服务地址返回跳转（kind 为 url）。
 // 和没有配置一样，平台可以在会话开始时提示一次；文字不带访问密钥

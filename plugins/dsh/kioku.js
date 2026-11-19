@@ -10,6 +10,7 @@ import { failureText, KiokuFailure } from './lib/http.mjs'
 import {
   clip,
   contextOf,
+  deviceKeyOf,
   MAX_PROMPT,
   MAX_REPLY,
   MAX_SESSION_ID,
@@ -147,6 +148,8 @@ export function createKioku({
     return loading
   }
 
+  const deviceKey = deviceKeyOf(env)
+
   function projectFor(cwd) {
     if (!projects.has(cwd)) {
       if (projects.size >= MAX_TRACKED) projects.clear()
@@ -159,13 +162,8 @@ export function createKioku({
   // target 是调用方读到的那份地址与访问密钥：等的过程中配置可能被重读、换掉，一步里的几个请求要用同一份
   async function forward(target, event, body, signal) {
     try {
-      const res = await postEvent(
-        target.url,
-        target.key,
-        { event, ...body },
-        TIMEOUTS[event],
-        signal,
-      )
+      const payload = { event, ...(deviceKey ? { deviceKey } : {}), ...body }
+      const res = await postEvent(target.url, target.key, payload, TIMEOUTS[event], signal)
       if (event === 'turn.end') {
         // 响应不用看，但要读掉，连接才还得回去
         await res.body?.cancel().catch(() => {})
@@ -225,20 +223,15 @@ export function createKioku({
     if (now() < quietUntil) return none
     const wantBoot = bootPending.has(id)
     const cwd = agent.session.header.cwd
-    const session = { sessionId: id }
+    const project = typeof cwd === 'string' && cwd ? await projectFor(cwd) : {}
+    const baseBody = {
+      sessionId: id,
+      ...(Object.keys(project).length ? { project } : {}),
+    }
     // 两个请求一起发：都在这一步开始之前等着
     const [boot, recall] = await Promise.all([
-      wantBoot
-        ? (typeof cwd === 'string' && cwd ? projectFor(cwd) : Promise.resolve({})).then((project) =>
-            forward(
-              target,
-              'session.start',
-              { ...session, ...(Object.keys(project).length ? { project } : {}) },
-              signal,
-            ),
-          )
-        : undefined,
-      forward(target, 'prompt.submit', { ...session, prompt: clip(prompt, MAX_PROMPT) }, signal),
+      wantBoot ? forward(target, 'session.start', baseBody, signal) : undefined,
+      forward(target, 'prompt.submit', { ...baseBody, prompt: clip(prompt, MAX_PROMPT) }, signal),
     ])
     const out = []
     if (boot) out.push(message(boot, 'boot'))
@@ -277,8 +270,11 @@ export function createKioku({
       if (!target || problem) return
       const { user, reply } = turnOf(agent.session.snapshotEvents(), turn)
       if (!user || !reply) return
+      const cwd = agent.session?.header?.cwd
+      const project = typeof cwd === 'string' && cwd ? await projectFor(cwd) : {}
       await forward(target, 'turn.end', {
         sessionId: id,
+        ...(Object.keys(project).length ? { project } : {}),
         user: clip(user, MAX_PROMPT),
         reply: clip(reply, MAX_REPLY),
       })

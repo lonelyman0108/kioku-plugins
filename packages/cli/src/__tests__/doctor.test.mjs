@@ -9,11 +9,24 @@ import { doctor } from '../doctor.ts'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  spaceId: '00000000-0000-4000-8000-000000000001',
-  app: { id: 'a', slug: 'cc', name: 'Claude Code', runtimeFamily: 'claudecode' },
+  primaryCircle: {
+    id: '00000000-0000-4000-8000-000000000001',
+    slug: 'personal',
+    name: '个人圈',
+    kind: 'personal',
+  },
+  linkedCircles: [],
+  client: {
+    id: 'a',
+    circleId: '00000000-0000-4000-8000-000000000001',
+    slug: 'cc',
+    name: 'Claude Code',
+    runtimeFamily: 'claudecode',
+  },
+  persona: null,
   scopes: {
-    readLayers: ['core', 'persona', 'app', 'user'],
-    writeLayers: ['app', 'user'],
+    readKinds: ['entry', 'fact', 'episode'],
+    writeKinds: ['entry'],
     maxSensitivity: 'private',
     admin: false,
     credentials: 'use',
@@ -68,9 +81,10 @@ describe('kioku doctor', () => {
     expect(requests[0].headers.authorization).toBe(`Bearer ${KEY}`)
     expect(result.lines).toEqual([
       `✓ 地址 ${base}`,
-      '✓ 访问密钥可用：应用 Claude Code（cc），运行时 claudecode',
-      '  读：通用、人格、应用、本人',
-      '  写：应用、本人',
+      '✓ 访问密钥可用：接入实例 Claude Code（cc），运行时 claudecode',
+      '  主场记忆圈：个人圈（personal）',
+      '  读：正式词条、联系人事实、会话摘要',
+      '  写：正式词条',
       '  最高敏感级：私密',
       '  凭据：取用',
       '✓ Claude Code 的 kioku 插件已启用',
@@ -108,11 +122,14 @@ describe('kioku doctor', () => {
     expect(result.text).not.toContain('插件')
   })
 
-  it('应用的运行时和平台对不上时提醒', async () => {
-    reply = () => ({ status: 200, body: { ...WHO, app: { ...WHO.app, runtimeFamily: 'codex' } } })
+  it('接入实例的运行时和平台对不上时提醒', async () => {
+    reply = () => ({
+      status: 200,
+      body: { ...WHO, client: { ...WHO.client, runtimeFamily: 'codex' } },
+    })
     const result = await run(['claude-code'])
     expect(result.code).toBe(0)
-    expect(result.text).toContain('! 这个应用的运行时不是 claudecode')
+    expect(result.text).toContain('! 这个接入实例的运行时不是 claudecode')
   })
 
   it('访问密钥无效、跳转、连不上、响应不对都是 ✗，退出码 1，平台的配置照查', async () => {
@@ -120,8 +137,14 @@ describe('kioku doctor', () => {
     const cases = [
       [() => ({ status: 401, body: { error: 'x' } }), '✗ 访问密钥无效或已吊销'],
       [() => ({ status: 500, body: {} }), '✗ Kioku 返回 HTTP 500'],
-      [() => ({ status: 200, body: { app: {} } }), '✗ Kioku 的响应格式不对'],
-      [() => ({ status: 200, body: { app: WHO.app, scopes: null } }), '✗ Kioku 的响应格式不对'],
+      [() => ({ status: 200, body: { client: {} } }), '✗ Kioku 的响应格式不对'],
+      [
+        () => ({
+          status: 200,
+          body: { primaryCircle: WHO.primaryCircle, client: WHO.client, scopes: null },
+        }),
+        '✗ Kioku 的响应格式不对',
+      ],
       [
         () => ({ status: 301, headers: { location: 'https://kioku.example.com/v1/whoami' } }),
         '✗ Kioku 返回了跳转（301），把地址改成跳转之后的地址（例如 https://kioku.example.com）',
@@ -153,18 +176,23 @@ describe('kioku doctor', () => {
   it('服务端给的名字里的控制字符不原样打印', async () => {
     reply = () => ({
       status: 200,
-      body: { ...WHO, app: { ...WHO.app, name: '甲\n✓ 假的一行\u001b[2J' } },
+      body: { ...WHO, client: { ...WHO.client, name: '甲\n✓ 假的一行\u001b[2J' } },
     })
     const result = await run()
-    expect(result.lines[1]).toBe('✓ 访问密钥可用：应用 甲 ✓ 假的一行 [2J（cc），运行时 claudecode')
+    expect(result.lines[1]).toBe(
+      '✓ 访问密钥可用：接入实例 甲 ✓ 假的一行 [2J（cc），运行时 claudecode',
+    )
     // 行分隔符、段落分隔符与改变显示方向的字符也一样；截断不切开表情
     reply = () => ({
       status: 200,
-      body: { ...WHO, app: { ...WHO.app, name: `乙\u2028丙\u2029丁\u202e戊${'😀'.repeat(300)}` } },
+      body: {
+        ...WHO,
+        client: { ...WHO.client, name: `乙\u2028丙\u2029丁\u202e戊${'😀'.repeat(300)}` },
+      },
     })
     const separators = await run()
-    expect(separators.lines).toHaveLength(7)
-    expect(separators.lines[1]).toContain(`应用 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
+    expect(separators.lines).toHaveLength(8)
+    expect(separators.lines[1]).toContain(`接入实例 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
   })
 
   it('地址里的账号密码与查询参数不打印', async () => {

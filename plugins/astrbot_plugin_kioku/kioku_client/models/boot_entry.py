@@ -8,7 +8,9 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..models.boot_entry_layer import BootEntryLayer
+from ..models.boot_entry_kind import BootEntryKind
+from typing import cast
+from uuid import UUID
 
 
 T = TypeVar("T", bound="BootEntry")
@@ -18,24 +20,33 @@ T = TypeVar("T", bound="BootEntry")
 class BootEntry:
     """
     Attributes:
-        uri (str):
+        short_id (str):
         title (str):
-        layer (BootEntryLayer):
+        circle_id (UUID):
+        circle_slug (None | str):
+        kind (BootEntryKind):
         content (str):
     """
 
-    uri: str
+    short_id: str
     title: str
-    layer: BootEntryLayer
+    circle_id: UUID
+    circle_slug: None | str
+    kind: BootEntryKind
     content: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        uri = self.uri
+        short_id = self.short_id
 
         title = self.title
 
-        layer = self.layer.value
+        circle_id = str(self.circle_id)
+
+        circle_slug: None | str
+        circle_slug = self.circle_slug
+
+        kind = self.kind.value
 
         content = self.content
 
@@ -43,9 +54,11 @@ class BootEntry:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "uri": uri,
+                "shortId": short_id,
                 "title": title,
-                "layer": layer,
+                "circleId": circle_id,
+                "circleSlug": circle_slug,
+                "kind": kind,
                 "content": content,
             }
         )
@@ -55,18 +68,29 @@ class BootEntry:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        uri = d.pop("uri")
+        short_id = d.pop("shortId")
 
         title = d.pop("title")
 
-        layer = BootEntryLayer(d.pop("layer"))
+        circle_id = UUID(d.pop("circleId"))
+
+        def _parse_circle_slug(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        circle_slug = _parse_circle_slug(d.pop("circleSlug"))
+
+        kind = BootEntryKind(d.pop("kind"))
 
         content = d.pop("content")
 
         boot_entry = cls(
-            uri=uri,
+            short_id=short_id,
             title=title,
-            layer=layer,
+            circle_id=circle_id,
+            circle_slug=circle_slug,
+            kind=kind,
             content=content,
         )
 

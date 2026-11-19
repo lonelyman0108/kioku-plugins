@@ -8,7 +8,7 @@
 
 要 Node 18 或更新的版本在 `PATH` 里，Codex 命令行 0.167 或更新（更早的版本没有核对过）。
 
-先在 Kioku 管理界面的「应用」页建一个运行时是 codex 的应用，签发访问密钥。然后：
+先在 Kioku 管理界面的「接入实例」页建一个运行时是 codex 的接入实例，签发访问密钥。然后：
 
 ```bash
 # 1. 写下服务地址与访问密钥，把 Kioku 的 MCP 服务配进 Codex，关掉 Codex 自带的 Memories
@@ -21,7 +21,7 @@ codex plugin add kioku@kioku
 
 3. 打开 `codex`，在 `/hooks` 里信任 kioku 的三个钩子。Codex 不运行没有信任过的钩子；插件更新后钩子变了要再信任一次。
 
-第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login codex --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好空间与权限后确认，不用先在管理界面建应用、复制访问密钥。访问密钥不写在命令行上。它先连一次 Kioku 核对地址与访问密钥，再写文件；`--dry-run` 只看要改什么，`--no-check` 不核对。
+第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login codex --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好记忆圈与权限后确认，不用先在管理界面建接入实例、复制访问密钥。访问密钥不写在命令行上。它先连一次 Kioku 核对地址与访问密钥，再写文件；`--dry-run` 只看要改什么，`--no-check` 不核对。
 
 装好之后用 `npx @kioku-memory/cli doctor codex` 检查：地址与访问密钥、访问密钥的权限、MCP 服务、插件是否启用、Memories 是否关着。钩子信任过没有它查不到。
 

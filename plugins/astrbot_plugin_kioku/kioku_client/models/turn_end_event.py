@@ -12,6 +12,7 @@ from ..models.turn_end_event_event import TurnEndEventEvent
 from typing import cast
 
 if TYPE_CHECKING:
+    from ..models.lifecycle_project import LifecycleProject
     from ..models.session_context import SessionContext
 
 
@@ -26,6 +27,8 @@ class TurnEndEvent:
         session_id (str):
         user (str):
         reply (str):
+        device_key (str | Unset):
+        project (LifecycleProject | Unset):
         context (SessionContext | Unset):
     """
 
@@ -33,10 +36,13 @@ class TurnEndEvent:
     session_id: str
     user: str
     reply: str
+    device_key: str | Unset = UNSET
+    project: LifecycleProject | Unset = UNSET
     context: SessionContext | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         event = self.event.value
@@ -46,6 +52,12 @@ class TurnEndEvent:
         user = self.user
 
         reply = self.reply
+
+        device_key = self.device_key
+
+        project: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.project, Unset):
+            project = self.project.to_dict()
 
         context: dict[str, Any] | Unset = UNSET
         if not isinstance(self.context, Unset):
@@ -61,6 +73,10 @@ class TurnEndEvent:
                 "reply": reply,
             }
         )
+        if device_key is not UNSET:
+            field_dict["deviceKey"] = device_key
+        if project is not UNSET:
+            field_dict["project"] = project
         if context is not UNSET:
             field_dict["context"] = context
 
@@ -68,6 +84,7 @@ class TurnEndEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.lifecycle_project import LifecycleProject  # noqa: PLC0415
         from ..models.session_context import SessionContext  # noqa: PLC0415
 
         d = dict(src_dict)
@@ -78,6 +95,15 @@ class TurnEndEvent:
         user = d.pop("user")
 
         reply = d.pop("reply")
+
+        device_key = d.pop("deviceKey", UNSET)
+
+        _project = d.pop("project", UNSET)
+        project: LifecycleProject | Unset
+        if isinstance(_project, Unset):
+            project = UNSET
+        else:
+            project = LifecycleProject.from_dict(_project)
 
         _context = d.pop("context", UNSET)
         context: SessionContext | Unset
@@ -91,6 +117,8 @@ class TurnEndEvent:
             session_id=session_id,
             user=user,
             reply=reply,
+            device_key=device_key,
+            project=project,
             context=context,
         )
 

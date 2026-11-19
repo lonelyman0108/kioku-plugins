@@ -20,10 +20,24 @@ beforeAll(async () => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(
       JSON.stringify({
-        app: { id: 'a', slug: whoFamily, name: whoFamily, runtimeFamily: whoFamily },
+        primaryCircle: {
+          id: '00000000-0000-4000-8000-000000000001',
+          slug: 'personal',
+          name: '个人圈',
+          kind: 'personal',
+        },
+        linkedCircles: [],
+        client: {
+          id: 'a',
+          circleId: '00000000-0000-4000-8000-000000000001',
+          slug: whoFamily,
+          name: whoFamily,
+          runtimeFamily: whoFamily,
+        },
+        persona: null,
         scopes: {
-          readLayers: ['core', 'persona', 'app', 'user'],
-          writeLayers: ['app', 'user'],
+          readKinds: ['entry', 'fact', 'episode'],
+          writeKinds: ['entry'],
           maxSensitivity: 'private',
           credentials: 'none',
         },

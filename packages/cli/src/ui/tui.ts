@@ -259,17 +259,19 @@ function canDisableClaudeMemory(row: PlatformRow | null): boolean {
   )
 }
 
-function spaceSummary(platforms: PlatformRow[]): string[] {
+function circleSummary(platforms: PlatformRow[]): string[] {
   const set = new Set<string>()
   for (const row of platforms) {
     if (row.connection !== 'ok' || !row.who) continue
-    const s =
-      typeof row.who.spaceName === 'string' && row.who.spaceName
-        ? plain(row.who.spaceName)
-        : typeof row.who.spaceId === 'string'
-          ? plain(row.who.spaceId).slice(0, 8)
-          : ''
-    if (s) set.add(s)
+    const c =
+      typeof row.who.primaryCircle.name === 'string' && row.who.primaryCircle.name
+        ? plain(row.who.primaryCircle.name)
+        : typeof row.who.primaryCircle.slug === 'string' && row.who.primaryCircle.slug
+          ? plain(row.who.primaryCircle.slug)
+          : typeof row.who.primaryCircle.id === 'string'
+            ? plain(row.who.primaryCircle.id).slice(0, 8)
+            : ''
+    if (c) set.add(c)
   }
   return [...set]
 }
@@ -307,10 +309,10 @@ function renderTopBar(
   } else if (server.needsSetup) {
     right = `${theme.warn('!')} ${shownUrl(server.url)} · ${theme.warn('待初始化管理员')}`
   } else {
-    const spaces = spaceSummary(state.platforms)
+    const circles = circleSummary(state.platforms)
     const verNote = server.version ? ` ${plain(server.version)}` : ''
-    const spaceNote = spaces.length > 1 ? ` · ${spaces.length} 个空间` : ''
-    right = `${theme.ok('●')} ${shownUrl(server.url)}${theme.muted(`${verNote}${spaceNote}`)}`
+    const circleNote = circles.length > 1 ? ` · ${circles.length} 个记忆圈` : ''
+    right = `${theme.ok('●')} ${shownUrl(server.url)}${theme.muted(`${verNote}${circleNote}`)}`
   }
 
   const leftW = displayWidth(left)
@@ -530,32 +532,35 @@ function buildDetailBody(
   if (row.checking) {
     out.push(kvLine('接入状态', theme.muted('正在向服务端校验访问密钥…'), width, theme))
   } else if (row.connection === 'ok' && row.who) {
-    const { app, scopes } = row.who
-    const appText = `${theme.bold(plain(app.name))} ${theme.muted(`（${plain(app.slug)}）`)}`
+    const { primaryCircle, linkedCircles, client, scopes } = row.who
+    const clientText = `${theme.bold(plain(client.name))} ${theme.muted(`（${plain(client.slug)}）`)}`
     const mismatch =
-      app.runtimeFamily !== PLATFORMS[row.id].runtimeFamily
+      client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily
         ? ` ${theme.error('! 运行时类型不匹配')}`
         : ''
-    out.push(kvLine('应用身份', `${appText}${mismatch}`, width, theme))
+    out.push(kvLine('接入实例', `${clientText}${mismatch}`, width, theme))
 
-    const space =
-      typeof row.who.spaceName === 'string' && row.who.spaceName
-        ? plain(row.who.spaceName)
-        : typeof row.who.spaceId === 'string'
-          ? plain(row.who.spaceId).slice(0, 8)
-          : '默认空间'
+    const circle =
+      typeof primaryCircle.name === 'string' && primaryCircle.name
+        ? plain(primaryCircle.name)
+        : typeof primaryCircle.slug === 'string' && primaryCircle.slug
+          ? plain(primaryCircle.slug)
+          : typeof primaryCircle.id === 'string'
+            ? plain(primaryCircle.id).slice(0, 8)
+            : '主场记忆圈'
+    const linked = linkedCircles.length > 0 ? ` · 关联 ${linkedCircles.length} 圈` : ''
     const acct =
       typeof row.who.accountName === 'string' && row.who.accountName
         ? ` · ${theme.muted(`账号 ${plain(row.who.accountName)}`)}`
         : ''
-    out.push(kvLine('所属空间', `${space}${acct}`, width, theme))
+    out.push(kvLine('主场记忆圈', `${circle}${linked}${acct}`, width, theme))
 
     const readChips =
-      (scopes.readLayers ?? []).map((l) => theme.layerChip(l)).join('  ') || theme.muted('无')
+      (scopes.readKinds ?? []).map((k) => theme.kindChip(k)).join('  ') || theme.muted('无')
     const writeChips =
-      (scopes.writeLayers ?? []).map((l) => theme.layerChip(l)).join('  ') || theme.muted('无')
-    out.push(kvLine('读取归属', readChips, width, theme))
-    out.push(kvLine('写入归属', writeChips, width, theme))
+      (scopes.writeKinds ?? []).map((k) => theme.kindChip(k)).join('  ') || theme.muted('无')
+    out.push(kvLine('读取物种', readChips, width, theme))
+    out.push(kvLine('写入物种', writeChips, width, theme))
 
     const sens = sensitivityBadge(scopes.maxSensitivity ?? 'internal', theme)
     const cred = capabilityLabel(scopes.credentials)

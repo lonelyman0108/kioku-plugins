@@ -58,7 +58,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 kioku login codex --server-url https://kioku.example.com
 ```
 
-终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选空间、应用与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
+终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选记忆圈、接入实例与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
 
 - 确认码不在打开的地址里，要照着终端输入：只在自己刚运行了这条命令时确认。别人发来一个确认码让你去确认的，不要确认，那样对方的机器会拿到能读写你的记忆的访问密钥。
 - 申请 10 分钟内有效。被拒绝、过期，或者确认之后确认人的角色变了，都拿不到访问密钥，重新运行即可。
@@ -67,7 +67,7 @@ kioku login codex --server-url https://kioku.example.com
 
 `kioku setup codex`、`kioku setup pi` 第一次配置时，在终端里提示输入访问密钥的地方直接回车，走的是同一个流程。已经配过的再运行 `setup`，直接回车是沿用上次的访问密钥；要换一个就运行 `kioku login`。
 
-- 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的应用页吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
+- 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的接入实例页吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
 
 ## install
 
@@ -166,10 +166,10 @@ kioku setup opencode --server-url https://kioku.example.com
 
 ```bash
 kioku search "发布流程" --limit 5
-kioku get core://agent
-kioku ls                         # 按 本人 / 应用 / 人格 / 通用 地层顺序列出根级目录
-kioku ls user://projects --json
-echo "优先使用 pnpm" | kioku add user://preferences/tooling --title "包管理工具"
+kioku get m-234567
+kioku ls                         # 按主题（topic）分组列出可见词条
+kioku ls realm --circle personal --json
+echo "优先使用 pnpm" | kioku add "包管理工具" --topic tooling --when realm=work
 ```
 
 - **`add` 的明文拦阻检查**：正文若触发服务端疑似明文凭据检查（HTTP 400），命令行只显示「第几行、哪一类」而不回显值；交互式终端可选择取消或确认为非凭据后写入，非终端环境可带 `--plaintext-ok` 放行。

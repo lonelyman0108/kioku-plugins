@@ -1,6 +1,6 @@
 # Kioku 的 Hermes 记忆 provider
 
-把 Hermes 的长期记忆换成 Kioku：会话开始时把 Kioku 的启动加载放进系统提示（通用的规则、人格、本应用的记忆与本人的偏好），每轮输入前注入召回候选，每轮结束后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要。另外提供读写记忆的 `kioku_*` 工具。
+把 Hermes 的长期记忆换成 Kioku：会话开始时把 Kioku 的启动加载放进系统提示（通用规范、独立人格、关联记忆圈与环境记忆），每轮输入前注入召回候选，每轮结束后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要。另外提供读写记忆的 `kioku_*` 工具。
 
 provider 只做转发，提示词和输出格式都由服务端决定，服务端更新后不用重装。它只用 Python 的标准库，没有要装的依赖。
 
@@ -12,7 +12,7 @@ provider 只做转发，提示词和输出格式都由服务端决定，服务�
 
 要 Hermes 0.19 或更新的版本（更早的没有核对过）。
 
-先在 Kioku 管理界面的「应用」页建一个运行时是 hermes 的应用，签发访问密钥（或者用下面的浏览器授权，不用先建）。然后：
+先在 Kioku 管理界面的「接入实例」页建一个运行时是 hermes 的接入实例，签发访问密钥（或者用下面的浏览器授权，不用先建）。然后：
 
 ```bash
 # 1. 写下服务地址与访问密钥，选 Kioku 做记忆 provider，关掉内置的 MEMORY.md 与 USER.md
@@ -22,7 +22,7 @@ npx @kioku-memory/cli setup hermes --server-url https://kioku.example.com
 hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable
 ```
 
-第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login hermes --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好空间与权限后确认。它先连一次 Kioku 核对，再写；`--dry-run` 只看要改什么。
+第 1 步会提示输入访问密钥（不回显）；也可以放在 `KIOKU_API_KEY` 里，或者从标准输入给。提示时直接回车就改用浏览器授权（也可以直接运行 `npx @kioku-memory/cli login hermes --server-url <地址>`）：终端显示一个确认码，在管理界面的确认页输入它、选好记忆圈与权限后确认。它先连一次 Kioku 核对，再写；`--dry-run` 只看要改什么。
 
 装好之后新开会话。用 `hermes memory status` 看 provider 是否可用，用 `npx @kioku-memory/cli doctor hermes` 检查地址与访问密钥、访问密钥的权限、provider 装了没有、内置的记忆关了没有。
 
