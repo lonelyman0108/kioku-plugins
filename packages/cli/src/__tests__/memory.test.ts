@@ -15,7 +15,6 @@ import {
   lsCommand,
   parseEditorCommand,
   searchCommand,
-  transferCommand,
 } from '../commands/memory.ts'
 import { KiokuFailure, UsageError, writeProfile } from '../core.ts'
 import { resolveIdentity, writeCliPreferences } from '../identity.ts'
@@ -26,9 +25,17 @@ import type { Env } from '../types.ts'
 const KEY = 'kioku_test_key'
 const SCOPED_KEY = 'kioku_scoped'
 
+interface RecordedRequest {
+  method: string
+  url: string
+  body: Record<string, unknown> | null
+  tool?: string
+  args?: Record<string, unknown>
+}
+
 let server: Server
 let base: string
-let lastRequests: Array<{ method: string; url: string; body: Record<string, unknown> | null }> = []
+let lastRequests: RecordedRequest[] = []
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -38,313 +45,251 @@ beforeAll(async () => {
     req.on('end', () => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null
-      lastRequests.push({ method: req.method ?? 'GET', url: `${url.pathname}${url.search}`, body })
 
       const send = (status: number, payload: unknown) => {
         res.writeHead(status, { 'content-type': 'application/json' })
         res.end(JSON.stringify(payload))
       }
 
+      if (req.method === 'GET' && url.pathname === '/v1/health') {
+        return send(200, { status: 'ok', api: 3, version: '2.0.0' })
+      }
+
+      const mcpParams =
+        url.pathname === '/v1/mcp'
+          ? (body?.params as { name?: string; arguments?: Record<string, unknown> } | undefined)
+          : undefined
+      lastRequests.push({
+        method: req.method ?? 'GET',
+        url: `${url.pathname}${url.search}`,
+        body,
+        ...(mcpParams?.name ? { tool: mcpParams.name } : {}),
+        ...(mcpParams?.arguments ? { args: mcpParams.arguments } : {}),
+      })
+
+      const rpcId = body?.id ?? 1
+      const sendMcp = (structured: unknown, text = 'ok') =>
+        send(200, {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            content: [{ type: 'text', text }],
+            ...(structured !== undefined ? { structuredContent: structured } : {}),
+          },
+        })
+      const sendMcpError = (status: number, error: string) =>
+        send(200, {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            isError: true,
+            content: [{ type: 'text', text: error }],
+            structuredContent: { status, error },
+          },
+        })
+
       if (url.pathname === '/v1/whoami') {
         return send(200, {
-          primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
-          linkedCircles: [],
+          accountName: 'owner',
+          key: {
+            id: 'key-1',
+            name: 'Claude Code',
+            prefix: 'kioku_te',
+            runtimeFamily: 'claudecode',
+            envs: [],
+            allowedRealms: null,
+            canWrite: true,
+            canResolveCredentials: false,
+          },
           client: {
-            id: 'app-1',
-            circleId: 'c1',
             slug: 'cc',
             name: 'Claude Code',
             runtimeFamily: 'claudecode',
           },
-          persona: null,
-          scopes: { readKinds: ['entry', 'fact', 'episode'], writeKinds: ['entry'] },
+          primaryCircle: { slug: 'default', name: 'Kioku', kind: 'personal' },
         })
       }
 
       if (req.method === 'POST' && url.pathname === '/v1/recall') {
         const query = String(body?.query ?? '')
-        if (query === 'empty') return send(200, { candidates: [], subjects: [] })
+        if (query === 'empty') return send(200, { candidates: [] })
         return send(200, {
           candidates: [
             {
               entryId: 'e1',
               shortId: 'm-234567',
               title: '回复风格偏好',
-              circleId: 'c1',
-              circleSlug: 'personal',
               kind: 'entry',
-              matchedWhen: { realm: ['work'] },
-              otherVariantsCount: 1,
-              priority: 5,
+              isPinned: true,
+              envs: ['mac'],
+              realms: ['work'],
+              projects: ['kioku'],
+              runtimes: ['claudecode'],
               disclosure: '需要组织回复时读取',
               score: 0.91,
-              via: ['semantic'],
+              via: ['semantic', 'link'],
               cues: ['风格', '结论优先'],
             },
           ],
-          subjects: [
-            {
-              role: 'sender',
-              name: 'Alice',
-              facts: [
-                { shortId: 'm-fact01', content: '使用 pnpm', updatedAt: '2026-01-01T00:00:00Z' },
-              ],
-            },
-          ],
-        })
-      }
-
-      if (req.method === 'GET' && url.pathname === '/v1/entries') {
-        const id = url.searchParams.get('id') ?? ''
-        const allVariants = url.searchParams.get('allVariants') === 'true'
-        if (id === 'm-234567' || id === '回复风格偏好' || id === 'user://preferences/reply_style') {
-          const baseVariant = {
-            id: 'var-1',
-            when: {},
-            whenSignature: '{}',
-            sortOrder: 0,
-            content: '第一行保持简洁\n  - 保留缩进列表\n第三行不要截断：' + 'x'.repeat(230),
-            updatedAt: '2026-01-01T00:00:00Z',
-          }
-          const workVariant = {
-            id: 'var-2',
-            when: { realm: ['work'] },
-            whenSignature: '{"realm":["work"]}',
-            sortOrder: 1,
-            content: '工作场景下先给结论。',
-            updatedAt: '2026-01-02T00:00:00Z',
-          }
-          return send(200, {
-            id: 'mem-1',
-            shortId: 'm-234567',
-            circleId: 'c1',
-            circleSlug: 'personal',
-            kind: 'entry',
-            title: '回复风格偏好',
-            sensitivity: 'private',
-            provenance: 'owner',
-            originScope: 'app:cc',
-            topics: ['prefs'],
-            realms: allVariants ? ['work'] : [],
-            priority: 5,
-            disclosure: '需要组织回复时读取',
-            glossary: ['回复风格'],
-            validFrom: '2026-01-01T00:00:00Z',
-            validTo: null,
-            version: 3,
-            variants: allVariants ? [baseVariant, workVariant] : [baseVariant],
-            otherVariants: allVariants
-              ? []
-              : [{ when: { realm: ['work'] }, whenSignature: '{"realm":["work"]}' }],
-            links: [
-              {
-                shortId: 'm-345678',
-                title: '关联规范',
-                circleId: 'c1',
-                circleSlug: 'personal',
-                kind: 'entry',
-                sensitivity: 'internal',
-                direction: 'outgoing',
-                sourceVariantId: 'var-1',
-              },
-            ],
-            createdAt: '2026-01-01T00:00:00Z',
-            updatedAt: '2026-01-02T00:00:00Z',
-          })
-        }
-        if (id === 'm-999999') {
-          return send(200, {
-            id: 'mem-2',
-            shortId: 'm-999999',
-            circleId: 'c1',
-            circleSlug: 'personal',
-            kind: 'entry',
-            title: '私密令牌备注',
-            sensitivity: 'secret',
-            provenance: 'owner',
-            originScope: 'personal',
-            topics: [],
-            realms: [],
-            priority: 1,
-            disclosure: null,
-            glossary: [],
-            validFrom: '2026-01-01T00:00:00Z',
-            validTo: null,
-            version: 1,
-            variants: [
-              {
-                id: 'v-sec',
-                when: {},
-                whenSignature: '{}',
-                sortOrder: 0,
-                content: null,
-                updatedAt: '2026-01-01T00:00:00Z',
-              },
-            ],
-            otherVariants: [],
-            links: [],
-            createdAt: '2026-01-01T00:00:00Z',
-            updatedAt: '2026-01-01T00:00:00Z',
-          })
-        }
-        if (id === 'm-secok2') {
-          return send(200, {
-            id: 'mem-3',
-            shortId: 'm-secok2',
-            circleId: 'c1',
-            circleSlug: 'personal',
-            kind: 'entry',
-            title: '已解密机密记忆',
-            sensitivity: 'secret',
-            version: 1,
-            variants: [
-              {
-                id: 'v-sec2',
-                when: {},
-                whenSignature: '{}',
-                sortOrder: 0,
-                content: 'decrypted-secret-content',
-              },
-            ],
-          })
-        }
-        return send(404, { error: '记忆不存在或无权读取' })
-      }
-
-      if (req.method === 'PATCH' && url.pathname === '/v1/entries') {
-        return send(200, {
-          id: 'mem-1',
-          shortId: 'm-234567',
-          circleId: 'c1',
-          circleSlug: 'personal',
-          kind: 'entry',
-          title: body?.title ?? '回复风格偏好',
-          sensitivity: body?.sensitivity ?? 'private',
-          priority: body?.priority ?? 5,
-          disclosure: body?.disclosure ?? null,
-          version: 4,
-          variants: [],
-        })
-      }
-
-      if (req.method === 'DELETE' && url.pathname === '/v1/entries') {
-        res.writeHead(204).end()
-        return
-      }
-
-      if (req.method === 'POST' && url.pathname === '/v1/entries/transfer') {
-        return send(200, {
-          id: 'mem-1',
-          shortId: 'm-234567',
-          circleId: 'c2',
-          circleSlug: String(body?.toCircle ?? 'team'),
-          kind: 'entry',
-          title: '回复风格偏好',
-          sensitivity: 'internal',
-          priority: 5,
-          disclosure: null,
-          version: 4,
-          variants: [],
         })
       }
 
       if (req.method === 'GET' && url.pathname === '/v1/boot') {
         return send(200, {
-          personaTraits: [{ traitKey: 'tone', title: '表达风格', content: '简洁直接' }],
           entries: [
             {
               shortId: 'm-234567',
               title: '工作原则',
-              circleId: 'c1',
-              circleSlug: 'personal',
               kind: 'entry',
               content: '代码规范优先',
+            },
+          ],
+          episodes: [
+            {
+              shortId: 'm-ep0001',
+              title: '昨日发布复盘',
+              content: '完成迁移并通过集成测试',
+              createdAt: '2026-01-02T00:00:00Z',
             },
           ],
           omitted: ['m-888888'],
         })
       }
 
-      if (req.method === 'GET' && url.pathname === '/v1/entries/browse') {
-        const groupBy = url.searchParams.get('groupBy') ?? 'topic'
-        const circle = url.searchParams.get('circle')
-        if (circle === 'missing') {
-          return send(404, { error: '未找到记忆圈：missing' })
-        }
-        const auth = req.headers.authorization ?? ''
-        if (groupBy === 'realm' && auth === `Bearer ${SCOPED_KEY}`) {
-          return send(403, { error: '没有权限读取该场域' })
-        }
-        return send(200, {
-          groupBy,
-          groups: [
-            {
-              key: 'prefs',
-              label: groupBy === 'realm' ? '通用场域' : 'prefs',
-              count: 1,
-              items: [
-                {
-                  id: 'mem-1',
-                  shortId: 'm-234567',
-                  title: '回复风格偏好',
-                  circleId: 'c1',
-                  circleSlug: 'personal',
-                  kind: 'entry',
-                  sensitivity: 'private',
-                  priority: 5,
-                  topics: ['prefs'],
-                  disclosure: null,
-                  variantCount: 2,
-                  variantsSummary: [{}, { realm: ['work'] }],
-                },
-              ],
-            },
-          ],
-          truncated: false,
-        })
-      }
+      if (req.method === 'POST' && url.pathname === '/v1/mcp') {
+        const toolName = mcpParams?.name
+        const args = mcpParams?.arguments ?? {}
 
-      if (req.method === 'POST' && url.pathname === '/v1/entries') {
-        const content = String(body?.content ?? '')
-        if (content.includes('mock-secret-marker') && body?.plaintextOk !== true) {
-          return send(400, {
-            error: '正文里包含新增的疑似明文凭据',
-            plaintext: [{ line: 2, kind: 'sk' }],
+        if (toolName === 'kioku_get') {
+          const id = String(args.id ?? '')
+          if (id === 'm-234567' || id === '回复风格偏好') {
+            return sendMcp({
+              entry: {
+                id: 'mem-1',
+                shortId: 'm-234567',
+                kind: 'entry',
+                title: '回复风格偏好',
+                content: '第一行保持简洁\n  - 保留缩进列表\n第三行不要截断：' + 'x'.repeat(230),
+                disclosure: '需要组织回复时读取',
+                isPinned: true,
+                envs: ['mac'],
+                realms: ['work'],
+                projects: ['kioku'],
+                runtimes: ['claudecode'],
+                topics: ['prefs'],
+                validTo: null,
+                version: 3,
+                createdAt: '2026-01-01T00:00:00Z',
+                updatedAt: '2026-01-02T00:00:00Z',
+              },
+              outboundLinks: [
+                { shortId: 'm-345678', title: '关联规范', kind: 'entry', direction: 'outgoing' },
+              ],
+              backlinks: [
+                { shortId: 'm-456789', title: '项目约定', kind: 'entry', direction: 'incoming' },
+              ],
+              credentialRefs: [
+                { slug: 'gh-token', field: null, available: true, label: 'GitHub 令牌' },
+                { slug: 'db-pass', field: 'password', available: false, label: null },
+              ],
+            })
+          }
+          if (id === 'm-textonly') {
+            return sendMcp(undefined, '纯文本回退记忆正文')
+          }
+          return sendMcpError(404, '记忆不存在或无权读取')
+        }
+
+        if (toolName === 'kioku_browse') {
+          const groupBy = String(args.group_by ?? 'topic')
+          const auth = req.headers.authorization ?? ''
+          if (groupBy === 'realm' && auth === `Bearer ${SCOPED_KEY}`) {
+            return sendMcpError(403, '没有权限读取该场域')
+          }
+          if (args.project === 'empty') {
+            return sendMcp({ groupBy, groups: [], truncated: false })
+          }
+          return sendMcp({
+            groupBy,
+            groups: [
+              {
+                key: groupBy === 'kind' ? 'entry' : 'prefs',
+                label: groupBy === 'realm' ? 'work' : 'prefs',
+                count: 1,
+                items: [
+                  {
+                    shortId: 'm-234567',
+                    title: '回复风格偏好',
+                    kind: 'entry',
+                    isPinned: true,
+                    topics: ['prefs'],
+                    envs: ['mac'],
+                    realms: ['work'],
+                    projects: ['kioku'],
+                    disclosure: null,
+                  },
+                ],
+              },
+            ],
+            truncated: args.limit === 1,
           })
         }
-        return send(201, {
-          id: 'mem-new',
-          shortId: 'm-new234',
-          circleId: 'c1',
-          circleSlug: String(body?.circle ?? 'personal'),
-          kind: 'entry',
-          title: body?.title ?? 'm-new234',
-          sensitivity: body?.sensitivity ?? 'private',
-          provenance: 'agent',
-          originScope: 'app:cc',
-          topics: Array.isArray(body?.topics) ? body.topics : [],
-          realms: [],
-          priority: body?.priority ?? 2,
-          disclosure: body?.disclosure ?? null,
-          glossary: [],
-          validFrom: '2026-01-01T00:00:00Z',
-          validTo: null,
-          version: 1,
-          variants: [
-            {
-              id: 'v-new',
-              when: (body?.when as Record<string, string[]>) ?? {},
-              whenSignature: '{}',
-              sortOrder: 0,
-              content,
+
+        if (toolName === 'kioku_create') {
+          return sendMcp({
+            entry: {
+              id: 'mem-new',
+              shortId: 'm-new234',
+              kind: 'entry',
+              title: String(args.title ?? 'm-new234'),
+              content: String(args.content ?? ''),
+              disclosure: (args.disclosure as string | undefined) ?? null,
+              isPinned: Boolean(args.is_pinned),
+              envs: Array.isArray(args.envs) ? args.envs : [],
+              realms: Array.isArray(args.realms) ? args.realms : [],
+              projects: Array.isArray(args.projects) ? args.projects : [],
+              runtimes: Array.isArray(args.runtimes) ? args.runtimes : [],
+              topics: Array.isArray(args.topics) ? args.topics : [],
+              validTo: (args.valid_to as string | undefined) ?? null,
+              version: 1,
+              createdAt: '2026-01-01T00:00:00Z',
               updatedAt: '2026-01-01T00:00:00Z',
             },
-          ],
-          otherVariants: [],
-          links: [],
-          createdAt: '2026-01-01T00:00:00Z',
-          updatedAt: '2026-01-01T00:00:00Z',
-        })
+            outboundLinks: [],
+            backlinks: [],
+            credentialRefs: [],
+          })
+        }
+
+        if (toolName === 'kioku_update') {
+          return sendMcp({
+            entry: {
+              id: 'mem-1',
+              shortId: 'm-234567',
+              kind: 'entry',
+              title: String(args.title ?? '回复风格偏好'),
+              content: String(args.content ?? '旧正文'),
+              disclosure: args.disclosure === undefined ? null : (args.disclosure as string | null),
+              isPinned: args.is_pinned === undefined ? true : Boolean(args.is_pinned),
+              envs: Array.isArray(args.envs) ? args.envs : [],
+              realms: Array.isArray(args.realms) ? args.realms : [],
+              projects: Array.isArray(args.projects) ? args.projects : [],
+              runtimes: Array.isArray(args.runtimes) ? args.runtimes : [],
+              topics: Array.isArray(args.topics) ? args.topics : [],
+              validTo: args.valid_to === undefined ? null : (args.valid_to as string | null),
+              version: 4,
+            },
+            outboundLinks: [],
+            backlinks: [],
+            credentialRefs: [],
+          })
+        }
+
+        if (toolName === 'kioku_delete') {
+          return sendMcp({ deleted: true, id: String(args.id ?? '') })
+        }
+
+        return sendMcpError(400, `未知工具 ${String(toolName)}`)
       }
 
       send(404, { error: 'not found' })
@@ -421,33 +366,37 @@ describe('身份自动解析与切换（identity）', () => {
   })
 })
 
-describe('日常记忆读写命令（search / get / ls / add）', () => {
+describe('日常记忆读写命令（search / get / ls / add / edit / delete / boot）', () => {
   beforeEach(async () => {
     await writeProfile('codex', { url: base, key: KEY }, env)
   })
 
-  it('search：格式化 Strata 结果框、短 ID、适用条件、联系人事实与 --json 输出', async () => {
+  it('search：格式化结果框、短 ID、场景标签、常驻标记、命中途径、线索与 --json 输出', async () => {
     const out1 = captureOut()
     expect(
       await searchCommand(
-        ['回复风格', '--limit', '5', '--when', 'realm=work', '--no-cross-circle'],
+        ['回复风格', '--limit', '5', '--env', 'mac', '--realm', 'work', '--project', 'kioku'],
         { env, out: out1.stream },
       ),
     ).toBe(0)
     const text = out1.read()
     expect(text).toContain('回复风格偏好')
     expect(text).toContain('m-234567')
-    expect(text).toContain('正式记忆')
-    expect(text).toContain('realm=work')
-    expect(text).toContain('另有 1 个变体')
+    expect(text).toContain('正式记忆 · 常驻')
+    expect(text).toContain('触发场景：需要组织回复时读取')
+    expect(text).toContain('项目 kioku')
+    expect(text).toContain('环境 mac')
+    expect(text).toContain('场域 work')
+    expect(text).toContain('语义/双链')
     expect(text).toContain('0.91')
-    expect(text).toContain('使用 pnpm')
     expect(text).toContain('风格、结论优先')
+    expect(lastRequests.at(-1)?.url).toBe('/v1/recall')
     expect(lastRequests.at(-1)?.body).toEqual({
       query: '回复风格',
       limit: 5,
-      facets: { realm: ['work'] },
-      crossCircle: false,
+      env: 'mac',
+      realm: 'work',
+      project: 'kioku',
     })
 
     const outEmpty = captureOut()
@@ -460,123 +409,138 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     expect(parsed.candidates[0].shortId).toBe('m-234567')
   })
 
-  it('get：支持短 ID、--circle 与 --all-variants，区分未返回正文与已解密机密正文', async () => {
+  it('get：通过 MCP kioku_get 渲染属性、正文、正反双链与凭据引用状态，支持文本回退与 --json', async () => {
     const out = captureOut()
     expect(await getCommand(['m-234567'], { env, out: out.stream })).toBe(0)
     const text = out.read()
     expect(text).toContain('回复风格偏好')
-    expect(text).toContain('短 ID：m-234567')
-    expect(text).toContain('记忆圈：personal')
+    expect(text).toContain('短 ID：m-234567 · 类型：正式记忆 · 常驻 · 版本：v3') // lint-comments: allow
+    expect(text).toContain('项目：kioku')
+    expect(text).toContain('环境：mac')
+    expect(text).toContain('场域：work')
+    expect(text).toContain('客户端：claudecode')
+    expect(text).toContain('主题：prefs')
+    expect(text).toContain('触发场景：需要组织回复时读取')
     expect(text).toContain('  - 保留缩进列表')
     expect(text).toContain('x'.repeat(40))
-    expect(text).toContain('其他变体（1）')
-    expect(text).toContain('→ m-345678')
+    expect(text).toContain('→ m-345678  关联规范')
+    expect(text).toContain('← m-456789  项目约定')
+    expect(text).toContain('{{cred:gh-token}}')
+    expect(text).toContain('可用')
+    expect(text).toContain('{{cred:db-pass#password}}')
+    expect(text).toContain('不可用')
+    expect(lastRequests.at(-1)).toMatchObject({
+      url: '/v1/mcp',
+      tool: 'kioku_get',
+      args: { id: 'm-234567' },
+    })
 
-    const allOut = captureOut()
-    expect(
-      await getCommand(['m-234567', '--circle', 'personal', '--all-variants'], {
-        env,
-        out: allOut.stream,
-      }),
-    ).toBe(0)
-    const allText = allOut.read()
-    expect(allText).toContain('── 适用条件：通用 ──')
-    expect(allText).toContain('── 适用条件：realm=work ──')
-    expect(allText).toContain('工作场景下先给结论。')
-    expect(lastRequests.at(-1)?.url).toContain('circle=personal')
-    expect(lastRequests.at(-1)?.url).toContain('allVariants=true')
+    const fallbackOut = captureOut()
+    expect(await getCommand(['m-textonly'], { env, out: fallbackOut.stream })).toBe(0)
+    expect(fallbackOut.read()).toContain('纯文本回退记忆正文')
 
-    const secretOut = captureOut()
-    expect(await getCommand(['m-999999'], { env, out: secretOut.stream })).toBe(0)
-    expect(secretOut.read()).toContain('正文未返回，需管理界面或具备机密读权限的访问密钥查看')
-
-    const decryptedOut = captureOut()
-    expect(await getCommand(['m-secok2'], { env, out: decryptedOut.stream })).toBe(0)
-    expect(decryptedOut.read()).toContain('机密正文已解密读取')
-    expect(decryptedOut.read()).toContain('decrypted-secret-content')
+    const jsonOut = captureOut()
+    expect(await getCommand(['m-234567', '--json'], { env, out: jsonOut.stream })).toBe(0)
+    const parsed = JSON.parse(jsonOut.read()) as { entry: { shortId: string } }
+    expect(parsed.entry.shortId).toBe('m-234567')
 
     await expect(getCommand(['m-404040'], { env, out: captureOut().stream })).rejects.toThrow(
       KiokuFailure,
     )
   })
 
-  it('ls：默认按主题分组浏览，支持位置分组维度（含中文别名）与筛选参数', async () => {
+  it('ls：通过 MCP kioku_browse 按维度分组浏览，支持中文位置维度与扁平筛选参数', async () => {
     const defaultOut = captureOut()
     expect(await lsCommand([], { env, out: defaultOut.stream })).toBe(0)
     const text = defaultOut.read()
     expect(text).toContain('记忆目录（按 topic 分组）')
     expect(text).toContain('prefs（1）')
     expect(text).toContain('回复风格偏好')
+    expect(text).toContain('常驻')
     expect(text).toContain('m-234567')
-    expect(text).toContain('2 个变体')
-    expect(lastRequests.at(-1)?.url).toBe('/v1/entries/browse?groupBy=topic')
+    expect(lastRequests.at(-1)).toMatchObject({
+      url: '/v1/mcp',
+      tool: 'kioku_browse',
+      args: { group_by: 'topic' },
+    })
 
     const filteredOut = captureOut()
     expect(
       await lsCommand(
-        ['场域', '--circle', 'personal', '--kind', 'entry', '--topic', 'prefs', '--limit', '10'],
-        {
-          env,
-          out: filteredOut.stream,
-        },
+        [
+          '场域',
+          '--kind',
+          'entry',
+          '--topic',
+          'prefs',
+          '--project',
+          'kioku',
+          '--env',
+          'mac',
+          '--realm',
+          'work',
+          '--pinned',
+          '--query',
+          '回复',
+          '--limit',
+          '1',
+        ],
+        { env, out: filteredOut.stream },
       ),
     ).toBe(0)
-    expect(filteredOut.read()).toContain('按 realm 分组')
-    expect(lastRequests.at(-1)?.url).toBe(
-      '/v1/entries/browse?groupBy=realm&circle=personal&kind=entry&topic=prefs&limit=10',
-    )
+    const filteredText = filteredOut.read()
+    expect(filteredText).toContain('按 realm 分组')
+    expect(filteredText).toContain('结果已截断')
+    expect(lastRequests.at(-1)).toMatchObject({
+      tool: 'kioku_browse',
+      args: {
+        group_by: 'realm',
+        kind: 'entry',
+        topic: 'prefs',
+        project: 'kioku',
+        env: 'mac',
+        realm: 'work',
+        pinned_only: true,
+        query: '回复',
+        limit: 1,
+      },
+    })
+
+    const emptyOut = captureOut()
+    expect(await lsCommand(['--project', 'empty'], { env, out: emptyOut.stream })).toBe(0)
+    expect(emptyOut.read()).toContain('暂无可见记忆')
 
     await writeProfile('pi', { url: base, key: SCOPED_KEY }, env)
     await expect(
       lsCommand(['realm', '--platform', 'pi'], { env, out: captureOut().stream }),
     ).rejects.toThrow('没有权限读取该场域')
 
-    await expect(
-      lsCommand(['--circle', 'missing', '--platform', 'pi'], { env, out: captureOut().stream }),
-    ).rejects.toThrow('未找到记忆圈：missing')
-
     await expect(lsCommand(['invalid-dim'], { env, out: captureOut().stream })).rejects.toThrow(
       UsageError,
     )
-
-    const filteredWhenOut = captureOut()
-    expect(
-      await lsCommand(['--when', 'realm=work', '--platform', 'codex'], {
-        env,
-        out: filteredWhenOut.stream,
-      }),
-    ).toBe(0)
-    expect(filteredWhenOut.read()).toContain('回复风格偏好')
-    expect(lastRequests.at(-1)?.url).toBe('/v1/entries/browse?groupBy=topic')
-
-    const unmatchedWhenOut = captureOut()
-    expect(
-      await lsCommand(['--when', 'realm=home', '--platform', 'codex'], {
-        env,
-        out: unmatchedWhenOut.stream,
-      }),
-    ).toBe(0)
-    expect(unmatchedWhenOut.read()).toContain('暂无可见记忆')
   })
 
-  it('add / edit / delete / transfer / boot：支持完整日常读写操作与 --version / -- 选项分隔', async () => {
+  it('add / edit / delete / boot：经 MCP 与 /v1/boot 完成日常读写，支持 --version', async () => {
     const out1 = captureOut()
     expect(
       await addCommand(
         [
           '管道测试',
-          '--circle',
-          'personal',
           '--topic',
           'notes,ci',
-          '--when',
-          'realm=work',
-          '--when',
-          'project=kioku',
-          '--sensitivity',
-          '私密',
-          '--priority',
-          '4',
+          '--env',
+          'mac',
+          '--realm',
+          'work',
+          '--project',
+          'kioku',
+          '--runtime',
+          'claudecode',
+          '--pinned',
+          '--disclosure',
+          '写 CI 配置时参考',
+          '--valid-to',
+          '2026-12-31T23:59:00+08:00',
         ],
         {
           env,
@@ -589,44 +553,25 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     ).toBe(0)
     expect(out1.read()).toContain('已创建记忆')
     expect(out1.read()).toContain('m-new234')
-    expect(lastRequests.at(-1)?.url).toBe('/v1/entries')
-    expect(lastRequests.at(-1)?.body).toEqual({
-      circle: 'personal',
-      title: '管道测试',
-      content: '通过管道写入的内容',
-      topics: ['notes', 'ci'],
-      when: { realm: ['work'], project: ['kioku'] },
-      sensitivity: 'private',
-      priority: 4,
-    })
-
-    const blockedOut = captureOut()
-    const secretSample = 'line1\nvalue = mock-secret-marker\n'
-    const codeBlocked = await addCommand(['--title', '密钥检查', '--content', secretSample], {
-      env,
-      out: blockedOut.stream,
-      stdin: Object.assign(Readable.from([]), { isTTY: false }),
-    })
-    expect(codeBlocked).toBe(1)
-    expect(blockedOut.read()).toContain('正文第 2 行：sk')
-    expect(blockedOut.read()).toContain('--plaintext-ok')
-    expect(blockedOut.read()).not.toContain('mock-secret-marker')
-
-    const retryOut = captureOut()
-    const codeOk = await addCommand(
-      ['--title', '密钥检查', '--content', secretSample, '--plaintext-ok'],
-      {
-        env,
-        out: retryOut.stream,
-        stdin: Object.assign(Readable.from([]), { isTTY: false }),
+    expect(lastRequests.at(-1)).toMatchObject({
+      url: '/v1/mcp',
+      tool: 'kioku_create',
+      args: {
+        title: '管道测试',
+        content: '通过管道写入的内容',
+        topics: ['notes', 'ci'],
+        envs: ['mac'],
+        realms: ['work'],
+        projects: ['kioku'],
+        runtimes: ['claudecode'],
+        is_pinned: true,
+        disclosure: '写 CI 配置时参考',
+        valid_to: '2026-12-31T23:59:00+08:00',
       },
-    )
-    expect(codeOk).toBe(0)
-    expect(lastRequests.at(-1)?.body?.plaintextOk).toBe(true)
-    expect(lastRequests.at(-1)?.body?.allowPlaintext).toBeUndefined()
+    })
 
     await expect(
-      addCommand(['标题', '--when', 'bad-when', '--content', 'abc'], {
+      addCommand(['标题', '--circle', 'personal', '--content', 'abc'], {
         env,
         out: captureOut().stream,
       }),
@@ -638,40 +583,52 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
       }),
     ).rejects.toThrow(UsageError)
 
-    const validToOut = captureOut()
-    expect(
-      await addCommand(
-        [
-          '--title',
-          '时效记忆',
-          '--content',
-          '限时规则',
-          '--glossary',
-          '发布,构建',
-          '--valid-to',
-          '2026-12-31T23:59:00+08:00',
-        ],
-        { env, out: validToOut.stream },
-      ),
-    ).toBe(0)
-    expect(lastRequests.at(-1)?.body).toMatchObject({
-      glossary: ['发布', '构建'],
-      validTo: '2026-12-31T23:59:00+08:00',
-    })
-
     const editOut = captureOut()
     expect(
       await editCommand(
-        ['m-234567', '--title', '新标题', '--valid-to', 'clear', '--expected-version', '3'],
+        [
+          'm-234567',
+          '--title',
+          '新标题',
+          '--env',
+          'clear',
+          '--unpinned',
+          '--disclosure',
+          'clear',
+          '--valid-to',
+          'clear',
+          '--expected-version',
+          '3',
+        ],
         { env, out: editOut.stream },
       ),
     ).toBe(0)
     expect(editOut.read()).toContain('已更新记忆')
+    expect(editOut.read()).toContain('v4') // lint-comments: allow
     expect(lastRequests.at(-1)).toMatchObject({
-      method: 'PATCH',
-      url: '/v1/entries',
-      body: { id: 'm-234567', title: '新标题', validTo: null, expectedVersion: 3 },
+      url: '/v1/mcp',
+      tool: 'kioku_update',
+      args: {
+        id: 'm-234567',
+        title: '新标题',
+        envs: [],
+        is_pinned: false,
+        disclosure: null,
+        valid_to: null,
+        expected_version: 3,
+      },
     })
+
+    await expect(
+      editCommand(['m-234567', '--pinned', '--unpinned'], { env, out: captureOut().stream }),
+    ).rejects.toThrow(UsageError)
+    await expect(
+      editCommand(['m-234567'], {
+        env,
+        out: captureOut().stream,
+        stdin: { isTTY: false } as never,
+      }),
+    ).rejects.toThrow(UsageError)
 
     await expect(
       deleteCommand(['m-234567'], {
@@ -682,25 +639,29 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     ).rejects.toThrow('--yes')
 
     const delOut = captureOut()
-    expect(await deleteCommand(['m-234567', '--yes'], { env, out: delOut.stream })).toBe(0)
+    expect(
+      await deleteCommand(['m-234567', '--yes', '--expected-version', '4'], {
+        env,
+        out: delOut.stream,
+      }),
+    ).toBe(0)
     expect(delOut.read()).toContain('已删除记忆')
-    expect(lastRequests.at(-1)?.method).toBe('DELETE')
-
-    const trOut = captureOut()
-    expect(await transferCommand(['m-234567', '--to', 'team'], { env, out: trOut.stream })).toBe(0)
-    expect(trOut.read()).toContain('已迁移记忆')
-    expect(trOut.read()).toContain('team')
     expect(lastRequests.at(-1)).toMatchObject({
-      method: 'POST',
-      url: '/v1/entries/transfer',
-      body: { id: 'm-234567', toCircle: 'team' },
+      url: '/v1/mcp',
+      tool: 'kioku_delete',
+      args: { id: 'm-234567', expected_version: 4 },
     })
 
     const bootOut = captureOut()
-    expect(await bootCommand([], { env, out: bootOut.stream })).toBe(0)
-    expect(bootOut.read()).toContain('表达风格')
-    expect(bootOut.read()).toContain('代码规范优先')
-    expect(bootOut.read()).toContain('m-888888')
+    expect(await bootCommand(['--project', 'kioku'], { env, out: bootOut.stream })).toBe(0)
+    const bootText = bootOut.read()
+    expect(bootText).toContain('常驻记忆（1）')
+    expect(bootText).toContain('代码规范优先')
+    expect(bootText).toContain('近期会话摘要（1）')
+    expect(bootText).toContain('昨日发布复盘')
+    expect(bootText).toContain('字数预算外（1）')
+    expect(bootText).toContain('m-888888')
+    expect(lastRequests.at(-1)?.url).toBe('/v1/boot?project=kioku')
 
     expect(parseEditorCommand('"/Applications/VS Code.app/code" --wait')).toEqual([
       '/Applications/VS Code.app/code',

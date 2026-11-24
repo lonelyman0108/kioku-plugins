@@ -31,7 +31,7 @@ beforeAll(async () => {
     req.on('end', () => {
       if (req.url === '/v1/health') {
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', version: '0.4.0', api: 2 }))
+        res.end(JSON.stringify({ status: 'ok', version: '0.6.0', api: 3 }))
         return
       }
       if (req.url === '/v1/setup/status') {
@@ -73,26 +73,21 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            primaryCircle: {
-              id: '11111111-2222-3333-4444-555555555555',
-              slug: 'personal',
-              name: '默认记忆圈',
-              kind: 'personal',
+            accountName: 'owner',
+            key: {
+              id: 'key-agy',
+              name: 'Antigravity',
+              prefix: 'kioku_agy',
+              runtimeFamily: 'agy',
+              envs: [],
+              allowedRealms: null,
+              canWrite: true,
+              canResolveCredentials: false,
             },
-            linkedCircles: [],
             client: {
-              id: 'a',
-              circleId: '11111111-2222-3333-4444-555555555555',
               slug: 'agy',
               name: 'Antigravity',
               runtimeFamily: 'agy',
-            },
-            persona: null,
-            scopes: {
-              readKinds: ['entry', 'fact', 'episode'],
-              writeKinds: ['entry'],
-              maxSensitivity: 'private',
-              credentials: 'use',
             },
           }),
         )
@@ -152,7 +147,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('新管理子命令集', () => {
-  it('status [--json]：渲染 Strata 方框卡片、折叠未检测客户端，--json 不含密钥', async () => {
+  it('status [--json]：渲染方框卡片、折叠未检测客户端，--json 不含密钥', async () => {
     await writeProfile('agy', { url: base, key: KEY }, env)
     mkdirSync(join(dir, 'agy'), { recursive: true })
 

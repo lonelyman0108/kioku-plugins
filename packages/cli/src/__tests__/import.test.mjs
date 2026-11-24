@@ -13,24 +13,13 @@ import { posixOnly } from '../../../core/lib/__tests__/fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 
-function canonicalSig(raw) {
-  if (!raw || typeof raw !== 'object') return '{}'
-  const out = {}
-  for (const key of Object.keys(raw).sort()) {
-    const vals = [
-      ...new Set((raw[key] ?? []).map((v) => String(v).trim().toLowerCase()).filter(Boolean)),
-    ].sort()
-    if (vals.length) out[key] = vals
-  }
-  return JSON.stringify(out)
-}
-
-// 假的 Kioku：whoami 与按标题/短 ID/旧坐标读、新建、修改词条。store 是库里现有的词条，rejects 是写入时要拒绝的标题
+// 假的 Kioku V2：whoami 与通过 MCP 读、新建、修改扁平词条。store 是库里现有的词条，rejects 是写入时要拒绝的标题
 let server
 let base
 let requests = []
 let store
 let rejects
+let canWrite = true
 const BASE30 = '23456789abcdefghjkmnpqrstvwxyz'
 function encodeShortId(n) {
   let rem = n
@@ -44,16 +33,23 @@ function encodeShortId(n) {
 
 let seq = 0
 
-function findInStore(circle, ref) {
-  const candidates = [...store.values()].filter((item) => !circle || item.circleSlug === circle)
+function findInStore(ref) {
+  const candidates = [...store.values()]
   const byId = candidates.find((item) => item.shortId === ref)
   if (byId) return { entry: byId }
-  const byLegacy = candidates.find((item) => item.legacyUri === ref)
-  if (byLegacy) return { entry: byLegacy }
   const byTitle = candidates.filter((item) => item.title === ref)
   if (byTitle.length === 1) return { entry: byTitle[0] }
   if (byTitle.length > 1) return { conflict: byTitle.length }
   return {}
+}
+
+function entryDetail(entry) {
+  return {
+    entry,
+    outboundLinks: [],
+    backlinks: [],
+    credentialRefs: [],
+  }
 }
 
 beforeAll(async () => {
@@ -64,108 +60,130 @@ beforeAll(async () => {
     req.on('end', () => {
       const url = new URL(req.url, 'http://x')
       const body = raw ? JSON.parse(raw) : null
-      requests.push({
-        method: req.method,
-        path: url.pathname,
-        query: Object.fromEntries(url.searchParams.entries()),
-        auth: req.headers.authorization,
-        body,
-      })
       const send = (status, data) => {
         res.writeHead(status, { 'content-type': 'application/json' })
         res.end(JSON.stringify(data))
       }
+      if (req.method === 'GET' && url.pathname === '/v1/health') {
+        return send(200, { status: 'ok', api: 3, version: '2.0.0' })
+      }
+
+      const rpcId = body?.id ?? 1
+      const toolName = url.pathname === '/v1/mcp' ? body?.params?.name : undefined
+      const toolArgs = url.pathname === '/v1/mcp' ? (body?.params?.arguments ?? {}) : undefined
+      requests.push({
+        method: req.method,
+        path: url.pathname,
+        tool: toolName,
+        args: toolArgs,
+        auth: req.headers.authorization,
+        body,
+      })
+
+      const sendMcp = (structured, text = 'ok') =>
+        send(200, {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            content: [{ type: 'text', text }],
+            structuredContent: structured,
+          },
+        })
+      const sendMcpError = (status, error) =>
+        send(200, {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            isError: true,
+            content: [{ type: 'text', text: error }],
+            structuredContent: { status, error },
+          },
+        })
+
       if (url.pathname === '/v1/whoami') {
         return send(200, {
-          primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
-          linkedCircles: [],
+          accountName: 'owner',
+          key: {
+            id: 'k-1',
+            name: 'Claude Code',
+            prefix: 'kioku_te',
+            runtimeFamily: 'claudecode',
+            envs: [],
+            allowedRealms: null,
+            canWrite,
+            canResolveCredentials: false,
+          },
           client: {
-            id: 'c-cc',
-            circleId: 'c1',
             slug: 'cc',
             name: 'Claude Code',
             runtimeFamily: 'claudecode',
           },
-          persona: null,
-          scopes: { readKinds: ['entry'], writeKinds: ['entry'] },
+          primaryCircle: { slug: 'default', name: 'Kioku', kind: 'personal' },
         })
       }
-      if (req.method === 'GET' && url.pathname === '/v1/entries') {
-        const resMatch = findInStore(url.searchParams.get('circle'), url.searchParams.get('id'))
-        if (resMatch.conflict) {
-          return send(409, { error: '标题匹配到多条词条，请改用短 ID 访问' })
-        }
-        return resMatch.entry ? send(200, resMatch.entry) : send(404, { error: '不存在或不可见' })
-      }
-      const key = body?.title ?? body?.id
-      const rejected = rejects.get(key)
-      // drop：不回答，直接断开，像网络断了
-      if (rejected?.drop) return req.socket.destroy()
-      if (rejected) return send(rejected.status, rejected.body)
 
-      if (req.method === 'POST' && url.pathname === '/v1/entries') {
-        const shortId = encodeShortId(seq++)
-        const when = body.when ?? {}
-        const record = {
-          id: `uuid-${seq}`,
-          shortId,
-          circleId: 'c1',
-          circleSlug: body.circle ?? 'personal',
-          kind: 'entry',
-          title: body.title,
-          sensitivity: 'private',
-          provenance: 'agent',
-          originScope: 'app:cc',
-          topics: body.topics ?? [],
-          realms: when.realm ?? [],
-          priority: 2,
-          disclosure: body.disclosure ?? null,
-          glossary: [],
-          validFrom: '2026-01-01T00:00:00Z',
-          validTo: null,
-          version: 2,
-          variants: [
-            {
-              id: `v-${seq}`,
-              when,
-              whenSignature: canonicalSig(when),
-              sortOrder: 0,
-              content: body.content,
-              updatedAt: '2026-01-01T00:00:00Z',
-            },
-          ],
-          otherVariants: [],
-          links: [],
-          createdAt: '2026-01-01T00:00:00Z',
-          updatedAt: '2026-01-01T00:00:00Z',
-        }
-        store.set(`${record.circleSlug}::${shortId}`, record)
-        return send(201, record)
-      }
-
-      if (req.method === 'PATCH' && url.pathname === '/v1/entries') {
-        const { entry: existing } = findInStore(body.circle, body.id)
-        if (!existing) return send(404, { error: '不存在或不可见' })
-        const bySig = new Map((existing.variants ?? []).map((v) => [v.whenSignature, v]))
-        if (Array.isArray(body.removeVariantWhens)) {
-          for (const rem of body.removeVariantWhens) {
-            bySig.delete(canonicalSig(rem))
+      if (req.method === 'POST' && url.pathname === '/v1/mcp') {
+        if (toolName === 'kioku_get') {
+          const resMatch = findInStore(toolArgs.id)
+          if (resMatch.conflict) {
+            return sendMcpError(409, '标题匹配到多条词条，请改用短 ID 访问')
           }
+          return resMatch.entry
+            ? sendMcp(entryDetail(resMatch.entry))
+            : sendMcpError(404, '记忆不存在或无权读取')
         }
-        const when = body.when ?? {}
-        const sig = canonicalSig(when)
-        existing.version += 1
-        existing.title = body.title ?? existing.title
-        bySig.set(sig, {
-          id: existing.variants?.[0]?.id ?? 'var-1',
-          when,
-          whenSignature: sig,
-          sortOrder: bySig.size,
-          content: body.content,
-          updatedAt: '2026-01-02T00:00:00Z',
-        })
-        existing.variants = [...bySig.values()]
-        return send(200, existing)
+
+        const key = toolArgs?.title ?? toolArgs?.id
+        const rejected = rejects.get(key)
+        // drop：不回答，直接断开，像网络断了
+        if (rejected?.drop) return req.socket.destroy()
+        if (rejected) return sendMcpError(rejected.status, rejected.error)
+
+        if (toolName === 'kioku_create') {
+          const shortId = encodeShortId(seq++)
+          const record = {
+            id: `uuid-${seq}`,
+            shortId,
+            kind: 'entry',
+            title: toolArgs.title,
+            content: toolArgs.content,
+            disclosure: toolArgs.disclosure ?? null,
+            isPinned: Boolean(toolArgs.is_pinned),
+            envs: toolArgs.envs ?? [],
+            realms: toolArgs.realms ?? [],
+            projects: toolArgs.projects ?? [],
+            runtimes: toolArgs.runtimes ?? [],
+            topics: toolArgs.topics ?? [],
+            validTo: toolArgs.valid_to ?? null,
+            version: 2,
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          }
+          store.set(shortId, record)
+          return sendMcp(entryDetail(record))
+        }
+
+        if (toolName === 'kioku_update') {
+          const { entry: existing } = findInStore(toolArgs.id)
+          if (!existing) return sendMcpError(404, '记忆不存在或无权读取')
+          if (
+            toolArgs.expected_version !== undefined &&
+            toolArgs.expected_version !== existing.version
+          ) {
+            return sendMcpError(409, '版本已变更')
+          }
+          existing.version += 1
+          existing.title = toolArgs.title ?? existing.title
+          existing.content = toolArgs.content ?? existing.content
+          if (toolArgs.projects !== undefined) existing.projects = toolArgs.projects
+          if (toolArgs.runtimes !== undefined) existing.runtimes = toolArgs.runtimes
+          if (toolArgs.topics !== undefined) existing.topics = toolArgs.topics
+          if (toolArgs.disclosure !== undefined) existing.disclosure = toolArgs.disclosure
+          existing.updatedAt = '2026-01-02T00:00:00Z'
+          return sendMcp(entryDetail(existing))
+        }
+
+        return sendMcpError(400, `未知工具 ${toolName}`)
       }
 
       return send(404, { error: 'not found' })
@@ -182,6 +200,7 @@ beforeEach(() => {
   requests = []
   store = new Map()
   rejects = new Map()
+  canWrite = true
   seq = 0
   dir = mkdtempSync(join(tmpdir(), 'kioku-import-'))
   env = { KIOKU_SERVER_URL: base, KIOKU_API_KEY: KEY, CLAUDE_CONFIG_DIR: join(dir, 'claude') }
@@ -210,10 +229,10 @@ async function run(args, { answer, tty = false } = {}) {
   })
   return { code, text }
 }
-const writes = () => requests.filter((r) => r.method !== 'GET')
+const writes = () => requests.filter((r) => r.tool === 'kioku_create' || r.tool === 'kioku_update')
 
 describe('本地记忆的解析', () => {
-  it('坐标里的一段：只留小写字母、数字、_ 与 -，别的换成 -；什么都不剩时用摘要', () => {
+  it('标签标识里的一段：只留小写字母、数字、_ 与 -，别的换成 -；什么都不剩时用摘要', () => {
     expect(segment('Local HTML  not_Artifact!')).toBe('local-html-not_artifact')
     expect(segment('--a--b--')).toBe('a-b')
     expect(segment('x'.repeat(100))).toHaveLength(64)
@@ -230,7 +249,7 @@ describe('本地记忆的解析', () => {
 
   it('文件头：键值与缩进一层的键值；没有文件头时正文就是全文', () => {
     const parsed = frontmatter(
-      '﻿---\nname: a\ndescription: "带引号"\nmetadata:\n  type: user\n---\n\n正文',
+      '\ufeff---\nname: a\ndescription: "带引号"\nmetadata:\n  type: user\n---\n\n正文',
     )
     expect(parsed.meta).toMatchObject({ name: 'a', description: '带引号', 'metadata.type': 'user' })
     expect(parsed.body.trim()).toBe('正文')
@@ -281,7 +300,7 @@ describe('本地记忆的解析', () => {
 })
 
 describe('kioku import --from claude-code', () => {
-  it('按类型生成切面与主题标签，列出计划，--dry-run 不写', async () => {
+  it('按类型生成场景标签与主题标签，列出计划，--dry-run 不写', async () => {
     memory('-x-code-kioku', 'who-am-i', 'user')
     memory('-x-code-kioku', 'no-artifact', 'feedback')
     memory('-x-code-kioku', 'release-plan', 'project')
@@ -305,61 +324,32 @@ describe('kioku import --from claude-code', () => {
     expect(result.text).not.toContain(KEY)
   })
 
-  it('--yes 写入到 /v1/entries 并带上切面、主题标签与 --circle；支持兼容旧 URI 兜底比对', async () => {
+  it('--yes 通过 MCP kioku_create 写入扁平标签与正文，不改动本地文件', async () => {
     memory('-x-code-kioku', 'who-am-i', 'user', '用户是后端开发。')
     const before = readFileSync(
       join(dir, 'claude/projects/-x-code-kioku/memory/who-am-i.md'),
       'utf8',
     )
-    const result = await run(['--from', 'claude-code', '--circle', 'personal', '--yes'])
+    const result = await run(['--from', 'claude-code', '--yes'])
     expect(result.code).toBe(0)
-    expect(writes()).toEqual([
-      {
-        method: 'POST',
-        path: '/v1/entries',
-        query: {},
-        auth: `Bearer ${KEY}`,
-        body: {
-          circle: 'personal',
-          title: 'who-am-i 的说明',
-          content: '用户是后端开发。',
-          when: { project: ['x-code-kioku'] },
-          topics: ['claude-code', 'user'],
-          disclosure: 'who-am-i 的说明',
-        },
+    expect(writes()).toHaveLength(1)
+    expect(writes()[0]).toMatchObject({
+      method: 'POST',
+      path: '/v1/mcp',
+      tool: 'kioku_create',
+      auth: `Bearer ${KEY}`,
+      args: {
+        title: 'who-am-i 的说明',
+        content: '用户是后端开发。',
+        projects: ['x-code-kioku'],
+        topics: ['claude-code', 'user'],
+        disclosure: 'who-am-i 的说明',
       },
-    ])
+    })
     expect(result.text).toContain('写入 1 条')
     expect(
       readFileSync(join(dir, 'claude/projects/-x-code-kioku/memory/who-am-i.md'), 'utf8'),
     ).toBe(before)
-
-    // 已有词条标题不同但带有 legacyUri 时，按标题 404 后自动兜底按 legacyUri 匹配
-    store.set('personal::m-legacy1', {
-      id: 'uuid-legacy',
-      shortId: 'm-legacy1',
-      circleId: 'c1',
-      circleSlug: 'personal',
-      kind: 'entry',
-      title: '旧标题',
-      legacyUri: 'user://about/x-code-kioku/legacy-note',
-      sensitivity: 'private',
-      version: 4,
-      variants: [
-        {
-          id: 'v-leg',
-          when: { project: ['x-code-kioku'] },
-          whenSignature: '{"project":["x-code-kioku"]}',
-          sortOrder: 0,
-          content: '旧库里的相同正文',
-        },
-      ],
-    })
-    memory('-x-code-kioku', 'legacy-note', 'user', '旧库里的相同正文', '新描述标题')
-    requests = []
-    const dedup = await run(['--from', 'claude-code', '--yes'])
-    expect(dedup.text).toContain('已有且一样 2 条')
-    expect(writes()).toHaveLength(0)
   })
 
   it('重复运行不重复写；内容变了的默认跳过，--overwrite 才覆盖并带上 shortId 与版本', async () => {
@@ -381,17 +371,19 @@ describe('kioku import --from claude-code', () => {
     expect(forced.code).toBe(0)
     expect(writes()).toHaveLength(1)
     expect(writes()[0]).toMatchObject({
-      method: 'PATCH',
-      path: '/v1/entries',
-      body: {
+      method: 'POST',
+      path: '/v1/mcp',
+      tool: 'kioku_update',
+      args: {
         id: 'm-222222',
-        circle: 'personal',
         title: 'a 的说明',
         content: '第二版',
-        expectedVersion: 2,
+        projects: ['x-code-kioku'],
+        topics: ['claude-code', 'user'],
+        disclosure: 'a 的说明',
+        expected_version: 2,
       },
     })
-    expect(writes()[0].body.expectedId).toBeUndefined()
   })
 
   it('在终端里问一句，答 y 才写；不在终端里又没带 --yes 时不写', async () => {
@@ -406,20 +398,18 @@ describe('kioku import --from claude-code', () => {
     expect(yes.text).toContain('写入 1 条')
   })
 
-  it('疑似明文的不写：列出第几行、哪一类，不带值；别的照常写，退出码 1', async () => {
-    memory('-x-code-kioku', 'secretive', 'user', '密码是 hunter-22-secret')
+  it('单条写入被拒绝时列出原因并脱敏访问密钥，别的照常写，退出码 1', async () => {
+    memory('-x-code-kioku', 'bad-entry', 'user', '测试正文')
     memory('-x-code-kioku', 'fine', 'user')
-    rejects.set('secretive 的说明', {
+    rejects.set('bad-entry 的说明', {
       status: 400,
-      body: { error: `正文里有疑似明文凭据 ${KEY}`, plaintext: [{ line: 1, kind: 'password' }] },
+      error: `标题格式不符合要求（${KEY}）`,
     })
     const result = await run(['--from', 'claude-code', '--yes'])
     expect(result.code).toBe(1)
     expect(result.text).toContain('写入 1 条')
-    expect(result.text).toContain('没有写入  secretive 的说明')
-    expect(result.text).toContain('正文第 1 行：password')
-    expect(result.text).toContain('把值存成凭据')
-    expect(result.text).not.toContain('hunter-22-secret')
+    expect(result.text).toContain('没有写入  bad-entry 的说明')
+    expect(result.text).toContain('标题格式不符合要求')
     expect(result.text).not.toContain(KEY)
   })
 
@@ -439,7 +429,7 @@ describe('kioku import --from claude-code', () => {
     expect(result.text).toContain('不迁 3 条')
   })
 
-  it('--path 指到某个项目的 memory 目录时只读它；指错了、没有记忆分别说明', async () => {
+  it('--path 指到某个项目的 memory 目录时只读它；指错了、只读密钥、没有记忆分别说明', async () => {
     memory('-x-code-kioku', 'a', 'user')
     memory('-x-code-other', 'b', 'user')
     const one = await run([
@@ -454,9 +444,9 @@ describe('kioku import --from claude-code', () => {
     await expect(run(['--from', 'claude-code', '--path', join(dir, 'nope')])).rejects.toThrow(
       '未找到',
     )
-    await expect(
-      run(['--from', 'claude-code', '--circle', 'nope-circle', '--dry-run']),
-    ).rejects.toThrow('未找到记忆圈：nope-circle')
+    canWrite = false
+    await expect(run(['--from', 'claude-code', '--dry-run'])).rejects.toThrow('只读')
+    canWrite = true
     mkdirSync(join(dir, 'empty'))
     const none = await run(['--from', 'claude-code', '--path', join(dir, 'empty')])
     expect(none.text).toContain('没有可以迁的记忆')
@@ -469,8 +459,14 @@ describe('kioku import --from claude-code', () => {
     expect(requests).toHaveLength(0)
   })
 
-  it('参数：要写来源；认得但不可迁移的来源说明原因', async () => {
-    for (const args of [[], ['--from'], ['--from', 'nope'], ['--from', 'claude-code', '--x']]) {
+  it('参数：要写来源；拒绝已移除选项；认得但不可迁移的来源说明原因', async () => {
+    for (const args of [
+      [],
+      ['--from'],
+      ['--from', 'nope'],
+      ['--from', 'claude-code', '--x'],
+      ['--from', 'claude-code', '--circle', 'personal'],
+    ]) {
       await expect(run(args), args.join(' ')).rejects.toThrow(UsageError)
     }
     await expect(run(['--from', 'codex'])).rejects.toThrow('格式未公开')
@@ -479,23 +475,23 @@ describe('kioku import --from claude-code', () => {
 })
 
 describe('kioku import --from hermes / openclaw', () => {
-  it('Hermes：MEMORY.md 带 runtime=hermes，USER.md 通用，按分节号或二级标题拆并保持标题不碰撞', async () => {
+  it('Hermes：MEMORY.md 带 runtimes=["hermes"]，USER.md 通用，按分节号或二级标题拆并保持标题不碰撞', async () => {
     env.HERMES_HOME = join(dir, 'hermes')
     file('hermes/memories/MEMORY.md', '部署用 compose\n\u00a7\n测试先起本地库\n')
     file('hermes/memories/USER.md', '## Reply style\n简短\n## 时区\n东八区\n')
     const result = await run(['--from', 'hermes', '--yes'])
     expect(result.code).toBe(0)
-    const sent = writes().map((r) => r.body)
+    const sent = writes().map((r) => r.args)
     expect(sent).toHaveLength(4)
     expect(sent[0]).toMatchObject({
       title: expect.stringMatching(/^Hermes 的记忆（[0-9a-f]{6}）$/),
-      when: { runtime: ['hermes'] },
+      runtimes: ['hermes'],
       topics: ['hermes', 'notes'],
       content: '部署用 compose',
     })
     expect(sent[1]).toMatchObject({
       title: expect.stringMatching(/^Hermes 的记忆（[0-9a-f]{6}）$/),
-      when: { runtime: ['hermes'] },
+      runtimes: ['hermes'],
       topics: ['hermes', 'notes'],
       content: '测试先起本地库',
     })
@@ -505,7 +501,7 @@ describe('kioku import --from hermes / openclaw', () => {
       topics: ['hermes', 'about'],
       content: '## Reply style\n简短',
     })
-    expect(sent[2].when).toBeUndefined()
+    expect(sent[2].runtimes).toBeUndefined()
     expect(sent[3]).toMatchObject({
       title: '时区',
       topics: ['hermes', 'about'],
@@ -537,10 +533,10 @@ describe('kioku import --from hermes / openclaw', () => {
     file('hermes/memories/MEMORY.md', ['新的', '甲', '丙'].join(`\n${SIGN}\n`))
     const again = await run(['--from', 'hermes', '--yes'])
     expect(again.text).toContain('新建 1 条，已有且一样 2 条')
-    expect(writes().map((r) => r.body.content)).toEqual(['新的'])
+    expect(writes().map((r) => r.args.content)).toEqual(['新的'])
   })
 
-  it('两个来源迁进同一个记忆圈时不落到同一个标题', async () => {
+  it('两个来源迁入时不落到同一个标题', async () => {
     env.HERMES_HOME = join(dir, 'hermes')
     env.OPENCLAW_HOME = join(dir, 'openclaw')
     file('hermes/memories/MEMORY.md', '同一段话')
@@ -548,7 +544,7 @@ describe('kioku import --from hermes / openclaw', () => {
     await run(['--from', 'hermes', '--yes'])
     const second = await run(['--from', 'openclaw', '--yes'])
     expect(second.text).toContain('新建 1 条')
-    expect(new Set(writes().map((r) => r.body.title)).size).toBe(2)
+    expect(new Set(writes().map((r) => r.args.title)).size).toBe(2)
   })
 })
 
@@ -568,7 +564,7 @@ describe('kioku import：读文件与写入的边界', () => {
     expect(result.text).toContain('是符号链接，不读')
     expect(result.text).toContain('文件太大，不读')
     expect(result.text).toContain('不是文本文件')
-    expect(writes().map((r) => r.body.title)).toEqual(['ok 的说明'])
+    expect(writes().map((r) => r.args.title)).toEqual(['ok 的说明'])
     expect(JSON.stringify(requests)).not.toMatch(/不该被读到|别处的文件/)
   })
 
@@ -584,7 +580,7 @@ describe('kioku import：读文件与写入的边界', () => {
     file('claude/projects/-x-code-kioku/memory/plain.md', '---\n\n只是以分隔线开头\n')
     const result = await run(['--from', 'claude-code', '--yes'])
     expect(result.text).toContain('文件头没有结尾的 ---')
-    const bodies = Object.fromEntries(writes().map((r) => [r.body.title, r.body.content]))
+    const bodies = Object.fromEntries(writes().map((r) => [r.args.title, r.args.content]))
     expect(bodies.rule).toBe('第一段\n\n---\n\n第二段\n| a | b |\n|---|---|')
     expect(bodies.plain).toBe('---\n\n只是以分隔线开头')
     expect(Object.keys(bodies)).toHaveLength(2)
@@ -665,69 +661,61 @@ describe('kioku import：读文件与写入的边界', () => {
     expect(requests.every((r) => r.auth === 'Bearer kioku_cc_key')).toBe(true)
   })
 
-  it('跨项目同名描述自动按项目消歧，且已有重复标题时优先按 legacyUri 匹配避免 409', async () => {
+  it('跨项目同名描述自动按项目消歧；服务端标题冲突 409 时按项目后缀消歧避免失败', async () => {
     memory('-x-code-alpha', 'same', 'user', 'Alpha 正文', '相同描述')
     memory('-x-code-beta', 'same', 'user', 'Beta 正文', '相同描述')
     const first = await run(['--from', 'claude-code', '--yes'])
     expect(first.code).toBe(0)
     expect(first.text).toContain('写入 2 条')
-    expect(writes().map((r) => r.body.title)).toEqual(['相同描述', '相同描述（x-code-beta）'])
+    expect(writes().map((r) => r.args.title)).toEqual(['相同描述', '相同描述（x-code-beta）'])
 
-    // 即使 store 里另有一条带有相同标题且 legacyUri 不同的词条，按 legacyUri 优先仍能精确命中而不报 409
-    store.set('personal::m-dup1', {
+    // 若服务端已有两条同名词条导致 kioku_get 报 409，导入时自动切换为带项目后缀的标题
+    store.set('m-dup1', {
       id: 'uuid-dup1',
       shortId: 'm-dup1',
-      circleId: 'c1',
-      circleSlug: 'personal',
       kind: 'entry',
       title: '冲突标题',
-      legacyUri: 'user://about/x-code-kioku/dup-note',
-      sensitivity: 'private',
+      content: '项目一旧内容',
+      disclosure: null,
+      isPinned: false,
+      envs: [],
+      realms: [],
+      projects: ['x-code-one'],
+      runtimes: [],
+      topics: [],
+      validTo: null,
       version: 2,
-      variants: [
-        {
-          id: 'var-d1',
-          when: { project: ['x-code-kioku'] },
-          whenSignature: '{"project":["x-code-kioku"]}',
-          sortOrder: 0,
-          content: '旧版内容',
-        },
-      ],
     })
-    store.set('personal::m-dup2', {
+    store.set('m-dup2', {
       id: 'uuid-dup2',
       shortId: 'm-dup2',
-      circleId: 'c1',
-      circleSlug: 'personal',
       kind: 'entry',
       title: '冲突标题',
-      legacyUri: 'user://about/other-project/dup-note',
-      sensitivity: 'private',
+      content: '项目二旧内容',
+      disclosure: null,
+      isPinned: false,
+      envs: [],
+      realms: [],
+      projects: ['x-code-two'],
+      runtimes: [],
+      topics: [],
+      validTo: null,
       version: 1,
-      variants: [
-        {
-          id: 'var-d2',
-          when: { project: ['other-project'] },
-          whenSignature: '{"project":["other-project"]}',
-          sortOrder: 0,
-          content: '别的项目',
-        },
-      ],
     })
-    memory('-x-code-kioku', 'dup-note', 'user', '旧版内容', '冲突标题')
+    memory('-x-code-kioku', 'dup-note', 'user', '新项目内容', '冲突标题')
     requests = []
-    const matched = await run([
+    const disambiguated = await run([
       '--from',
       'claude-code',
       '--path',
       join(dir, 'claude/projects/-x-code-kioku/memory'),
       '--yes',
     ])
-    expect(matched.code).toBe(0)
-    expect(matched.text).toContain('已有，内容一样  冲突标题（m-dup1）')
+    expect(disambiguated.code).toBe(0)
+    expect(writes().map((r) => r.args.title)).toEqual(['冲突标题（x-code-kioku）'])
   })
 
-  it('fromFiles 超长重名标题保留摘要后缀且不截断尾标，--overwrite 替换通用变体时传 removeVariantWhens', async () => {
+  it('fromFiles 超长重名标题保留摘要后缀且不截断尾标，--overwrite 更新已有词条时带项目标签与版本', async () => {
     const longHeading = '超'.repeat(200)
     file(
       'hermes/memories/MEMORY.md',
@@ -739,52 +727,48 @@ describe('kioku import：读文件与写入的边界', () => {
       const hermesRun = await run(['--from', 'hermes', '--yes'])
       expect(hermesRun.code).toBe(0)
       expect(hermesRun.text).toContain('写入 2 条')
-      const createdTitles = writes().map((r) => r.body.title)
+      const createdTitles = writes().map((r) => r.args.title)
       expect(createdTitles[0]).toBe(longHeading)
       expect(createdTitles[1]).toMatch(/^超{192}（[0-9a-f]{6}）$/)
     } finally {
       env = { ...env, HERMES_HOME: oldHome }
     }
 
-    store.set('personal::m-gen1', {
+    store.set('m-gen1', {
       id: 'uuid-gen1',
       shortId: 'm-gen1',
-      circleId: 'c1',
-      circleSlug: 'personal',
       kind: 'entry',
-      title: '待升级切片',
-      sensitivity: 'private',
+      title: '待更新词条',
+      content: '通用旧正文',
+      disclosure: null,
+      isPinned: false,
+      envs: [],
+      realms: [],
+      projects: [],
+      runtimes: [],
+      topics: [],
+      validTo: null,
       version: 5,
-      variants: [
-        {
-          id: 'var-g1',
-          when: {},
-          whenSignature: '{}',
-          sortOrder: 0,
-          content: '通用旧正文',
-        },
-      ],
     })
-    memory('-x-code-kioku', 'upgrade-me', 'user', '新项目正文', '待升级切片')
+    memory('-x-code-kioku', 'upgrade-me', 'user', '新项目正文', '待更新词条')
     requests = []
     const upgraded = await run(['--from', 'claude-code', '--overwrite', '--yes'])
     expect(upgraded.code).toBe(0)
     expect(writes()).toHaveLength(1)
     expect(writes()[0]).toMatchObject({
-      method: 'PATCH',
-      path: '/v1/entries',
-      body: {
+      method: 'POST',
+      path: '/v1/mcp',
+      tool: 'kioku_update',
+      args: {
         id: 'm-gen1',
+        title: '待更新词条',
         content: '新项目正文',
-        when: { project: ['x-code-kioku'] },
-        removeVariantWhens: [{}],
-        expectedVersion: 5,
+        projects: ['x-code-kioku'],
+        expected_version: 5,
       },
     })
-    expect(store.get('personal::m-gen1').variants).toHaveLength(1)
-    expect(store.get('personal::m-gen1').variants[0].whenSignature).toBe(
-      '{"project":["x-code-kioku"]}',
-    )
+    expect(store.get('m-gen1').projects).toEqual(['x-code-kioku'])
+    expect(store.get('m-gen1').version).toBe(6)
   })
 
   it('分批 --path 导入、字母序更靠前的新项目与字面后缀冲突都不顶掉已有项目词条', async () => {
@@ -812,10 +796,11 @@ describe('kioku import：读文件与写入的边界', () => {
     expect(writes()).toHaveLength(1)
     expect(writes()[0]).toMatchObject({
       method: 'POST',
-      path: '/v1/entries',
-      body: {
+      path: '/v1/mcp',
+      tool: 'kioku_create',
+      args: {
         title: '编码规范（x-code-beta）',
-        when: { project: ['x-code-beta'] },
+        projects: ['x-code-beta'],
       },
     })
     const repeat = await run([
@@ -829,31 +814,28 @@ describe('kioku import：读文件与写入的边界', () => {
 
     // 若原本只迁过 x-code-gamma 的裸标题「架构」，之后新增字母序更靠前的 x-code-aaa 同名记忆，
     // 全量重跑时 x-code-aaa 自动带项目后缀新建，x-code-gamma 仍经 baseTitle 认出已有裸标题而不重复
-    store.set('personal::m-gamma1', {
+    store.set('m-gamma1', {
       id: 'uuid-gamma1',
       shortId: 'm-gamma1',
-      circleId: 'c1',
-      circleSlug: 'personal',
       kind: 'entry',
       title: '架构',
-      sensitivity: 'private',
+      content: 'Gamma 正文',
+      disclosure: null,
+      isPinned: false,
+      envs: [],
+      realms: [],
+      projects: ['x-code-gamma'],
+      runtimes: [],
+      topics: [],
+      validTo: null,
       version: 1,
-      variants: [
-        {
-          id: 'var-gam',
-          when: { project: ['x-code-gamma'] },
-          whenSignature: '{"project":["x-code-gamma"]}',
-          sortOrder: 0,
-          content: 'Gamma 正文',
-        },
-      ],
     })
     memory('-x-code-aaa', 'arch', 'user', 'AAA 新正文', '架构')
     memory('-x-code-gamma', 'arch', 'user', 'Gamma 正文', '架构')
     requests = []
     const fullScan = await run(['--from', 'claude-code', '--yes'])
     expect(fullScan.text).toContain('已有，内容一样  架构（m-gamma1）')
-    expect(writes().map((w) => w.body.title)).toContain('架构（x-code-aaa）')
+    expect(writes().map((w) => w.args.title)).toContain('架构（x-code-aaa）')
 
     // 同一批内若前一个项目字面恰好叫「部署（x-code-beta）」，后一个项目「部署」自动带哈希后缀而不被丢弃
     memory('-x-code-alpha', 'deploy-1', 'user', 'Alpha 部署', '部署')
@@ -861,7 +843,7 @@ describe('kioku import：读文件与写入的边界', () => {
     memory('-x-code-beta', 'deploy-1', 'user', 'Beta 部署', '部署')
     requests = []
     const clash = await run(['--from', 'claude-code', '--yes'])
-    const writtenTitles = writes().map((w) => w.body.title)
+    const writtenTitles = writes().map((w) => w.args.title)
     expect(writtenTitles).toContain('部署')
     expect(writtenTitles).toContain('部署（x-code-beta）')
     expect(writtenTitles.some((t) => /^部署（x-code-beta-[0-9a-f]{4}）$/.test(t))).toBe(true)

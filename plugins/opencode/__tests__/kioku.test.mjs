@@ -29,10 +29,7 @@ beforeAll(async () => {
       JSON.stringify({
         hostOutput: {
           mode: 'return_value',
-          value:
-            body.event === 'session.start'
-              ? { systemContext: context }
-              : { promptContext: context },
+          value: { context },
         },
       }),
     )

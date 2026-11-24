@@ -1,4 +1,4 @@
-// Strata 风格交互组件层：完全零外部依赖，使用 InlineScreen 原地局部重绘，
+// 终端交互组件层：完全零外部依赖，使用 InlineScreen 原地局部重绘，
 // 提供 intro / outro / note / log / select / multiselect / confirm / text / password / spinner，
 // 以及带宽松确认码框、倒计时与快捷键（[o] 打开浏览器 / [c] 复制链接 / [Esc] 取消）的浏览器授权界面。
 
@@ -10,7 +10,7 @@ import type { Env, Reader, Writer } from '../types.ts'
 import { copyToClipboard, osc8Link } from './clipboard.ts'
 import { createLineInput, lineInputValue, renderLineWindow, stepLineInput } from './lineInput.ts'
 import { createScreen, registerRawRestore } from './screen.ts'
-import { createTheme, renderBox, type StrataTheme } from './theme.ts'
+import { createTheme, renderBox, type CliTheme } from './theme.ts'
 import { displayWidth, padEndWidth, truncateWidth, wrapWidth } from './width.ts'
 
 export const CANCEL = Symbol('kioku:cancel')
@@ -576,7 +576,7 @@ export function renderDeviceAuthBox({
   linkCopied: boolean
   out?: { isTTY?: boolean; columns?: number }
   env?: Env
-  theme?: StrataTheme
+  theme?: CliTheme
 }): string {
   const cleanCode = plain(userCode)
   const cleanUrl = plain(verificationUrl)

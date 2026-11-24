@@ -25,7 +25,17 @@ const CLI_VERSION = (
   }
 ).version
 
-const LEGACY_TOOL_NAMES = new Set(['kioku_list', 'kioku_move', 'kioku_read', 'kioku_write'])
+const LEGACY_TOOL_NAMES = new Set([
+  'kioku_list',
+  'kioku_move',
+  'kioku_read',
+  'kioku_write',
+  'kioku_recall',
+  'kioku_transfer',
+  'kioku_credential',
+  'kioku_credential_save',
+  'kioku_credential_delete',
+])
 
 export interface LegacyPluginFindings {
   legacySource: string | null
@@ -121,7 +131,7 @@ async function hasLegacyLifecycle(dir: string): Promise<boolean> {
   return lifecycle !== null && !lifecycle.includes('deviceKeyOf')
 }
 
-// 最后一个记忆圈重构前发到 npm 的公开版本是 0.5.0；已安装目录优先按代码特征（deviceKeyOf）区分代际，
+// 最后一个旧代架构前发到 npm 的公开版本是 0.5.0；已安装目录优先按代码特征（deviceKeyOf）区分代际，
 // 仅在缺少 lifecycle.mjs 时才按版本号 < 0.5.1 兜底，避免误判本地构建或 0.5.1-edge.* 预览版
 async function isLegacyNpmPluginDir(dir: string): Promise<boolean> {
   const lifecycle = await readTextOrNull(join(dir, 'lib', 'lifecycle.mjs'))

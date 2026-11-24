@@ -20,26 +20,21 @@ beforeAll(async () => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(
       JSON.stringify({
-        primaryCircle: {
-          id: '00000000-0000-4000-8000-000000000001',
-          slug: 'personal',
-          name: '个人圈',
-          kind: 'personal',
+        accountName: 'owner',
+        key: {
+          id: `key-${whoFamily}`,
+          name: whoFamily,
+          prefix: `kioku_${whoFamily}`,
+          runtimeFamily: whoFamily,
+          envs: [],
+          allowedRealms: null,
+          canWrite: true,
+          canResolveCredentials: false,
         },
-        linkedCircles: [],
         client: {
-          id: 'a',
-          circleId: '00000000-0000-4000-8000-000000000001',
           slug: whoFamily,
           name: whoFamily,
           runtimeFamily: whoFamily,
-        },
-        persona: null,
-        scopes: {
-          readKinds: ['entry', 'fact', 'episode'],
-          writeKinds: ['entry'],
-          maxSensitivity: 'private',
-          credentials: 'none',
         },
       }),
     )

@@ -29,7 +29,7 @@ export interface ConnectResult {
 // 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着。kioku login 也用它
 export function orphanHint(client?: ConnectClient | null): string {
   const name = client?.name ? `（客户端 ${plain(client.name)}）` : ''
-  return `访问密钥已经签发、但没有写下：到管理界面的「客户端」页吊销它${name}，解决上面的问题后重新运行`
+  return `访问密钥已经签发、但没有写下：到管理界面的「设置 → 连接与终端」吊销它${name}，解决上面的问题后重新运行`
 }
 
 // 用给定的地址与访问密钥配好一个平台。setup 的输出写到 out；hints 为假时不打印「接下来装上」，

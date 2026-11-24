@@ -70,8 +70,8 @@ export async function mcpCall({ url, key }, method, params, timeout, signal) {
   if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
   }
-  // 401 与库待迁移的 503 带着错误码：升级前的访问密钥、待迁移的库各有说法
-  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text), url)
+  // 401 与数据库不可用的 503 带着错误码，优先用这边的清晰提示
+  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text))
   if (rejected) throw rejected
   if (!res.ok) throw new KiokuFailure(`Kioku 返回 HTTP ${res.status}`)
   let data

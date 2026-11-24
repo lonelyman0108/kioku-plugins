@@ -368,11 +368,19 @@ async function main(platform) {
     check(saw('boot'), `模型的请求里有启动加载（${BOOT_MARK}）`)
     check(saw('recall'), `模型的请求里有召回（${RECALL_MARK}）`)
     if (spec.tools === 'search') {
-      check(saw('found'), '模型搜工具的结果里有 Kioku 的工具')
+      check(
+        saw('found'),
+        '模型搜工具的结果里有 Kioku 的工具（含 kioku_get 与 kioku_list_credentials）',
+      )
+      check(!saw('legacyFound'), '模型搜工具的结果里不含已移除的旧工具（kioku_transfer）')
     } else if (spec.tools === 'mcp') {
       check(kioku.mcp(from).includes('tools/list'), '这一轮里平台向 Kioku 取过工具清单')
     } else {
-      check(saw('tools'), '模型的请求的工具清单里有 Kioku 的工具')
+      check(
+        saw('tools'),
+        '模型的请求的工具清单里有 Kioku 的工具（含 kioku_get 与 kioku_list_credentials）',
+      )
+      check(!saw('legacyTools'), '模型的请求的工具清单里不含已移除的旧工具（kioku_transfer）')
     }
     check(count('turn.end') === 1, `turn.end 发了一次（${count('turn.end')}）`)
     const end = events.find((event) => event.event === 'turn.end')

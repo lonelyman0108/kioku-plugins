@@ -1,6 +1,6 @@
 # Kioku 的命令行
 
-[Kioku](https://github.com/lonelyman0108/kioku) 是自托管的长期记忆服务。`@kioku-memory/cli` 以零运行时依赖单文件包分发（仅依赖 Node 22 / Node 20.12 以上交互能力），提供终端地层视觉界面（Strata UI）、客户端一站式接入与日常记忆读写：
+[Kioku](https://github.com/lonelyman0108/kioku) 是单人自托管的长期记忆与托管凭据服务。`@kioku-memory/cli` 以零运行时依赖单文件包分发（仅依赖 Node 22 / Node 20.12 以上交互能力），提供纸墨终端交互界面、客户端一站式接入与日常记忆读写：
 
 ```bash
 npx @kioku-memory/cli
@@ -14,11 +14,11 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 
 ## 交互式控制台
 
-在终端里不带参数运行 `kioku`（需要 Node 20.12 以上版本），默认进入全屏双栏客户端管理工作台（`TERM=dumb` 时自动回退到流式问答向导）。界面遵循 Kioku 地层设计规范：1px 直角细线框、归属色彩与文字标签并重、敏感级纯字符纹理（`[ ] 公开` / `[·] 内部` / `[╱] 私密` / `[■] 机密`）、砖红仅用于错误与高风险确认，并遵守 `NO_COLOR`、`FORCE_COLOR` 与 Alternate Screen 局部 diff 重绘（不启用鼠标捕获，保留终端原生框选复制）：
+在终端里不带参数运行 `kioku`（需要 Node 20.12 以上版本），默认进入全屏双栏客户端管理工作台（`TERM=dumb` 时自动回退到流式问答向导）。界面采用直角细线框与清晰文字层次，砖红仅用于错误与高风险确认，并遵守 `NO_COLOR`、`FORCE_COLOR` 与 Alternate Screen 局部 diff 重绘（不启用鼠标捕获，保留终端原生框选复制）：
 
-- **职责分工**：本控制台专注于本机各 AI 客户端的插件接入、配置文件、冲突清理、连通性诊断与本地记忆迁移；记忆目录编排、人格继承、访问密钥签发与凭据管理等服务端功能可在控制台内按 `o` 打开 Kioku 网页管理界面。
+- **职责分工**：本控制台专注于本机各 AI 客户端的插件接入、配置文件、冲突清理、连通性诊断与本地记忆迁移；记忆整理、访问密钥签发与托管凭据管理等服务端功能可在控制台内按 `o` 打开 Kioku 网页管理界面。
 - **顶栏服务器状态**：自动读取已配置的服务器地址或 `KIOKU_SERVER_URL`，异步检查连接、版本与管理员初始化状态；按 `s` 更换地址，未配置或连不上本机时按 `l` 通过 Docker 启动本机实例。
-- **左列表 + 右详情与渐进加载**：立即渲染本机检出的客户端并折叠未检出项（`Tab` 展开/折叠），后台并发校验各客户端访问密钥并在右侧实时更新客户端、主圈/关联圈、读写形态、敏感级上限、插件状态、冲突与本地记忆统计。
+- **左列表 + 右详情与渐进加载**：立即渲染本机检出的客户端并折叠未检出项（`Tab` 展开/折叠），后台并发校验各客户端访问密钥并在右侧实时更新所属账号、访问密钥权限（可写/只读、凭据注入、默认环境、场域范围）、插件状态、冲突与本地记忆统计。
 
 底栏按当前选中客户端状态提供单键快捷操作（`Enter` 接入或重授权、`a` 批量接入、`p` 安装/更新插件、`d` 诊断、`i` 迁移本地记忆、`x` 清理冲突工具、`u` 断开并恢复自带记忆、`y` 复制安装命令、`?` 查看全部快捷键）。执行修改类动作前先弹出确认框，浏览器授权确认框与进度等待同样在工作台弹出层内完成：
 
@@ -32,19 +32,18 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 
 | 子命令 | 作用 |
 |---|---|
-| `kioku search <查询>` | 召回相关记忆（语义、全文与关键词），交互终端回车查看正文，支持 `--json` |
-| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）、旧坐标或精确标题读取单条记忆属性、适用条件变体与双链，支持 `--json` |
-| `kioku ls [分组维度]` | 按主题、场域、环境、记忆圈或形态动态分组浏览记忆目录 |
-| `kioku add [标题]` | 写入新正式记忆，支持 `--circle`、`--when`、`--topic`、标准输入与明文拦阻确认 |
-| `kioku edit <短ID或标题>` | 修改记忆属性、正文或适用条件变体 |
+| `kioku search <查询>` | 召回相关记忆（语义、全文、场景亲和与双链），交互终端回车查看正文，支持 `--json` |
+| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）或精确标题读取单条记忆正文、场景标签、双链与凭据引用状态，支持 `--json` |
+| `kioku ls [分组维度]` | 按主题、项目、环境、场域、客户端或类型动态分组浏览记忆目录 |
+| `kioku add [标题]` | 写入新正式记忆，支持 `--topic`、`--env`、`--realm`、`--project`、`--runtime`、`--pinned` 与标准输入 |
+| `kioku edit <短ID或标题>` | 修改记忆标题、正文、场景标签、常驻状态或有效期 |
 | `kioku delete <短ID或标题>` | 软删除单条记忆（别名 `kioku rm`） |
-| `kioku transfer <短ID或标题>` | 在有读写权限的独立圈之间迁移记忆 |
-| `kioku boot` | 预览会话启动加载的独立人格与高优先级记忆 |
+| `kioku boot` | 预览会话启动加载的常驻记忆与近期会话摘要 |
 | `kioku status [--json]` | 只读输出服务端与本机各客户端接入概况 |
 | `kioku connect [平台…]` | 一站式授权、停用自带记忆、自动装插件与 MCP 握手验证 |
 | `kioku disconnect <平台>` | 恢复自带记忆、删除凭据配置并安全清理托管插件 |
 | `kioku upgrade [平台…]` | 升级已接入插件并刷新本机 MCP 工具清单缓存 |
-| `kioku migrate [平台…]` | 识别服务端换代并迁移旧插件来源、工具清单缓存与失效访问密钥 |
+| `kioku migrate [平台…]` | 识别并迁移旧插件来源、旧版 MCP 工具清单缓存与失效访问密钥 |
 | `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限、客户端配置与冲突工具 |
 | `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
 | `kioku import --from <来源>` | 把平台自带的本地长期记忆迁进 Kioku |
@@ -53,17 +52,17 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 | `kioku login <平台>` | 用浏览器授权签发访问密钥并配好单个平台 |
 | `kioku setup <平台>` | 停用平台自带记忆并手动填写服务地址与访问密钥 |
 | `kioku install --platforms <平台,…>` | 多个平台批量接入，访问密钥从环境变量读（给脚本用） |
-| `kioku run -e 变量=<标识>#<字段> -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
+| `kioku run -e 变量=<标识>[#<字段>] -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
 每个子命令的完整说明：`kioku <子命令> --help`，查看版本号：`kioku --version`（或 `-v`）。支持的平台：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
 
-## 从旧版升级
+## 从旧版迁移
 
-服务端升级到记忆圈架构之后，旧访问密钥会失效且需要更新各客户端插件：
+服务端升级或切换插件来源后，如存在旧插件市场来源、过旧插件、旧版 MCP 工具清单缓存或失效访问密钥：
 
-1. 若服务端尚未完成数据结构升级，打开管理界面 `/legacy-upgrade` 用原管理员账号一键就地迁移。
-2. 在终端执行 `npx @kioku-memory/cli migrate`（支持 `--dry-run` 预览、`-y` 跳过确认）：自动识别旧插件市场来源、过旧插件与旧版 MCP 工具清单缓存，卸载旧来源、安装/更新新版插件、在浏览器一次批量重新签发访问密钥，并运行 `kioku doctor` 完成验证。
-3. 在全屏交互控制台（`kioku`）里，遇到待迁移服务端按 `o` 可直接打开升级页，检测到需迁移客户端按 `M` 可一键迁移。
+1. 在终端执行 `npx @kioku-memory/cli migrate`（支持 `--dry-run` 预览、`-y` 跳过确认）：自动识别旧插件市场来源、过旧插件与旧版 MCP 工具清单缓存，卸载旧来源、安装/更新新版插件、在浏览器一次批量重新签发访问密钥，并运行 `kioku doctor` 完成验证。
+2. 在全屏交互控制台（`kioku`）里，检测到需迁移客户端按 `M` 即可查看计划并一键迁移。
+3. 如需从 Lore 导出包迁移记忆，请在 Kioku 网页管理界面「设置 → 账号与数据」中完成两步导入。
 
 ## login
 
@@ -71,16 +70,16 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 kioku login codex --server-url https://kioku.example.com
 ```
 
-终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选记忆圈、客户端与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
+终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选好场域、环境与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
 
 - 确认码不在打开的地址里，要照着终端输入：只在自己刚运行了这条命令时确认。别人发来确认码请求代为确认时切勿通过，那样对方的机器会拿到能读写本人记忆的访问密钥。
-- 申请 10 分钟内有效。被拒绝、过期，或者确认之后确认人的角色变了，都无法获取访问密钥，重新运行即可。
+- 申请 10 分钟内有效。被拒绝或过期时，重新运行即可。
 - 不用在本机开端口，远程登录的机器上也能用：在任何一台登录了管理界面的浏览器里确认都行。
 - 要 Kioku 服务端支持浏览器授权；旧的服务端会提示改用 `kioku setup` 手动填访问密钥。
 
 `kioku setup codex`、`kioku setup pi` 第一次配置时，在终端里提示输入访问密钥的地方直接回车，走的是同一个流程。已经配过的再运行 `setup`，直接回车是沿用上次的访问密钥；要换一个就运行 `kioku login`。
 
-- 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的「客户端」页吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
+- 确认之后如果这台机器没能把访问密钥写下（配置文件写不进去、中途断网），命令会提示去管理界面的「设置 → 连接与终端」吊销刚签发的那个，再重新运行：访问密钥只在签发时给一次。
 
 ## install
 
@@ -173,19 +172,19 @@ kioku setup opencode --server-url https://kioku.example.com
 
 核对后写下 `~/.config/kioku/opencode.json`，并在 `~/.config/opencode/opencode.json` 的 `plugin` 列表里加上 `@kioku-memory/plugin-opencode`（原文件备份成 `opencode.json.kioku-backup`；OpenCode 没有自带的长期记忆，MCP 由插件在 `config` 钩子里注册）。
 
-## 日常记忆读写（search / get / ls / add / edit / delete / transfer / boot）
+## 日常记忆读写（search / get / ls / add / edit / delete / boot）
 
 这些日常记忆命令共用零配置身份解析链：优先读 `--platform <平台>`，其次读 `KIOKU_SERVER_URL` + `KIOKU_API_KEY`（或 `KIOKU_API_KEY_FILE`），再读 `~/.config/kioku/cli.json` 记住的默认身份；本机若仅配置了一个客户端则直接选用，存在多个客户端时在交互式终端交互选择并记住默认项（非终端环境下提示传入 `--platform`）。
 
 ```bash
 kioku search "发布流程" --limit 5
 kioku get m-234567
-kioku ls                         # 按主题（topic）分组列出可见记忆
-kioku ls realm --circle personal --json
-echo "优先使用 pnpm" | kioku add "包管理工具" --topic tooling --when realm=work
+kioku ls                                # 按主题（topic）分组列出可见记忆
+kioku ls realm --project kioku --json
+echo "优先使用 pnpm" | kioku add "包管理工具" --topic tooling --realm work
 ```
 
-- **`add` 的明文拦阻检查**：正文若触发服务端疑似明文凭据检查（HTTP 400），命令行只显示「第几行、哪一类」而不回显值；交互式终端可选择取消或确认为非凭据后写入，非终端环境可带 `--plaintext-ok` 放行。
+- `search` 调用 `POST /v1/recall`，`boot` 调用 `GET /v1/boot`；`get`、`ls`、`add`、`edit`、`delete` 经 `POST /v1/mcp` 工具接口执行。
 - 上述命令均支持 `--json` 结构化输出与 `--platform <平台>`。
 
 ## status / connect / disconnect / upgrade / local / open
@@ -231,25 +230,24 @@ kioku import --from claude-code --select    # 交互勾选本次要迁入的条�
 kioku import --from claude-code -y          # 免确认直接写入
 ```
 
-先读本地的记忆文件，列出每条将写入的标题、适用条件与目标记忆圈（默认写入访问密钥所属客户端的主圈，也可用 `--circle <记忆圈>` 指定），确认之后才写。本地的文件不删、不改。
+先读本地的记忆文件，列出每条将写入的标题与场景标签，确认之后才写。本地的文件不删、不改。
 
-| 来源 | 读什么 | 写入什么适用条件与主题 |
+| 来源 | 读什么 | 写入什么场景标签与主题 |
 |---|---|---|
 | `claude-code` | `~/.claude/projects/*/memory/*.md`（`MEMORY.md` 是索引，不读） | 默认带 `project=<项目>`（`feedback` 类型额外带 `runtime=claudecode`），主题标 `claude-code` 与类型；重名跨项目自动按项目后缀消歧 |
-| `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` 带 `runtime=hermes`、主题 `hermes` / `notes`；`USER.md` 不限运行时、主题 `hermes` / `about` |
-| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记（`<日期>.md`、`<日期>-<名字>.md`） | `MEMORY.md` 与按日期笔记带 `runtime=openclaw`（主题 `openclaw` / `notes`、`journal`）；`USER.md` 不限运行时、主题 `openclaw` / `about` |
+| `hermes` | `~/.hermes/memories/` 的 `MEMORY.md`、`USER.md` | `MEMORY.md` 带 `runtime=hermes`、主题 `hermes` / `notes`；`USER.md` 不限客户端、主题 `hermes` / `about` |
+| `openclaw` | `~/.openclaw/workspace/` 的 `MEMORY.md`、`USER.md` 与 `memory/` 里按日期的笔记（`<日期>.md`、`<日期>-<名字>.md`） | `MEMORY.md` 与按日期笔记带 `runtime=openclaw`（主题 `openclaw` / `notes`、`journal`）；`USER.md` 不限客户端、主题 `openclaw` / `about` |
 
-- 关于用户本人和项目的记忆不绑运行时条件，其他客户端也可以直接按记忆圈与主题召回；偏某个运行时习惯的记忆会带上对应 `runtime` 条件。同时为每个来源保留 `legacyUri` 兼容标识，已从旧版迁入或曾按旧 URI 导入过的记忆会自动匹配。
+- 关于本人和项目的记忆不绑客户端标签，其他客户端也可以直接按主题召回；偏某个客户端习惯的记忆会带上对应 `runtime` 标签。
 - `<项目>` 取自 Claude Code 的项目目录名，去掉主目录与 `Documents`、`code` 这类常见的上级目录。两个项目如果撞了同一个描述标题，后一条会自动附上 `（<项目名>）` 后缀，不会悄悄顶掉。
 - Hermes、OpenClaw 的一个文件拆成几条：有只写着 `§` 的分隔行就按它拆，否则按二级标题拆，都没有就是一整条。有标题的保留小节标题；没有标题或重名的小节自动附上内容摘要后缀（超长标题会先截短前缀再拼后缀），所以文件里插一条、删一条不影响别的条。Hermes 的位置与分隔符已经对着它的源码核对过（0.19.0），OpenClaw 的位置与文件名对着真实的安装核对过（2026.6.35）。OpenClaw 的 `USER.md` 是它生成的模板，没填过的话计划里会列出模板本身，不想要就先别迁。
-- 标题与召回说明取文件头里的说明。写进去的记忆优先级是默认的，不进启动加载；要进的在管理界面里改。
-- **重复运行不重复写**：优先按来源对应的兼容 `legacyUri` 精确匹配，未命中再按标题匹配目标记忆圈里同条件变体。已有且内容一样的跳过；内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才带着版本号覆盖（若原记忆仅有通用 `{}` 变体而本地带有适用条件，会一并替换通用变体）。
-- **疑似明文凭据的不写**：列出是哪个文件、正文第几行、哪一类，不带值。先把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次。
-- 不迁的会列出原因：正文超过 2 万字、没有内容、文件头没有结尾，或同一批里完全重名的重复项。
+- 标题与触发场景取文件头里的说明。写进去的记忆默认不是常驻记忆；需要启动自动加载的可在管理界面中开启常驻。
+- **重复运行不重复写**：按标题精确匹配已有记忆（跨项目重名自动按项目后缀消歧）。已有且内容一样的跳过；内容不一样的默认也跳过（可能在 Kioku 里改过），`--overwrite` 才带着版本号覆盖。
+- 不迁的会列出原因：正文超过 10 万字、没有内容、文件头没有结尾，或同一批里完全重名的重复项。
 - 只读普通的文本文件：符号链接不跟（它可以指到记忆目录之外的文件），太大的、不是文本的不读。
 - 写到一半连不上时停下来，说明写了多少、还剩多少；重新运行会接着写。
 - 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
-- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。记忆迁进目标记忆圈（默认为主圈）。
+- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。
 - 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
@@ -267,7 +265,7 @@ macOS 与 Linux 上各平台都用真实的模型实测过。Windows 上跑过�
 `kioku doctor claude-code`、`kioku doctor codex`、`kioku doctor gemini`、`kioku doctor agy`、`kioku doctor opencode`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
-- `KIOKU_API_KEY`：在 Kioku 管理界面的「客户端」页签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件
+- `KIOKU_API_KEY`：在 Kioku 管理界面的「设置 → 连接与终端」签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件
 
 在 Claude Code 里，插件在会话开始时已经配好这两项（或由 `kioku setup claude-code` 在传入 `--server-url` / 上述环境变量时写入 `~/.config/kioku/claude-code.json`）。`setup` 仅调整本机开关时不用这两项；写入凭证或环境文件时，也会从命令行参数或上述环境变量读取。
 

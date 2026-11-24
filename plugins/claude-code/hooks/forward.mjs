@@ -7,7 +7,7 @@
 
 import { open } from 'node:fs/promises'
 
-import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
+import { failureText, KiokuFailure } from '../lib/http.mjs'
 import { readProfile, serverUrlProblem } from '../lib/profile.mjs'
 import {
   assertKeyFormat,
@@ -100,14 +100,11 @@ function userText(entry) {
   return text || null
 }
 
-// 配置写错或待迁移时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
+// 配置写错时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
 const LOGIN_HINT =
   '运行 kioku login claude-code（没有 kioku 命令时用 npx @kioku-memory/cli login claude-code）'
 
 function noticeOf(err) {
-  if (err instanceof LegacyDatabase || err.kind === 'legacy') {
-    return `Kioku 长期记忆不可用：${err.message}。`
-  }
   if (err.kind === 'key') {
     return `Kioku 插件的访问密钥格式不对，长期记忆不可用：${LOGIN_HINT}或在 /plugin 里为 kioku 重新填写访问密钥。`
   }
@@ -201,10 +198,7 @@ async function main(event) {
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  if (
-    event === 'session.start' &&
-    (err instanceof Misconfigured || err instanceof LegacyDatabase)
-  ) {
+  if (event === 'session.start' && err instanceof Misconfigured) {
     writeContext(event, noticeOf(err))
   }
   // 标准错误只出现在 Claude Code 的调试输出里，不进上下文；插件自己写的原因原样给出，别的只给类别

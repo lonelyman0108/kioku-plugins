@@ -18,22 +18,22 @@ const GRANT = {
   interval: 3,
 }
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-pi',
+    name: 'pi',
+    prefix: 'kioku_pi',
+    runtimeFamily: 'pi',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'pi',
     name: 'pi',
     runtimeFamily: 'pi',
   },
-  persona: null,
-  scopes: { readKinds: [], writeKinds: [], maxSensitivity: 'internal', credentials: 'none' },
 }
 
 // 假的 Kioku：申请、轮询与 whoami。answers 是轮询依次得到的回答，用完之后一直是最后一个
@@ -52,7 +52,7 @@ beforeAll(async () => {
       requests.push({ url: req.url, auth: req.headers.authorization, body })
       const reply =
         req.url === '/v1/health'
-          ? { status: 200, body: { status: 'ok', api: 2, version: '0.6.0' } }
+          ? { status: 200, body: { status: 'ok', api: 3, version: '0.6.0' } }
           : req.url === '/v1/device/authorize'
             ? authorize()
             : req.url === '/v1/device/token'

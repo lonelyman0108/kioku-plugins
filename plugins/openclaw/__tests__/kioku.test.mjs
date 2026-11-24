@@ -202,6 +202,16 @@ describe('OpenClaw 插件：注入与上报', () => {
     expect(api.registered.options).toEqual({ names: TOOL_NAMES })
     const manifest = JSON.parse(readFileSync(join(here, '..', 'openclaw.plugin.json'), 'utf8'))
     expect(manifest.contracts.tools).toEqual(TOOL_NAMES)
+    expect(TOOL_NAMES).toEqual([
+      'kioku_boot',
+      'kioku_search',
+      'kioku_get',
+      'kioku_browse',
+      'kioku_create',
+      'kioku_update',
+      'kioku_delete',
+      'kioku_list_credentials',
+    ])
     expect(manifest.kind).toBe('memory')
   })
 

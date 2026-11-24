@@ -29,60 +29,29 @@ export interface SavedProfile extends TargetConfig {
   file: string
 }
 
-export interface WhoamiCircle {
+export interface WhoamiKey {
   id: string
-  slug: string | null
-  name: string | null
-  kind: 'personal' | 'shared'
-}
-
-export interface WhoamiLinkedCircle extends WhoamiCircle {
-  mode: 'read' | 'read_write'
+  name: string
+  prefix: string
+  runtimeFamily: string
+  envs: string[]
+  allowedRealms: string[] | null
+  canWrite: boolean
+  canResolveCredentials: boolean
 }
 
 export interface WhoamiResponse {
-  primaryCircle: {
-    id: string
-    slug: string
-    name: string
-    kind: 'personal' | 'shared'
-  }
-  linkedCircles: WhoamiLinkedCircle[]
-  accountName?: string
+  accountName: string
+  key: WhoamiKey
   client: {
-    id?: string
-    circleId?: string
     slug: string
     name: string
     runtimeFamily: string
-    ownerAccountId?: string
-    defaultPersonaId?: string | null
-    config?: {
-      elevateOwnerDirect?: 'internal'
-      personMemoryMode?: 'persona_shared' | 'strict'
-      recordPrompt?: boolean
-    }
   }
-  persona?: {
-    id: string
+  primaryCircle?: {
     slug: string
     name: string
-  } | null
-  contextFacets?: Record<string, string[]>
-  resolvedFacets?: Record<string, string[]>
-  vocabulary?: Array<{
-    key: string
-    name: string
-    matchMode: 'exclusive' | 'additive'
-    terms: Array<{ slug: string; label: string }>
-  }>
-  scopes: {
-    readKinds?: string[]
-    writeKinds?: string[]
-    maxSensitivity?: string
-    allowedRealms?: string[] | null
-    admin?: boolean
-    credentials?: string
+    kind: 'personal'
   }
 }
 

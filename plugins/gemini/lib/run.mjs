@@ -10,13 +10,13 @@ import { isatty } from 'node:tty'
 import { killTree, launch } from './command.mjs'
 import { loadConfig } from './config.mjs'
 import {
+  DatabaseUnavailable,
   errorKind,
   failureText,
   fetchFailure,
   isRedirect,
   KeyRejected,
   KiokuFailure,
-  LegacyDatabase,
   redirectError,
   rejectionOf,
 } from './http.mjs'
@@ -30,7 +30,8 @@ const TIMEOUT = 15_000
 const MAX_REFS = 32
 const MAX_PURPOSE = 200
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/
-const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
+const SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/
+const FIELD = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const CONTROL = /\p{Cc}/u
 // 不给命令留这两个变量，免得它把访问密钥或文件的位置顺手打印出来。这不是隔离：
 // 访问密钥文件和命令属于同一个用户，命令照样读得到
@@ -60,21 +61,21 @@ const NOT_RERAISED = new Set([
   'SIGXFSZ',
 ])
 
-export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [--purpose <用途>] -- <命令> [参数…]
+export const USAGE = `用法：kioku run -e 变量=<标识>[#<字段>] [-e …] [--purpose <用途>] -- <命令> [参数…]
 
 向 Kioku 取凭据的值，放进环境变量交给命令；命令行和对话记录里只有变量名。
 命令输出里原样出现的值换成 ***（少于 ${MIN_REDACT_CHARS} 个字符的值除外）。
 打码只防值顺手出现在输出里，不是安全边界。
 
-  -e 变量=<标识>#<字段>  凭据 <标识> 的 <字段> 放进这个环境变量，可以写多个
-  --purpose <用途>       这次取用的用途，记进访问记录，最多 ${MAX_PURPOSE} 个字；用途里有空格时要加引号
-  -h, --help             显示本说明
+  -e 变量=<标识>[#<字段>]  凭据 <标识>（或指定 <字段>）放进这个环境变量，可以写多个
+  --purpose <用途>         这次取用的用途，记进访问记录，最多 ${MAX_PURPOSE} 个字；用途里有空格时要加引号
+  -h, --help               显示本说明
 
 命令不经过 shell 直接执行。参数里写的 $变量 会被外层的 shell 提前展开成空值；
 要在参数里用变量，或者要用管道、重定向时，写成 sh -c '…'，整段用单引号，变量放在双引号里：
 
-  kioku run -e PGPASSWORD=pg-main#password -- psql -h db.example.com -U app
-  kioku run -e TOKEN=github#token --purpose '查看 issue' -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com/issues'
+  kioku run -e PGPASSWORD=pg-main-password -- psql -h db.example.com -U app
+  kioku run -e TOKEN=github-token --purpose '查看 issue' -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com/issues'
 
 退出码与命令相同，命令被信号结束时 kioku 也以同一个信号结束；参数不对、取值失败时为 2。
 地址与访问密钥：Claude Code 插件在会话开始时配好；在别处用时设置 KIOKU_SERVER_URL 与 KIOKU_API_KEY。
@@ -82,7 +83,7 @@ export const USAGE = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [-
 
 export { UsageError }
 
-// 解析 kioku run 的参数。要看说明时返回 { help: true }；否则返回 refs（要取的标识与字段，同一对只取一次）、
+// 解析 kioku run 的参数。要看说明时返回 { help: true }；否则返回 refs（要取的标识与可选字段，同一项只取一次）、
 // variables（[变量名, 值在 refs 里的下标]）、purpose、command 与 args
 export function parseRunArgs(argv) {
   const refs = []
@@ -95,13 +96,13 @@ export function parseRunArgs(argv) {
     const arg = argv[i]
     if (arg === '-h' || arg === '--help') return { help: true }
     if (arg === '-e') {
-      if (++i >= argv.length) throw new UsageError('-e 后面要写 变量=<标识>#<字段>')
+      if (++i >= argv.length) throw new UsageError('-e 后面要写 变量=<标识>[#<字段>]')
       const { name, identifier, field } = parseVariable(argv[i])
       if (variables.has(name)) throw new UsageError(`变量 ${name} 写了两次`)
-      const ref = `${identifier}#${field}`
+      const ref = `${identifier}#${field ?? ''}`
       if (!refIndex.has(ref)) {
         refIndex.set(ref, refs.length)
-        refs.push({ identifier, field })
+        refs.push(field === undefined ? { identifier } : { identifier, field })
       }
       variables.set(name, refIndex.get(ref))
     } else if (arg === '--purpose' || arg.startsWith('--purpose=')) {
@@ -117,22 +118,32 @@ export function parseRunArgs(argv) {
   const command = argv[i + 1]
   if (!command) throw new UsageError('-- 后面要写命令')
   if (variables.size === 0) throw new UsageError('至少要写一个 -e')
-  if (refs.length > MAX_REFS) throw new UsageError(`一次最多取 ${MAX_REFS} 个字段`)
+  if (refs.length > MAX_REFS) throw new UsageError(`一次最多取 ${MAX_REFS} 项`)
   return { refs, variables: [...variables], purpose, command, args: argv.slice(i + 2) }
 }
 
 // 等号后面写错时只说格式，不复述写的内容：那里可能误填了值本身
 function parseVariable(spec) {
   const eq = spec.indexOf('=')
-  if (eq <= 0) throw new UsageError('-e 要写成 变量=<标识>#<字段>')
+  if (eq <= 0) throw new UsageError('-e 要写成 变量=<标识>[#<字段>]')
   const name = spec.slice(0, eq)
   if (!VARIABLE.test(name)) {
     throw new UsageError(`变量名 ${name} 只能用字母、数字和下划线，不能以数字开头`)
   }
-  const [identifier, field, ...rest] = spec.slice(eq + 1).split('#')
-  if (rest.length > 0 || !NAME.test(identifier) || !NAME.test(field ?? '')) {
+  const raw = spec.slice(eq + 1)
+  const hash = raw.indexOf('#')
+  if (hash === -1) {
+    if (!SLUG.test(raw)) {
+      throw new UsageError(
+        `${name} 要写成 ${name}=<标识> 或 ${name}=<标识>#<字段>；标识只用小写字母、数字、.、_ 和 -，以字母或数字开头，最长 64 个字符`,
+      )
+    }
+    return { name, identifier: raw, field: undefined }
+  }
+  const [identifier, field, ...rest] = raw.split('#')
+  if (rest.length > 0 || !SLUG.test(identifier) || !FIELD.test(field ?? '')) {
     throw new UsageError(
-      `${name} 要写成 ${name}=<标识>#<字段>；标识与字段名只用小写字母、数字、_ 和 -，以字母或数字开头，最长 64 个字符`,
+      `${name} 要写成 ${name}=<标识> 或 ${name}=<标识>#<字段>；标识只用小写字母、数字、.、_ 和 -，字段名只用小写字母、数字、_ 和 -，以字母或数字开头，最长 64 个字符`,
     )
   }
   return { name, identifier, field }
@@ -164,17 +175,26 @@ function expiredOf(data) {
   )
 }
 
-// 按 refs 的顺序取出响应里的值；对不上时为 null
+// 按 refs 的顺序取出响应里的值；对不上时为 null。
+// 请求省略 field 时服务端回 field: 'value'；同一个标识同时请求裸标识与 #value 时按响应顺序依次取出
 function valuesOf(data, refs) {
   if (!Array.isArray(data?.values) || data.values.length !== refs.length) return null
-  const byRef = new Map()
+  const queues = new Map()
   for (const item of data.values) {
     if (typeof item?.identifier !== 'string' || typeof item.field !== 'string') return null
     if (typeof item.value !== 'string') return null
-    byRef.set(`${item.identifier}#${item.field}`, item.value)
+    const key = `${item.identifier}#${item.field}`
+    const list = queues.get(key)
+    if (list) list.push(item.value)
+    else queues.set(key, [item.value])
   }
-  const values = refs.map((r) => byRef.get(`${r.identifier}#${r.field}`))
-  return values.every((v) => v !== undefined) ? values : null
+  const values = []
+  for (const r of refs) {
+    const list = queues.get(`${r.identifier}#${r.field ?? 'value'}`)
+    if (!list || list.length === 0) return null
+    values.push(list.shift())
+  }
+  return values
 }
 
 // 一次请求取全部值：任何一项取不到时整次失败，响应里不带值。连同已到期的凭据一起返回
@@ -203,11 +223,9 @@ async function resolveValues({ url, key }, refs, purpose) {
   } catch {
     // 不是 JSON 时按没有错误文字处理
   }
-  // 升级前签发的访问密钥、待迁移的库与普通无效访问密钥：优先用这边的清晰提示（服务端原文若误带出当前密钥则留待打码）
-  const rejected = res.ok ? null : rejectionOf(res.status, data, url)
-  if ((rejected instanceof KeyRejected && rejected.legacy) || rejected instanceof LegacyDatabase) {
-    throw rejected
-  }
+  // 401 与 503 database_unavailable 优先用这边的清晰提示（服务端原文若误带出当前密钥则留待打码）
+  const rejected = res.ok ? null : rejectionOf(res.status, data)
+  if (rejected instanceof DatabaseUnavailable) throw rejected
   if (rejected instanceof KeyRejected) {
     const echoed = typeof data?.error === 'string' && data.error.includes(key)
     if (!echoed) throw rejected
@@ -364,7 +382,8 @@ export async function run(argv) {
   const withNul = refs.findIndex((_, i) => values[i].includes('\0'))
   if (withNul !== -1) {
     const { identifier, field } = refs[withNul]
-    process.stderr.write(`kioku：${identifier}#${field} 的值含有空字符，放不进环境变量\n`)
+    const label = field === undefined ? identifier : `${identifier}#${field}`
+    process.stderr.write(`kioku：${label} 的值含有空字符，放不进环境变量\n`)
     return 2
   }
   const env = { ...process.env }

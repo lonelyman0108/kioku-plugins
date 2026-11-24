@@ -204,17 +204,17 @@ def test_failures_never_raise_and_never_leak_the_key(kioku, caplog):
     assert all(r["path"].startswith("/v1/") for r in kioku.requests)
 
 
-def test_legacy_key_and_legacy_database_messages(kioku, caplog):
+def test_database_unavailable_message(kioku, caplog):
     kioku.replies = {
-        "session.start": (401, {"error": "legacy", "code": "legacy_key"}, {}),
-        "prompt.submit": (503, {"error": "legacy", "code": "legacy_database"}, {}),
+        "session.start": (503, {"error": "down", "code": "database_unavailable"}, {}),
+        "prompt.submit": (503, {"error": "proxy"}, {}),
     }
     s = session(kioku)
     s.start("s1", platform="cli")
     assert s.boot() == ""
     assert s.recall("问") == ""
-    assert "访问密钥是升级前签发的，已失效" in caplog.text
-    assert "/legacy-upgrade" in caplog.text
+    assert "数据库暂时无法连接" in caplog.text
+    assert "HTTP 503" in caplog.text
     assert KEY not in caplog.text
 
 
