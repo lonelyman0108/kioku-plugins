@@ -68,4 +68,9 @@
 
 发到一半失败时修好原因、重跑这个 workflow：已经在 npm 上的版本会跳过。发出去的版本有问题时发一个新的补丁版本，旧的用 `npm deprecate` 标记；不删除、不移动 tag，也不重发同一个版本号。
 
-本地核对会发出哪些文件：`scripts/ci/publish-npm.sh --dry-run vX.Y.Z`。
+`main` 上的 push 触发 `CI` 通过后，`edge.yml`（`workflow_run`）用同一份脚本自动将公开包以 `<主>.<次>.<修订+1>-edge.<UTC时间>.g<短提交>` 发到 npm 的 `edge` 标签（预览版，不动 `latest`）。可用 `npx @kioku-memory/cli@edge` 体验主干最新构建。
+
+本地核对会发出哪些文件：
+
+- 正式版：`scripts/ci/publish-npm.sh --dry-run vX.Y.Z`
+- Edge 预览版：`scripts/ci/publish-npm.sh --dry-run --edge HEAD`

@@ -63,6 +63,7 @@ JSON
 | `ci.yml` | `windows-2025` | `test-windows`：在 Windows 上跑 JS 的用例，不是必需检查 |
 | `e2e.yml` | `ubuntu-24.04`、`windows-2025` | 装真实的平台做端到端实测，不是必需检查；改到插件、共用核心或实测脚本的 PR、每周一、手动触发时跑 |
 | `release.yml` | `ubuntu-24.04` | 推版本 tag 时发 npm、建 Release 页面 |
+| `edge.yml` | `ubuntu-24.04` | `main` 上 push 触发的 CI 成功后（或手动触发），发 npm `edge` 预览标签 |
 
 ## 本机凭据
 
@@ -97,13 +98,13 @@ JSON
 | 包 | `@kioku-memory/cli`（目录 `packages/cli`）、`@kioku-memory/openclaw`（目录 `plugins/openclaw`）、`@kioku-memory/plugin-opencode`（目录 `plugins/opencode`） |
 | 认证 | 受信发布（OIDC），没有 npm 令牌，仓库里也没有对应的 secret |
 
-每个包在 npmjs.com 的 Settings › Trusted Publisher 里配一个 GitHub Actions 发布者：
+每个包在 npmjs.com 的 Settings › Trusted Publisher 里分别配置两条 GitHub Actions 发布者（正式版用 `release.yml`，主干预览用 `edge.yml`）：
 
 | 字段 | 值 |
 |---|---|
 | Organization or user | 本仓库的所有者 |
 | Repository | 本仓库的名字 |
-| Workflow filename | `release.yml` |
+| Workflow filename | `release.yml`（第一条）、`edge.yml`（第二条） |
 | Environment name | 留空 |
 | Allowed actions | 勾上 `npm publish`（只留默认的 `npm stage publish` 时 workflow 发不出去） |
 
@@ -114,4 +115,4 @@ node scripts/sync-core.mjs --check
 cd <包目录> && npm publish --access public
 ```
 
-配好受信发布之后的版本都由 `release.yml` 发。受信发布要 npm 11.5.1、Node 22.14 以上，只认 GitHub 托管的 runner；`scripts/ci/publish-npm.sh` 在 npm 版本不够时装一个固定的版本。
+配好受信发布之后的版本由 `release.yml`（正式版 `latest`）与 `edge.yml`（`main` 合入且 CI 通过后的 `edge` 预览标签）自动发布。受信发布要 npm 11.5.1、Node 22.14 以上，只认 GitHub 托管的 runner；`scripts/ci/publish-npm.sh` 在 npm 版本不够时装一个固定的版本。
