@@ -19,7 +19,7 @@
 npx @kioku-memory/cli
 ```
 
-在终端里不带参数运行打开全屏客户端管理控制台（左客户端列表 + 右接入/权限/诊断详情，单键发起批量接入、插件安装、诊断与本地迁移；`TERM=dumb` 自动回退到流式向导）：先扫描本机已安装客户端并异步校验服务端连接，几个平台一起接入时浏览器里只确认一次，确认后自动写入配置、停用自带长期记忆、尝试自动安装对应插件并执行 `whoami` + MCP 工具清单握手验证，本地记忆可顺带迁入。尚未部署服务端时可直接在本机用 Docker 启动一套实例（`kioku local up`），记忆目录与记忆圈管理可在控制台内按 `o` 打开网页管理界面。需要 Node 20.12 以上（命令行内置界面完全零外部依赖）。
+在终端里不带参数运行打开全屏客户端管理控制台（左客户端列表 + 右接入/权限/诊断详情，单键发起批量接入、插件安装、诊断与本地迁移；`TERM=dumb` 自动回退到流式向导）：先扫描本机已安装客户端并异步校验服务端连接，几个平台一起接入时浏览器里只确认一次，确认后自动写入配置、停用自带长期记忆、尝试自动安装对应插件并执行 `whoami` + MCP 工具清单握手验证，本地记忆可顺带迁入。尚未部署服务端时可直接在本机用 Docker 启动一套实例（`kioku local up`），记忆编辑、托管凭据与访问密钥管理可在控制台内按 `o` 打开网页管理界面。需要 Node 20.12 以上（命令行内置界面完全零外部依赖）。
 
 只接特定平台、或非交互使用：
 
@@ -44,7 +44,6 @@ KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --pla
 | [Hermes](plugins/hermes/README.md) | 记忆提供方 | ● | ● | ● | ● |
 | [OpenClaw](plugins/openclaw/README.md) | 记忆槽位 | ● | ● | ● | ● |
 | [DeepSeek Harness](plugins/dsh/README.md) | 生命周期插件 | ● | ● | ● | MCP |
-| [AstrBot](plugins/astrbot_plugin_kioku/README.md) | 群聊机器人 | 人格 | ● | 对话抽取 | — |
 
 Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见各自的 README。
 
@@ -60,7 +59,6 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 - **Hermes**：`kioku login hermes` → `hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable`。
 - **OpenClaw**：`kioku login openclaw` → `openclaw plugins install npm:@kioku-memory/openclaw` → 重启网关。
 - **DeepSeek Harness**：`kioku login dsh` → `dsh plugin --profile <profile> add github:lonelyman0108/kioku-plugins` → 重启 dsh。
-- **AstrBot**：`cp -R plugins/astrbot_plugin_kioku <AstrBot 的数据目录>/plugins/`，在管理面板里重载插件。
 
 `kioku` 即 `npx @kioku-memory/cli`，也可以 `npm install -g @kioku-memory/cli`。不想走浏览器授权时用 `kioku setup <平台>` 手动填访问密钥。
 
@@ -77,14 +75,13 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku upgrade [平台…]` | 更新已安装插件并刷新本机 MCP 工具清单缓存 |
 | `kioku migrate [平台…]` | 识别并迁移旧插件市场来源、过旧插件、旧工具清单缓存与失效访问密钥 |
 | `kioku doctor [平台] [--all] [--json]` | 诊断服务地址、访问密钥权限与各客户端配置 |
-| `kioku boot` | 预览启动加载内容（按客户端人格、规范与近期记忆汇编） |
-| `kioku search <查询>` | 日常记忆检索（召回候选并在交互终端展开详情） |
-| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）或精确标题读取单条记忆完整属性与正文 |
-| `kioku ls [分组维度]` | 按主题（`topic`）、场域（`realm`）、记忆圈（`circle`）、形态（`kind`）等维度分组浏览记忆目录 |
-| `kioku add [标题]` | 写入新记忆（支持 `--circle`、`--when`、`--topic`、管道标准输入与明文拦阻确认） |
-| `kioku edit <短ID或标题>` | 交互或流式修改现有正式记忆属性与正文（支持 `--when`、`--replace-when`、`--clear-when`） |
-| `kioku delete <短ID或标题>` | 软删除现有记忆（别名 `kioku rm`） |
-| `kioku transfer <短ID或标题>` | 将记忆跨圈迁移至目标记忆圈（`--to <记忆圈>`） |
+| `kioku boot` | 预览启动加载内容（当前终端透镜对应的常驻记忆与近期会话摘要） |
+| `kioku search <查询>` | 日常记忆检索（混合检索召回候选，交互终端可展开详情） |
+| `kioku get <短ID或标题>` | 按短 ID（`m-xxxxxx`）或精确标题读取单条记忆正文、场景标签、双链与凭据引用状态 |
+| `kioku ls [分组维度]` | 按项目（`project`）、环境（`env`）、场域（`realm`）、客户端（`runtime`）、主题（`topic`）或类型（`kind`）分组浏览可见记忆 |
+| `kioku add [标题]` | 写入新记忆（支持 `--env`、`--realm`、`--project`、`--runtime`、`--topic`、`--pinned`、`--disclosure`、`--valid-to` 与管道输入） |
+| `kioku edit <短ID或标题>` | 交互或流式修改现有记忆标题、正文、场景标签、常驻状态或有效期 |
+| `kioku delete <短ID或标题>` | 软删除现有记忆至回收站（别名 `kioku rm`） |
 | `kioku local [up\|down\|status\|logs]` | 使用 Docker Compose 管理本机 Kioku 服务 |
 | `kioku open` | 在默认浏览器中打开 Kioku 管理界面 |
 | `kioku login <平台>` | 浏览器授权签发访问密钥并写好本机配置 |
@@ -92,21 +89,19 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 | `kioku install --platforms <平台,…>` | 几个平台一起接入，访问密钥从环境变量读（给脚本用） |
 | `kioku clean [平台]` | 检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP） |
 | `kioku import --from <来源>` | 把平台本地的长期记忆迁进 Kioku |
-| `kioku run -e 变量=<标识>#<字段> -- <命令>` | 取凭据的值放进环境变量交给命令，agent 无法读取明文 |
+| `kioku run -e 变量=<标识>[#<字段>] -- <命令>` | 取凭据的值放进环境变量交给命令，agent 无法读取明文 |
 
 完整说明见 [命令行](packages/cli/README.md)。Claude Code 插件自带凭据取值与生命周期脚本；日常与全功能命令行推荐 `npx @kioku-memory/cli` 或全局安装 `@kioku-memory/cli`。
 
 ## 从旧版升级
 
-- 服务端升级到记忆圈与多维语境架构后，打开管理界面 `/legacy-upgrade` 用原管理员账号即可一键就地迁移，旧表保留在 `kioku_legacy` 中。
-- 服务端迁移完成后，在终端运行 `npx @kioku-memory/cli migrate`（或在交互控制台按 `M`）：自动清理 `lonelyman0108/kioku` 旧插件市场来源与旧工具清单缓存、更新插件、在浏览器内批量重新授权并用 `kioku doctor` 验证。
-- 若服务端仍为重构前版本（v0.5.0 及更早），新版命令行会主动提示升级服务端或改用 `npx @kioku-memory/cli@0.5`。
+- 新版 Kioku 采用单人扁平模型（接口代际 `api: 3`）与 8 个 MCP 工具（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`）。已有旧库数据或 Lore 备份可在管理界面「设置 → 账号与数据」按两步引导导入。
+- 服务端升级完成后，在终端运行 `npx @kioku-memory/cli migrate`（或在交互控制台按 `M`）：自动清理旧插件市场来源与包含已移除工具的旧工具清单缓存、更新插件、在浏览器内批量重新授权并用 `kioku doctor` 验证。
+- 若服务端接口代际旧于当前命令行，新版命令行会明确提示先升级服务端。
 
 ## 设计取向
 
 插件只转发，不含记忆逻辑与提示词：召回怎么排、启动加载放什么、使用指引怎么写，都以 Kioku 为准，升级服务端就生效。
-
-AstrBot 插件带着从 Kioku 复制来的 Python 客户端，Kioku 的接口变了要同步，见 [同步客户端](plugins/astrbot_plugin_kioku/README.md#同步客户端)。
 
 ## 开发
 
@@ -115,7 +110,7 @@ scripts/bootstrap.sh && pnpm install
 scripts/check.sh              # 门禁，与 CI 一致
 ```
 
-需要 Node 22、pnpm 与 uv。AstrBot 插件与 Hermes 记忆提供方在各自目录里 `uv run pytest`。规范见 [CONTRIBUTING.md](CONTRIBUTING.md)、[AGENTS.md](AGENTS.md)，文档索引见 [docs/README.md](docs/README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+需要 Node 22、pnpm 与 uv。Hermes 记忆提供方在 `plugins/hermes` 目录里运行 `uv run pytest`。规范见 [CONTRIBUTING.md](CONTRIBUTING.md)、[AGENTS.md](AGENTS.md)，文档索引见 [docs/README.md](docs/README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 
