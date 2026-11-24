@@ -111,12 +111,23 @@ function collectInstallPaths(data: unknown): string[] {
 function isLegacyOpencodeEntry(entry: unknown): entry is string {
   if (typeof entry !== 'string') return false
   if (pointsToOldKiokuRepo(entry)) return true
-  return /^@kioku-memory\/plugin-opencode@0\.[0-5](?:\.|$|-)/.test(entry.trim())
+  return /^@kioku-memory\/plugin-opencode@0\.(?:[0-4](?:\.|$|-)|5(?:\.0(?:$|-)|$|-))/.test(
+    entry.trim(),
+  )
 }
 
 async function hasLegacyLifecycle(dir: string): Promise<boolean> {
   const lifecycle = await readTextOrNull(join(dir, 'lib', 'lifecycle.mjs'))
   return lifecycle !== null && !lifecycle.includes('deviceKeyOf')
+}
+
+// 最后一个记忆圈重构前发到 npm 的公开版本是 0.5.0；已安装目录优先按代码特征（deviceKeyOf）区分代际，
+// 仅在缺少 lifecycle.mjs 时才按版本号 < 0.5.1 兜底，避免误判本地构建或 0.5.1-edge.* 预览版
+async function isLegacyNpmPluginDir(dir: string): Promise<boolean> {
+  const lifecycle = await readTextOrNull(join(dir, 'lib', 'lifecycle.mjs'))
+  if (lifecycle !== null) return !lifecycle.includes('deviceKeyOf')
+  const pkgJson = (await readJsonOrNull(join(dir, 'package.json'))) as { version?: unknown } | null
+  return typeof pkgJson?.version === 'string' && compareSemver(pkgJson.version, '0.5.1') < 0
 }
 
 async function detectOpencodeLegacy(
@@ -139,13 +150,7 @@ async function detectOpencodeLegacy(
     const cacheRoot = join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'opencode')
     for (const root of [opencodeHome(env), cwd, cacheRoot]) {
       const pkgDir = join(root, 'node_modules', '@kioku-memory', 'plugin-opencode')
-      const pkgJson = (await readJsonOrNull(join(pkgDir, 'package.json'))) as {
-        version?: unknown
-      } | null
-      if (
-        (typeof pkgJson?.version === 'string' && compareSemver(pkgJson.version, '0.6.0') < 0) ||
-        (await hasLegacyLifecycle(pkgDir))
-      ) {
+      if (await isLegacyNpmPluginDir(pkgDir)) {
         outdatedPlugin = '旧版本 OpenCode 插件'
         break
       }
@@ -315,13 +320,7 @@ export async function detectLegacyPlugin(
     }
   } else if (id === 'openclaw') {
     const clawExt = join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'extensions', 'kioku')
-    const pkgJson = (await readJsonOrNull(join(clawExt, 'package.json'))) as {
-      version?: unknown
-    } | null
-    if (
-      (await hasLegacyLifecycle(clawExt)) ||
-      (typeof pkgJson?.version === 'string' && compareSemver(pkgJson.version, '0.6.0') < 0)
-    ) {
+    if (await isLegacyNpmPluginDir(clawExt)) {
       outdatedPlugin = '旧版本 OpenClaw 插件'
     }
   }

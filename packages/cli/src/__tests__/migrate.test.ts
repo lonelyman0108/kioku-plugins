@@ -508,4 +508,39 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     expect(reinstalledClaude).toBe(false)
     expect(outText).toContain('跳过插件重装')
   })
+
+  it('detectLegacyPlugin 对 OpenClaw 与 OpenCode 优先按代码特征识别旧版，不误判 0.5.0 本地包与 0.5.1-edge 预览版', async () => {
+    const clawEnv: Env = { ...env, OPENCLAW_HOME: dir }
+    const clawDir = join(dir, '.openclaw', 'extensions', 'kioku')
+    mkdirSync(join(clawDir, 'lib'), { recursive: true })
+    writeFileSync(join(clawDir, 'package.json'), JSON.stringify({ version: '0.5.0' }))
+    writeFileSync(join(clawDir, 'lib', 'lifecycle.mjs'), 'export const deviceKeyOf = () => {}\n')
+
+    expect(
+      (await detectLegacyPlugin('openclaw', { env: clawEnv, cwd: dir })).outdatedPlugin,
+    ).toBeNull()
+
+    writeFileSync(
+      join(clawDir, 'package.json'),
+      JSON.stringify({ version: '0.5.1-edge.20261124080000.g1a2b3c4' }),
+    )
+    expect(
+      (await detectLegacyPlugin('openclaw', { env: clawEnv, cwd: dir })).outdatedPlugin,
+    ).toBeNull()
+
+    writeFileSync(join(clawDir, 'package.json'), JSON.stringify({ version: '0.5.0' }))
+    writeFileSync(join(clawDir, 'lib', 'lifecycle.mjs'), 'export const TIMEOUTS = {}\n')
+    expect((await detectLegacyPlugin('openclaw', { env: clawEnv, cwd: dir })).outdatedPlugin).toBe(
+      '旧版本 OpenClaw 插件',
+    )
+
+    mkdirSync(join(dir, 'opencode'), { recursive: true })
+    writeFileSync(
+      join(dir, 'opencode', 'opencode.json'),
+      JSON.stringify({
+        plugin: ['@kioku-memory/plugin-opencode@0.5.1-edge.20261124080000.g1a2b3c4'],
+      }),
+    )
+    expect((await detectLegacyPlugin('opencode', { env, cwd: dir })).legacySource).toBeNull()
+  })
 })
