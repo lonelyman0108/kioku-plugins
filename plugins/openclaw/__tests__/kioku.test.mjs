@@ -264,10 +264,13 @@ describe('OpenClaw 插件：注入与上报', () => {
     expect(bodyOf('turn.end')).toEqual({
       event: 'turn.end',
       deviceKey: 'openclaw-dev',
+      project: expect.objectContaining({ dirName: expect.any(String) }),
       sessionId: 's1',
       user: '今天做什么',
       reply: '先查一下\n做甲',
     })
+    expect(bodyOf('session.start').project).toMatchObject({ dirName: expect.any(String) })
+    expect(bodyOf('prompt.submit').project).toMatchObject({ dirName: expect.any(String) })
     // 同一次运行不报第二遍
     requests = []
     await emit('agent_end', { success: true, messages }, gateway())
@@ -392,6 +395,7 @@ describe('OpenClaw 插件：工具', () => {
     expect(tools[0]).toMatchObject({ description: '搜索记忆', parameters: { type: 'object' } })
     expect(JSON.parse(readFileSync(cacheFile(), 'utf8'))).toEqual({
       url: base,
+      keyHash: expect.stringMatching(/^[a-f0-9]{12}$/),
       at: clock,
       tools: TOOLS,
     })
@@ -448,7 +452,19 @@ describe('OpenClaw 插件：工具', () => {
     mcp = () => ({ status: 401 })
     const failed = await search.execute('call-2', {})
     expect(failed.content[0].text).toContain('访问密钥无效或已吊销')
+    expect(failed.isError).toBe(true)
     expect(failed.content[0].text).not.toContain(KEY)
+    mcp = () => ({
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { content: [{ type: 'text', text: '找不到条目' }], isError: true },
+      },
+    })
+    expect(await search.execute('call-2b', {})).toEqual({
+      content: [{ type: 'text', text: '找不到条目' }],
+      isError: true,
+    })
     mcp = () => ({
       body: { jsonrpc: '2.0', id: 1, error: { code: -32602, message: '参数\n不对' } },
     })

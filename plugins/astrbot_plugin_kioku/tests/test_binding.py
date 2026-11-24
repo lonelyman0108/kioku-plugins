@@ -145,7 +145,7 @@ def test_a_code_first_shows_whom_it_binds_to_and_how_to_confirm():
     assert replies(plugin, event) == [
         (
             "要把这个账号绑到 aiocqhttp 上的「小明」（10***01）。"
-            "绑定后两边私聊里记下的内容互相读得到，不能撤销。\n"
+            "绑定后两边私聊的记忆将互通，操作不可撤销。\n"
             "确认请发：/bind ABCD2345 确认"
         )
     ]
@@ -157,7 +157,7 @@ def test_a_code_first_shows_whom_it_binds_to_and_how_to_confirm():
     assert replies(plugin, AstrMessageEvent(**PRIVATE_TG, text="bind ABCD2345")) == [
         (
             "要把这个账号绑到 aiocqhttp 上的账号 10***01。"
-            "绑定后两边私聊里记下的内容互相读得到，不能撤销。\n"
+            "绑定后两边私聊的记忆将互通，操作不可撤销。\n"
             "确认之后还要对方在管理界面同意。\n"
             "确认请发：/bind ABCD2345 确认"
         )
@@ -286,8 +286,18 @@ def test_too_long_codes_are_clipped_to_what_kioku_accepts():
     assert sent[0][1]["code"] == "A" * 64
 
 
-def test_unconfigured_plugin_says_so():
+def test_unconfigured_plugin_says_so(caplog):
     plugin = KiokuPlugin(Context(), {"kioku_url": "", "kioku_key": ""})
     event = AstrMessageEvent(**PRIVATE_QQ, text="/bind")
     assert replies(plugin, event) == [NOT_CONFIGURED]
     assert event.is_stopped()
+
+    # 401 legacy_key 在绑定日志里提示去「客户端」页重新签发，而不是指导运行 cli migrate
+    caplog.set_level("WARNING")
+    caplog.clear()
+    plugin_legacy, _ = plugin_answering(
+        lambda _r: httpx.Response(401, json={"error": "legacy", "code": "legacy_key"})
+    )
+    assert replies(plugin_legacy, AstrMessageEvent(**PRIVATE_QQ, text="/bind")) == [UNAVAILABLE]
+    assert "「客户端」页" in caplog.text
+    assert "cli migrate" not in caplog.text

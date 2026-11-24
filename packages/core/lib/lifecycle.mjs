@@ -7,7 +7,15 @@ import { execFile, execFileSync } from 'node:child_process'
 import { hostname } from 'node:os'
 import { basename } from 'node:path'
 
-import { fetchFailure, isRedirect, keyFormatError, KiokuFailure, redirectError } from './http.mjs'
+import {
+  fetchFailure,
+  isRedirect,
+  KeyRejected,
+  keyFormatError,
+  KiokuFailure,
+  redirectError,
+  rejectionOf,
+} from './http.mjs'
 
 // 各事件等待服务端的上限（毫秒），要比平台给钩子的时限短
 export const TIMEOUTS = { 'session.start': 8000, 'prompt.submit': 5000, 'turn.end': 5000 }
@@ -40,7 +48,8 @@ export function deviceKeyOf(env = process.env) {
   return clean || undefined
 }
 
-// 配置写错了：访问密钥格式不对（kind 为 key），或者服务地址返回跳转（kind 为 url）。
+// 配置写错了：访问密钥格式不对（kind 为 key），或者服务地址返回跳转（kind 为 url），
+// 或者访问密钥是升级前签发的（kind 为 legacy，要重新接入，不是改配置）。
 // 和没有配置一样，平台可以在会话开始时提示一次；文字不带访问密钥
 export class Misconfigured extends KiokuFailure {
   constructor(message, kind) {
@@ -146,6 +155,14 @@ export async function postEvent(base, key, body, timeout, signal) {
   }
   if (isRedirect(res.status)) {
     throw new Misconfigured(redirectError(res.status, res.headers.get('location'), base), 'url')
+  }
+  if (res.status === 401 || res.status === 503) {
+    const rejected = rejectionOf(res.status, await res.json().catch(() => null), base)
+    // 升级前签发的访问密钥和配置写错一样：平台在会话开始时提示一次，别的时候只记日志
+    if (rejected instanceof KeyRejected && rejected.legacy) {
+      throw new Misconfigured(rejected.message, 'legacy')
+    }
+    if (rejected) throw rejected
   }
   if (!res.ok) throw new KiokuFailure(`HTTP ${res.status}`)
   return res

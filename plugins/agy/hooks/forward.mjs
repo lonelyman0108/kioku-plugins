@@ -2,12 +2,22 @@
 // PreInvocation 在同一轮工具调用里会多次触发，按 transcript 最新 USER_INPUT 位置去重，每轮只召回一次。
 // 任何失败都保持退出码 0、输出合法 JSON {}，不阻断会话，错误写 stderr（不带访问密钥）。
 
-import { createHash } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -58,7 +68,15 @@ async function writeState(env, sessionId, data) {
   const file = stateFile(env, sessionId)
   if (!file) return
   await mkdir(stateDir(env), { recursive: true, mode: 0o700 })
-  await writeFile(file, JSON.stringify(data), { mode: 0o600 })
+  const temp = `${file}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temp, JSON.stringify(data), { mode: 0o600, flag: 'wx' })
+    await chmod(temp, 0o600)
+    await rename(temp, file)
+  } catch (err) {
+    await rm(temp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 async function sweepState(env) {
@@ -149,7 +167,7 @@ export async function forwardAgyEvent(event, rawStdin, env = process.env) {
   if (!profile) {
     if (event === 'session.start') {
       return buildInjectResult(
-        `Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`,
+        `Kioku 插件尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`,
       )
     }
     return {}
@@ -231,14 +249,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(JSON.stringify(output ?? {}))
     })
     .catch((err) => {
-      if (event === 'session.start' && err instanceof Misconfigured) {
-        process.stdout.write(
-          JSON.stringify(
-            buildInjectResult(
-              `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`,
-            ),
-          ),
-        )
+      if (
+        event === 'session.start' &&
+        (err instanceof Misconfigured || err instanceof LegacyDatabase)
+      ) {
+        const text =
+          err instanceof LegacyDatabase || err.kind === 'legacy'
+            ? `Kioku 长期记忆不可用：${err.message}。`
+            : `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
+        process.stdout.write(JSON.stringify(buildInjectResult(text)))
       } else {
         process.stdout.write('{}')
       }

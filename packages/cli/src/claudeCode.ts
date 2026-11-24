@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { profileFile, readProfile, removeProfile, writeProfile } from './core.ts'
-import { type JsonSettings, readSettings, writeSettings } from './files.ts'
+import { hasInlineSecret, type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
 import { resolveTarget } from './target.ts'
 import type { Env, InspectCallbacks, PlatformStatus, SetupIo, SetupOptions } from './types.ts'
 
@@ -96,7 +96,9 @@ export async function setupClaudeCode(options: SetupOptions, io: SetupIo): Promi
         out.write(`  ${key}：${shownSetting(settings[key])} → ${shownSetting(next[key])}\n`)
       }
       if (!options.dryRun) {
-        const backedUp = await writeSettings(file, next, text)
+        const backedUp = await safeWrite(file, serialize(next, text), text, {
+          backup: !hasInlineSecret(text),
+        })
         if (backedUp) out.write(`原来的设置备份在 ${file}.kioku-backup\n`)
         else if (text !== null) out.write(`${file}.kioku-backup 已有更早的备份，没有覆盖\n`)
         out.write(`Claude Code 的${claudeMemory.name}已启用，新开会话生效\n`)
@@ -110,6 +112,9 @@ export async function setupClaudeCode(options: SetupOptions, io: SetupIo): Promi
     }
     if (existingProfile && (await removeProfile('claude-code', env))) {
       out.write(`已删掉 ${profile}\n`)
+    }
+    if (claudePluginActive(next, env)) {
+      out.write('插件要另外在会话里卸载：/plugin uninstall kioku@kioku\n')
     }
     const by = claudeMemory.disabledBy(next, env)
     if (by) out.write(`注意：${by}仍然停用着它\n`)
@@ -166,7 +171,9 @@ export async function setupClaudeCode(options: SetupOptions, io: SetupIo): Promi
   }
 
   if (changes.length) {
-    const backedUp = await writeSettings(file, next, text)
+    const backedUp = await safeWrite(file, serialize(next, text), text, {
+      backup: !hasInlineSecret(text),
+    })
     if (backedUp) out.write(`原来的设置备份在 ${file}.kioku-backup\n`)
     else if (text !== null) out.write(`${file}.kioku-backup 已有更早的备份，没有覆盖\n`)
     out.write(`Claude Code 的${claudeMemory.name}已停用，新开会话生效\n`)

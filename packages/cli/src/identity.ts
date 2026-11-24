@@ -2,6 +2,7 @@
 // --platform 指定客户端 → 环境变量 KIOKU_SERVER_URL/KIOKU_API_KEY → ~/.config/kioku/cli.json 默认身份
 // → 本机仅有一个已配置客户端时自动选用 → 多个客户端时在终端交互选择（非终端提示用 --platform）。
 
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { KiokuFailure, UsageError, loadConfig, profileDir, serverUrlProblem } from './core.ts'
@@ -58,6 +59,7 @@ export async function writeCliPreferences(
   const file = cliPreferencesFile(env)
   const existing = await readText(file).catch(() => null)
   const body = `${JSON.stringify(prefs, null, 2)}\n`
+  await mkdir(profileDir(env), { recursive: true, mode: 0o700 })
   await safeWrite(file, body, existing, { backup: false })
 }
 
@@ -104,7 +106,10 @@ export async function resolveIdentity({
     }
   }
 
-  if ((env.KIOKU_SERVER_URL ?? '').trim()) {
+  if (
+    (env.KIOKU_SERVER_URL ?? '').trim() &&
+    ((env.KIOKU_API_KEY ?? '').trim() || (env.KIOKU_API_KEY_FILE ?? '').trim())
+  ) {
     const cfg = await loadConfig(env)
     return { config: cfg, source: 'env' }
   }
@@ -149,7 +154,7 @@ export async function resolveIdentity({
     )
   }
 
-  const ui = await loadPrompts({ input: stdin, output: out })
+  const ui = await loadPrompts({ input: stdin, output: out, env })
   if (!ui) {
     throw new KiokuFailure(
       `检测到多个已配置客户端（${configured.map((c) => c.id).join('、')}），请用 --platform <平台> 指定`,

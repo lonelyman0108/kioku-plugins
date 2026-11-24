@@ -45,7 +45,7 @@ beforeAll(async () => {
               id: 'a',
               circleId: '11111111-2222-3333-4444-555555555555',
               slug: 'oc',
-              name: 'OpenClaw 接入实例',
+              name: 'OpenClaw 客户端',
               runtimeFamily: 'openclaw',
             },
             persona: null,
@@ -188,7 +188,10 @@ describe('installer', () => {
     )
     const res = await installPlugin('gemini', { env, cwd: dir })
     expect(res.status).toBe('installed')
-    expect(readFileSync(logFile, 'utf8')).toMatch(/extensions link .*gemini/)
+    const persistentDir = join(dir, 'kioku', 'plugins', 'gemini')
+    expect(existsSync(join(persistentDir, 'gemini-extension.json'))).toBe(true)
+    expect(existsSync(join(persistentDir, '.kioku-managed.json'))).toBe(true)
+    expect(readFileSync(logFile, 'utf8')).toContain(`extensions link ${persistentDir}`)
 
     const ocLog = `${logFile}.oc`
     const ocPathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
@@ -227,10 +230,10 @@ describe('installer', () => {
     expect(readToolCacheSync('openclaw', env)).toMatchObject({ url: base })
 
     const lines = formatHandshakeLines(ok).join('\n')
-    expect(lines).toContain('OpenClaw 接入实例')
+    expect(lines).toContain('OpenClaw 客户端')
     expect(lines).toContain('个人圈')
     expect(lines).toContain('MCP 工具 2 个')
-    expect(lines).toContain('正式词条、联系人事实、会话摘要')
+    expect(lines).toContain('会话摘要、联系人事实、正式记忆')
     expect(lines).toContain('[╱] 私密')
 
     const bad = await verifyConnectionHandshake(
@@ -240,5 +243,54 @@ describe('installer', () => {
     )
     expect(bad.ok).toBe(false)
     expect(formatHandshakeLines(bad)[0]).toContain('✗ 连通测试失败')
+  })
+
+  it('upgrade：OpenClaw 先尝试 plugins update、失败再重装；Codex 更新市场后重装；OpenCode 去掉锁死版本号', async () => {
+    const ocLog = join(dir, 'oc-upgrade.log')
+    const ocModeFile = join(dir, 'oc-update-fail')
+    fakeCommand(
+      bin,
+      'openclaw',
+      [
+        "const fs = require('node:fs');",
+        'const args = process.argv.slice(2);',
+        `fs.appendFileSync(${JSON.stringify(ocLog)}, JSON.stringify(args) + '\\n');`,
+        `if (args[0] === 'plugins' && args[1] === 'update' && fs.existsSync(${JSON.stringify(ocModeFile)})) process.exit(1);`,
+      ].join('\n'),
+    )
+    const ocOk = await installPlugin('openclaw', { env, cwd: dir, upgrade: true })
+    expect(ocOk.status).toBe('upgraded')
+    expect(readFileSync(ocLog, 'utf8')).toContain(JSON.stringify(['plugins', 'update', 'kioku']))
+    expect(readFileSync(ocLog, 'utf8')).not.toContain('npm:@kioku-memory/openclaw')
+
+    writeFileSync(ocModeFile, '1')
+    const ocFallback = await installPlugin('openclaw', { env, cwd: dir, upgrade: true })
+    expect(ocFallback.status).toBe('upgraded')
+    expect(readFileSync(ocLog, 'utf8')).toContain(
+      JSON.stringify(['plugins', 'install', 'npm:@kioku-memory/openclaw']),
+    )
+
+    const codexLog = join(dir, 'codex-upgrade.log')
+    fakeCommand(
+      bin,
+      'codex',
+      `require('node:fs').appendFileSync(${JSON.stringify(codexLog)}, process.argv.slice(2).join(' ') + '\\n')`,
+    )
+    const codexRes = await installPlugin('codex', { env, cwd: dir, upgrade: true })
+    expect(codexRes.status).toBe('upgraded')
+    expect(readFileSync(codexLog, 'utf8')).toContain('plugin marketplace update')
+    expect(readFileSync(codexLog, 'utf8')).toContain('plugin add kioku@kioku')
+
+    mkdirSync(join(dir, 'opencode'), { recursive: true })
+    const opencodeCfg = join(dir, 'opencode', 'opencode.json')
+    writeFileSync(
+      opencodeCfg,
+      JSON.stringify({ plugin: ['@kioku-memory/plugin-opencode@0.5.0', 'other-plugin'] }, null, 2),
+    )
+    const opencodeRes = await installPlugin('opencode', { env, cwd: dir, upgrade: true })
+    expect(opencodeRes.status).toBe('upgraded')
+    expect(JSON.parse(readFileSync(opencodeCfg, 'utf8'))).toEqual({
+      plugin: ['@kioku-memory/plugin-opencode', 'other-plugin'],
+    })
   })
 })

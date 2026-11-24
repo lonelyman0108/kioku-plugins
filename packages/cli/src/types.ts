@@ -50,8 +50,8 @@ export interface WhoamiResponse {
   linkedCircles: WhoamiLinkedCircle[]
   accountName?: string
   client: {
-    id: string
-    circleId: string
+    id?: string
+    circleId?: string
     slug: string
     name: string
     runtimeFamily: string
@@ -63,7 +63,7 @@ export interface WhoamiResponse {
       recordPrompt?: boolean
     }
   }
-  persona: {
+  persona?: {
     id: string
     slug: string
     name: string

@@ -110,7 +110,7 @@ describe('kioku setup codex', () => {
     expect(requests.map((r) => [r.url, r.headers.authorization])).toEqual([
       ['/v1/whoami', `Bearer ${KEY}`],
     ])
-    expect(result.text).toContain('✓ 访问密钥可用：接入实例 Codex，运行时 codex')
+    expect(result.text).toContain('✓ 访问密钥可用：客户端 Codex，运行时 codex')
     expect(result.text).toContain(`mcp_servers.kioku：（未设置） → ${base}/v1/mcp`)
     expect(result.text).toContain('codex plugin add kioku@kioku')
     expect(result.text).not.toContain(KEY)
@@ -201,13 +201,13 @@ describe('kioku setup codex', () => {
     expect(readdirSync(join(dir, 'codex'))).toEqual([])
   })
 
-  it('接入实例的运行时不是 codex 时提醒，照常写', async () => {
+  it('客户端的运行时不是 codex 时提醒，照常写', async () => {
     reply = () => ({
       status: 200,
       body: { ...WHO, client: { ...WHO.client, runtimeFamily: 'claudecode' } },
     })
     const result = await run(setup, ['codex', '--server-url', base])
-    expect(result.text).toContain('! 这个接入实例的运行时不是 codex')
+    expect(result.text).toContain('! 这个客户端的运行时不是 codex')
     expect(readFileSync(toml, 'utf8')).toBe(block(base))
   })
 
@@ -363,6 +363,26 @@ describe('kioku setup codex', () => {
     )
   })
 
+  it('浏览器授权期间外部改写了 config.toml 时重新读取并保留并发修改', async () => {
+    writeFileSync(toml, 'model = "x"\n')
+    let text = ''
+    const code = await setup(['codex', '--server-url', base], {
+      env,
+      cwd: dir,
+      out: { write: (chunk) => (text += chunk) },
+      readKey: async () => '',
+      login: async () => {
+        writeFileSync(toml, 'model = "x"\n\n[profiles.concurrent]\nmodel = "o3"\n')
+        return KEY
+      },
+    })
+    expect(code).toBe(0)
+    expect(text).toContain('Codex 已配好')
+    const written = readFileSync(toml, 'utf8')
+    expect(written).toContain('[profiles.concurrent]\nmodel = "o3"')
+    expect(written).toContain(block(base))
+  })
+
   it('features 写成行内表时认不出 Memories 的开关：提醒，不当成已经关着', async () => {
     writeFileSync(toml, 'features = { memories = true }\n')
     const result = await run(setup, ['codex', '--server-url', base])
@@ -445,7 +465,7 @@ describe('kioku doctor codex', () => {
     writeFileSync(toml, '[features]\nmemories = true\n\n[plugins."kioku@kioku"]\nenabled = false\n')
     const result = await run(doctor, ['codex'])
     expect(result.code).toBe(1)
-    expect(result.text).toContain('✗ 还没有给 Codex 配过：运行 kioku setup codex')
+    expect(result.text).toContain('✗ 尚未配置 Codex：运行 kioku setup codex')
     expect(result.text).toContain('! 没有 kioku setup codex 写下的地址与访问密钥')
     expect(result.text).toContain('里没有 Kioku 的 MCP 服务')
     expect(result.text).toContain('! Codex 的 kioku 插件没有启用')

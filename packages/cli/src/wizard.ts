@@ -1,13 +1,27 @@
 // 在终端里不带参数运行 kioku 时的向导：一个渐进披露的状态面板，先扫描服务器与本机各平台的现状，
 // 再按缺什么列出动作；接入后自动尝试安装对应平台插件并完成 MCP 握手验证，做完回到面板刷新。
 
+import { upgradePageOf } from './api.ts'
+import { migrateCommand, planMigration, type MigrationPlan } from './commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.ts'
-import { KiokuFailure, keyFormatError, loadConfig, serverUrlProblem, shownUrl } from './core.ts'
+import {
+  KiokuFailure,
+  keyFormatError,
+  loadConfig,
+  plain,
+  serverUrlProblem,
+  shownUrl,
+} from './core.ts'
 import { doctor } from './doctor.ts'
 import { rememberServerUrl } from './identity.ts'
 import { pendingOf, planImport, writeImport } from './import.ts'
-import { formatHandshakeLines, installPlugin, verifyConnectionHandshake } from './installer.ts'
+import {
+  formatHandshakeLines,
+  installPlugin,
+  removeManagedAgyPlugin,
+  verifyConnectionHandshake,
+} from './installer.ts'
 import {
   composeState,
   composeUp,
@@ -31,6 +45,8 @@ import {
   canDisable,
   connectCandidates,
   defaultServerUrl,
+  effectivePresence,
+  migrationCandidates,
   renderPanel,
   scan,
   serverHealth,
@@ -79,6 +95,8 @@ const DEPS = {
   pluginSteps,
   installPlugin,
   verifyConnectionHandshake,
+  removeManagedAgyPlugin,
+  planMigration,
   setup,
   doctor,
   planImport,
@@ -145,13 +163,15 @@ async function connect(
   const { ui, deps, env, cwd, out } = ctx
   if (!rows.length || !ctx.url) return
   const picked = await ui.multiselect({
-    message: reauth ? '重新授权哪些平台' : '接入哪些平台',
+    message: reauth ? '重新授权哪些客户端' : '接入哪些客户端',
     options: rows.map((row) => ({
       value: row.id,
       label: row.name,
-      ...(row.present ? {} : { hint: '本机没发现' }),
+      ...(effectivePresence(row) === 'installed' ? {} : { hint: '本机未检测到' }),
     })),
-    initialValues: rows.filter((row) => reauth || row.present).map((row) => row.id),
+    initialValues: rows
+      .filter((row) => reauth || effectivePresence(row) === 'installed')
+      .map((row) => row.id),
   })
   if (cancelled(ui, picked) || !picked.length) return
   const plan = picked.map((id) => {
@@ -223,59 +243,12 @@ async function connect(
   if (steps) ui.note(steps, '装插件')
 }
 
-// 接入 Claude Code（/plugin 模式退回入口）
-async function connectClaude(ctx: WizardContext, row: PlatformRow): Promise<void> {
-  const { ui, deps, env, cwd, out } = ctx
-  const steps = await deps.pluginSteps(['claude-code'], { env, cwd, url: ctx.url ?? undefined })
-  const memory = row.memory === 'on' && !row.reenabledIn
-  const conflicts = row.conflicts?.filter((c) => c.removable) ?? []
-  if (row.reenabledIn) {
-    ui.log.warn(
-      `Claude Code 的自动记忆被 ./${row.reenabledIn} 重新启用：要在那里把 autoMemoryEnabled 去掉`,
-    )
-  }
-  if (memory || conflicts.length) {
-    const preview = bufferOut()
-    if (memory) {
-      await deps.setup(['claude-code', '--dry-run'], {
-        env,
-        out: preview,
-        cwd,
-        login: null,
-        skipConflicts: true,
-      })
-    }
-    const lines: string[] = []
-    if (conflicts.length) {
-      lines.push('清理冲突的记忆工具', ...formatConflicts(conflicts, PLATFORMS), '')
-    }
-    if (memory) {
-      lines.push('停用自动记忆', preview.text().replace(/\n?没有写入（--dry-run）$/, ''), '')
-    }
-    ui.note(lines.join('\n'), '计划')
-    const ok = await ui.confirm({ message: '开始？' })
-    if (cancelled(ui, ok) || !ok) return
-    if (conflicts.length) {
-      const cleanRes = await deps.removeConflicts(conflicts, { env, cwd, out })
-      if (cleanRes.some((r) => !r.ok)) {
-        throw new KiokuFailure('清理 Claude Code 上的冲突没有全部成功，已停下')
-      }
-    }
-    if (memory) {
-      await deps.setup(['claude-code'], {
-        env,
-        out: ctx.out,
-        cwd,
-        login: null,
-        skipConflicts: true,
-      })
-    }
-  }
-  if (steps) ui.note(steps, '装插件')
-}
-
 // 先用 --dry-run 看要改什么，确认后再做
-async function previewThenRun(ctx: WizardContext, args: string[], question: string): Promise<void> {
+async function previewThenRun(
+  ctx: WizardContext,
+  args: string[],
+  question: string,
+): Promise<boolean> {
   const { ui, deps, env, cwd } = ctx
   const preview = bufferOut()
   await deps.setup([...args, '--dry-run'], {
@@ -287,8 +260,9 @@ async function previewThenRun(ctx: WizardContext, args: string[], question: stri
   })
   ui.note(preview.text().replace(/\n?没有写入（--dry-run）$/, ''), '计划')
   const ok = await ui.confirm({ message: question })
-  if (cancelled(ui, ok) || !ok) return
+  if (cancelled(ui, ok) || !ok) return false
   await deps.setup(args, { env, out: ctx.out, cwd, login: null, skipConflicts: true })
+  return true
 }
 
 // 迁移一个平台的本地记忆：照 kioku import 列计划（这时才和 Kioku 逐条比对）、确认后写入。
@@ -309,7 +283,7 @@ async function migrate(ctx: WizardContext, id: string): Promise<void> {
       config = { url: ctx.url, key: String(key).trim() }
     }
   }
-  if (!config) throw new KiokuFailure(`还没有给 ${platform.name} 配过：先接入`)
+  if (!config) throw new KiokuFailure(`尚未为 ${platform.name} 配置访问密钥：请先接入`)
   const plan = await deps.planImport(config, { from: platform.source! }, { env, out })
   if (plan.empty) {
     ctx.pending.set(id, { pending: 0 })
@@ -361,11 +335,14 @@ async function disable(ctx: WizardContext, state: PanelState): Promise<void> {
   const { ui } = ctx
   const rows = state.platforms.filter(canDisable)
   const id = await ui.select({
-    message: '停用哪个平台（恢复自带记忆、清掉配置）',
+    message: '停用哪个客户端（恢复自带记忆、清掉配置）',
     options: rows.map((row) => ({ value: row.id, label: row.name })),
   })
   if (cancelled(ui, id)) return
-  await previewThenRun(ctx, [id, '--undo'], `停用 ${PLATFORMS[id].name}？`)
+  const ran = await previewThenRun(ctx, [id, '--undo'], `停用 ${PLATFORMS[id].name}？`)
+  if (ran && id === 'agy' && (await ctx.deps.removeManagedAgyPlugin({ env: ctx.env }))) {
+    ui.log.info('已清理 Antigravity 托管插件目录')
+  }
 }
 
 async function check(ctx: WizardContext): Promise<void> {
@@ -409,7 +386,7 @@ async function waitHealthy(
   spin.stop(up ? 'Kioku 已就绪' : 'Kioku 没有就绪')
   if (!up) {
     throw new KiokuFailure(
-      `Kioku 在 3 分钟内没有就绪：运行 cd ${dir} && docker compose logs kioku 看原因`,
+      `Kioku 在 3 分钟内没有就绪：运行 cd ${dir} && docker compose logs kioku 查看日志`,
     )
   }
 }
@@ -421,7 +398,7 @@ async function bringUp(ctx: WizardContext, dir: string): Promise<void> {
   try {
     await ctx.deps.local.composeUp(dir, ctx.env)
   } catch (err) {
-    spin.stop('没有起来')
+    spin.stop('启动失败')
     throw err
   }
   await waitHealthy(ctx, dir, spin)
@@ -438,12 +415,12 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
     return
   }
   if (!(await local.hasCompose(env))) {
-    throw new KiokuFailure('没有找到 docker compose：先装好 Docker（含 compose 插件）再来')
+    throw new KiokuFailure('未找到 docker compose：请安装 Docker（含 compose 插件）后重试')
   }
   const answer = await ui.text({
     message: '放在哪个目录',
     initialValue: defaultLocalDir(env),
-    validate: (text) => ((text ?? '').trim() ? undefined : '要写目录'),
+    validate: (text) => ((text ?? '').trim() ? undefined : '目录不能为空'),
   })
   if (cancelled(ui, answer)) return
   const dir = expandDir(String(answer).trim(), env)
@@ -469,13 +446,13 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
           ? `netstat -ano | findstr :${LOCAL_PORT}`
           : `lsof -i :${LOCAL_PORT}`
       throw new KiokuFailure(
-        `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它（${busyCmd} 看是哪个），或者改 compose.yaml 里的端口后自己启动`,
+        `端口 ${LOCAL_PORT} 已被其他进程占用：请先停止对应进程（${busyCmd}），或修改 compose.yaml 中的端口后启动`,
       )
     }
     const release = await local.latestRelease()
     if (!release.release) {
       ui.log.warn(
-        `没取到最新的正式版（${release.problem}）：用 main 上的 compose.yaml 与 edge 镜像（main 上最新的提交，不保证稳定）`,
+        `未能获取最新正式版（${release.problem}）：用 main 上的 compose.yaml 与 edge 镜像（main 上最新的提交，不保证稳定）`,
       )
     }
     ui.note(
@@ -483,8 +460,8 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
         `目录 ${dir}`,
         `版本 ${release.imageTag}${release.release ? '（最新的正式版）' : ''}`,
         `下载 ${release.ref} 的 compose.yaml、.env.example（已有的不覆盖）`,
-        `生成 .env：数据库密码、主密钥、初始化码随机生成，镜像固定在 ${release.imageTag}，只给本人读写（已有的不覆盖）`,
-        `docker compose up -d，端口只开在 127.0.0.1:${LOCAL_PORT}`,
+        `生成 .env：数据库密码、主密钥、初始化码随机生成，镜像固定在 ${release.imageTag}，权限仅限当前用户读写（已有文件不覆盖）`,
+        `docker compose up -d，端口仅绑定在 127.0.0.1:${LOCAL_PORT}`,
       ].join('\n'),
       '计划',
     )
@@ -501,7 +478,7 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
     }
     if (prepared.env.written) {
       ui.log.warn(
-        `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢了机密记忆与托管凭据解不开`,
+        `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢失将无法解开机密记忆与托管凭据`,
       )
     } else ui.log.info(`${prepared.env.file} 已经有了，沿用`)
     await bringUp(ctx, dir)
@@ -512,6 +489,28 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
   if (await local.setupDone(LOCAL_URL)) return 'connect'
   if (!code) ui.log.info(`初始化码看日志：cd ${dir} && docker compose logs kioku`)
   if (await awaitSetup(ctx, LOCAL_URL, code)) return 'connect'
+}
+
+function formatWizardMigrationLines(plan: MigrationPlan): string[] {
+  const lines = [
+    `目标服务器：${shownUrl(plan.url)}`,
+    `待迁移 ${plan.items.length} 个客户端：${plan.items.map((item) => item.name).join('、')}`,
+    '',
+  ]
+  for (const item of plan.items) {
+    const steps: string[] = []
+    if (item.removeLegacySource) steps.push('卸载旧插件来源')
+    if (item.clearCache) steps.push('清理工具清单缓存')
+    if (item.pluginAction === 'reinstall') steps.push('重新安装新版插件')
+    else if (item.pluginAction === 'upgrade') steps.push('更新新版插件')
+    if (item.reauth) steps.push('浏览器批量重新授权')
+    if (item.findings.manualInstallDir) {
+      steps.push(`手动替换目录 ${plain(item.findings.manualInstallDir)}`)
+    }
+    lines.push(`${item.name}：${item.reasons.join(' · ')}`)
+    lines.push(`  步骤：${steps.join(' → ')}`)
+  }
+  return lines
 }
 
 async function perform(ctx: WizardContext, choice: string, state: PanelState): Promise<void> {
@@ -527,21 +526,48 @@ async function perform(ctx: WizardContext, choice: string, state: PanelState): P
     if (ctx.url) await awaitSetup(ctx, ctx.url, null)
     return
   }
+  if (choice === 'open-upgrade') {
+    if (ctx.url) {
+      const page = upgradePageOf(ctx.url)
+      ctx.deps.open(page)
+      ctx.ui.log.info(`已在浏览器打开升级页 ${page}，完成就地迁移后回到控制台继续`)
+    }
+    return
+  }
+  if (choice === 'migrate') {
+    if (!ctx.url) return
+    const candidates = migrationCandidates(state)
+    if (!candidates.length) return
+    const plan = await ctx.deps.planMigration(ctx.url, {
+      platforms: candidates.map((c) => c.id),
+      env: ctx.env,
+      cwd: ctx.cwd,
+    })
+    if (!plan.items.length) {
+      ctx.ui.log.info('本机已接入客户端均已是最新，无需迁移')
+      return
+    }
+    ctx.ui.note(formatWizardMigrationLines(plan).join('\n'), '旧版迁移计划')
+    const ok = await ctx.ui.confirm({ message: '确认执行以上迁移计划？', initialValue: true })
+    if (cancelled(ctx.ui, ok) || !ok) return
+    await migrateCommand([...candidates.map((c) => c.id), '--server-url', ctx.url, '-y'], {
+      env: ctx.env,
+      cwd: ctx.cwd,
+      out: ctx.out,
+      open: ctx.deps.open,
+    })
+    return
+  }
   if (choice === 'connect') return connect(ctx, connectCandidates(state))
   if (choice === 'reauth') {
     return connect(
       ctx,
-      state.platforms.filter((row) => row.connection === 'invalid'),
+      state.platforms.filter((row) => row.connection === 'invalid' && !row.legacyKey),
       { reauth: true },
     )
   }
-  if (choice === 'claude-connect') {
-    const row = state.platforms.find((item) => item.id === 'claude-code')
-    if (row) return connectClaude(ctx, row)
-    return
-  }
   if (choice === 'claude-memory') {
-    return previewThenRun(ctx, ['claude-code'], '停用 Claude Code 的自动记忆？')
+    return void (await previewThenRun(ctx, ['claude-code'], '停用 Claude Code 的自动记忆？'))
   }
   if (choice.startsWith('import:')) return migrate(ctx, choice.slice('import:'.length))
   if (choice === 'clean') return cleanConflictsAction(ctx, state)

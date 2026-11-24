@@ -151,5 +151,34 @@ describe('Claude Code MCP stdio 桥接', () => {
     expect(redir.stdout + redir.stderr).not.toContain(secretKey)
     expect(redir.stdout + redir.stderr).not.toContain('token=secret')
     expect(JSON.parse(redir.stdout.trim()).error.message).toContain('返回了跳转')
+
+    // /plugin 只填了一项且存在本机配置时绝不混配跨服发送旧密钥
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'claude-code.json'),
+      JSON.stringify({ serverUrl: `${base}/`, apiKey: 'kioku_old_profile_key' }),
+    )
+    requests = []
+    const mixed = await runBridgeProc([{ jsonrpc: '2.0', id: 4, method: 'tools/list' }], {
+      CLAUDE_PLUGIN_OPTION_SERVER_URL: base,
+      CLAUDE_PLUGIN_OPTION_API_KEY: null,
+    })
+    expect(requests).toHaveLength(0)
+    expect(JSON.parse(mixed.stdout.trim()).error.message).toContain('须成对填写')
+
+    // 401 legacy_key 与 503 legacy_database 返回准确迁移提示
+    reply = () => ({ status: 401, body: { error: 'old', code: 'legacy_key' } })
+    const legacyKeyRes = await runBridgeProc([{ jsonrpc: '2.0', id: 5, method: 'tools/list' }], {
+      CLAUDE_PLUGIN_OPTION_SERVER_URL: base,
+      CLAUDE_PLUGIN_OPTION_API_KEY: secretKey,
+    })
+    expect(JSON.parse(legacyKeyRes.stdout.trim()).error.message).toContain('migrate')
+
+    reply = () => ({ status: 503, body: { error: 'old db', code: 'legacy_database' } })
+    const legacyDbRes = await runBridgeProc([{ jsonrpc: '2.0', id: 6, method: 'tools/list' }], {
+      CLAUDE_PLUGIN_OPTION_SERVER_URL: base,
+      CLAUDE_PLUGIN_OPTION_API_KEY: secretKey,
+    })
+    expect(JSON.parse(legacyDbRes.stdout.trim()).error.message).toContain('/legacy-upgrade')
   })
 })

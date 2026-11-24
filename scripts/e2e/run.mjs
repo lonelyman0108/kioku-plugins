@@ -302,7 +302,8 @@ async function main(platform) {
   const work = join(root, 'work')
   const tools = join(root, 'tools')
   for (const dir of [home, work, tools]) mkdirSync(dir, { recursive: true })
-  const kioku = await startFakeKioku(platform)
+  const runtimeFamily = platform === 'claude-code' ? 'claudecode' : platform
+  const kioku = await startFakeKioku(runtimeFamily)
   const model = await startFakeModel()
   // 主目录与配置目录都换掉；PATH 前面加上装平台的那个目录
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'PATH'

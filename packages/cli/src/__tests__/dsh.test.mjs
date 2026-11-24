@@ -129,7 +129,7 @@ describe('kioku doctor dsh', () => {
     await run(setup, ['dsh', '--server-url', base])
     const result = await run(doctor, ['dsh'])
     expect(result.code).toBe(0)
-    expect(result.text).toContain('✓ 访问密钥可用：接入实例 DeepSeek Harness（dsh），运行时 dsh')
+    expect(result.text).toContain('✓ 访问密钥可用：客户端 DeepSeek Harness（dsh），运行时 dsh')
     expect(result.text).toContain('✓ 装了 kioku 插件的 profile：web')
     expect(result.text).not.toContain('! ')
   })
@@ -137,7 +137,7 @@ describe('kioku doctor dsh', () => {
   it('没配过、没有 profile 装插件，各提醒各的', async () => {
     const result = await run(doctor, ['dsh'])
     expect(result.code).toBe(1)
-    expect(result.text).toContain('还没有给 DeepSeek Harness 配过：运行 kioku setup dsh')
+    expect(result.text).toContain('尚未配置 DeepSeek Harness：运行 kioku setup dsh')
     expect(result.text).toContain('! 没有哪个 profile 装了 kioku 的插件')
   })
 })

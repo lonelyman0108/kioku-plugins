@@ -1,5 +1,5 @@
-// kioku import 认得的来源：各平台自带的长期记忆放在哪、是什么格式、迁进 Kioku 时生成什么样的词条。
-// 这里只读文件、出条目，不发请求。指令文件（AGENTS.md、CLAUDE.md）不是记忆，不在这里
+// kioku import 认得的来源：各客户端自带的长期记忆放在哪、是什么格式、迁进 Kioku 时生成什么样的记忆。
+// 这里只读文件、出记忆项，不发请求。指令文件（AGENTS.md、CLAUDE.md）不是记忆，不在这里
 
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, stat } from 'node:fs/promises'
@@ -9,8 +9,8 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { Env } from './types.ts'
 
 // 与服务端 contracts 的上限一致
-const MAX_CONTENT = 20_000
-const MAX_TITLE = 80
+const MAX_CONTENT = 100_000
+const MAX_TITLE = 200
 const MAX_DISCLOSURE = 500
 const MAX_SEGMENT = 64
 // 一个来源最多读这么多个文件：指错了目录时不把整个盘读一遍
@@ -123,32 +123,59 @@ export function frontmatter(text: string): {
   return { meta, body: '', unterminated: true }
 }
 
-// 一份 Markdown 拆成几条：有只写着一个分节号（U+00A7，Hermes 用它隔开各条）的行就按它拆，否则按二级标题拆，都没有就是一整条。
-// 每条是 { heading, text }，heading 可能没有
+// 一份 Markdown 拆成几条：围栏代码块内部的分隔行与标题行不触发拆分；有只写着一个分节号（U+00A7，Hermes 用它隔开各条）的行就按它拆，
+// 否则按二级标题拆，都没有就是一整条。每条是 { heading, text }，heading 可能没有
 export function sections(text: string): Array<{ heading: string | null; text: string }> {
   const body = text.replace(/^\uFEFF/, '')
-  if (/^\u00a7\s*$/m.test(body)) {
-    return body
-      .split(/^\u00a7\s*$/m)
-      .map((part) => ({ heading: null, text: part.trim() }))
+  const lines = body.split(/\r?\n/)
+  let fence: { char: string; len: number } | null = null
+  let hasSectionSep = false
+  const insideFence = lines.map((line) => {
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+    if (!fence && open) {
+      const char = open[1][0]
+      if (char === '~' || !open[2].includes('`')) {
+        fence = { char, len: open[1].length }
+        return true
+      }
+    } else if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)
+      if (close && close[1][0] === fence.char && close[1].length >= fence.len) {
+        fence = null
+      }
+      return true
+    }
+    if (/^\u00a7\s*$/.test(line)) hasSectionSep = true
+    return false
+  })
+
+  if (hasSectionSep) {
+    const parts: string[][] = [[]]
+    lines.forEach((line, idx) => {
+      if (!insideFence[idx] && /^\u00a7\s*$/.test(line)) parts.push([])
+      else parts[parts.length - 1].push(line)
+    })
+    return parts
+      .map((group) => ({ heading: null, text: group.join('\n').trim() }))
       .filter((part) => part.text)
   }
+
   const parts: Array<{ heading: string | null; lines: string[] }> = []
   let current: { heading: string | null; lines: string[] } = { heading: null, lines: [] }
-  for (const line of body.split(/\r?\n/)) {
-    const heading = /^##\s+(.+?)\s*#*\s*$/.exec(line)
+  lines.forEach((line, idx) => {
+    const heading = !insideFence[idx] ? /^##\s+(.+?)\s*#*\s*$/.exec(line) : null
     if (heading) {
       parts.push(current)
       current = { heading: heading[1], lines: [line] }
     } else current.lines.push(line)
-  }
+  })
   parts.push(current)
   return parts
     .map((part) => ({ heading: part.heading, text: part.lines.join('\n').trim() }))
     .filter((part) => part.text)
 }
 
-// 条目：{ source, title, legacyUri, when, topics, content, disclosure }，或者 { source, skipped: 原因 }
+// 记忆项：{ source, title, legacyUri, when, topics, content, disclosure }，或者 { source, skipped: 原因 }
 function entry(
   source: string,
   {
@@ -171,12 +198,12 @@ function entry(
 ): SourceEntry {
   const text = content.trim()
   if (!text) return { source, skipped: '没有内容' }
-  if (Array.from(text).length > MAX_CONTENT) {
+  if (text.length > MAX_CONTENT) {
     return { source, skipped: `正文超过 ${MAX_CONTENT} 个字，拆开后再导入` }
   }
   const item: SourceEntry = {
     source,
-    title: titleOf(title) || basename(source),
+    title: titleOf(title) || titleOf(basename(source)) || '未命名记忆',
     ...(baseTitle ? { baseTitle } : {}),
     ...(legacyUri ? { legacyUri } : {}),
     ...(when && Object.keys(when).length ? { when } : {}),
@@ -187,11 +214,11 @@ function entry(
   return hint ? { ...item, disclosure: hint } : item
 }
 
-// 一个记忆文件最多这么大（字节）：正文上限是 2 万字，再大的不读进内存
+// 一个记忆文件最多这么大（字节）：正文上限是 10 万字，再大的不读进内存
 const MAX_FILE_BYTES = 512 * 1024
 
 // 读一个记忆文件的文字。只读普通文件：符号链接不跟（它可以指到记忆目录之外的任何文件，读出来就发给服务端了），
-// 管道、设备这类也不读；太大的、不是文本的不读。读得了返回 { text }，读不了返回 { problem }；没有这个文件返回 null
+// 管道、设备这类也不读；太大的、不是文本的不读。可读取返回 { text }，失败返回 { problem }；没有这个文件返回 null
 async function readable(file: string): Promise<{ text: string } | { problem: string } | null> {
   const info = await lstat(file).catch(() => null)
   if (!info) return null
@@ -202,7 +229,7 @@ async function readable(file: string): Promise<{ text: string } | { problem: str
   try {
     text = await readFile(file, 'utf8')
   } catch {
-    return { problem: '读不了这个文件' }
+    return { problem: '无法读取这个文件' }
   }
   // 带着空字符或解码不了的字节（成了替换字符）的不是文本
   if (text.includes('\0') || text.includes('\uFFFD')) return { problem: '不是文本文件' }
@@ -245,7 +272,7 @@ export function claudeProjectName(encoded: string, home = homedir()): string {
 }
 
 // Claude Code 的自动记忆：<配置目录>/projects/<项目>/memory/*.md，一个文件一条，文件头里有名字、说明与类型。
-// MEMORY.md 是索引，不是记忆；带上项目与客户端切面以及主题标签，同时保留旧坐标仅作迁移兜底对照
+// MEMORY.md 是索引，不是记忆；带上项目与客户端适用条件以及主题标签，同时保留旧坐标仅作迁移兜底对照
 async function claudeCode({
   env,
   path,
@@ -259,22 +286,36 @@ async function claudeCode({
   const root = resolve(
     path ?? join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
   )
-  const info = await stat(root).catch(() => null)
+  const info =
+    path !== undefined ? await lstat(root).catch(() => null) : await stat(root).catch(() => null)
   if (!info?.isDirectory()) return { root, found: false, entries: [] }
-  // 给的是某个项目的 memory 目录时只读它，否则读每个项目的
-  const direct = (await markdownFiles(root)).length > 0
-  const projects = direct
-    ? [{ name: claudeProjectName(basename(dirname(root))), dir: root }]
-    : (await readdir(root).catch(() => [] as string[]))
-        .sort()
-        .map((name) => ({ name: claudeProjectName(name), dir: join(root, name, 'memory') }))
+  // 指定 --path 时区分「某个项目的 memory 目录」与「projects 根目录」；默认路径固定为 projects 根目录
+  let direct = false
+  if (path !== undefined) {
+    if (basename(root) === 'memory') direct = true
+    else if ((await markdownFiles(root)).length > 0) {
+      const subNames = await readdir(root).catch(() => [] as string[])
+      const checks = await Promise.all(subNames.map((n) => isRealDir(join(root, n, 'memory'))))
+      direct = !checks.some(Boolean)
+    }
+  }
+  const projects: Array<{ name: string; rawDir: string; dir: string }> = direct
+    ? [{ name: claudeProjectName(basename(dirname(root))), rawDir: root, dir: root }]
+    : (
+        await Promise.all(
+          (await readdir(root).catch(() => [] as string[])).sort().map(async (name) => {
+            const projDir = join(root, name)
+            const memDir = join(projDir, 'memory')
+            if (!(await isRealDir(projDir)) || !(await isRealDir(memDir))) return null
+            return { name: claudeProjectName(name), rawDir: name, dir: memDir }
+          }),
+        )
+      ).filter((item): item is { name: string; rawDir: string; dir: string } => item !== null)
   const entries: SourceEntry[] = []
   const titleProject = new Map<string, string>()
   for (const project of projects) {
-    // 项目的 memory 目录是符号链接时不进去
-    if (!direct && !(await isRealDir(project.dir))) continue
     for (const name of await markdownFiles(project.dir)) {
-      if (name === 'MEMORY.md') continue
+      if (name.toUpperCase() === 'MEMORY.MD') continue
       if (entries.length >= MAX_FILES) break
       const source = join(project.dir, name)
       const read = await readable(source)
@@ -304,14 +345,15 @@ async function claudeCode({
           ? { project: [project.name], runtime: ['claudecode'] }
           : { project: [project.name] }
       const topics = ['claude-code', segment(type || 'project')]
-      const baseTitle = titleOf(meta.description || meta.name || stem) || stem
-      const prevProject = titleProject.get(baseTitle)
+      const baseTitle =
+        titleOf(meta.description || meta.name || stem) || titleOf(stem) || '未命名记忆'
+      const prevProjDir = titleProject.get(baseTitle)
       let itemTitle = baseTitle
-      if (prevProject !== undefined && prevProject !== project.name) {
+      if (prevProjDir !== undefined && prevProjDir !== project.dir) {
         const withProj = titleWithSuffix(baseTitle, `（${project.name}）`)
         const clash = titleProject.get(withProj)
         itemTitle =
-          clash === undefined || clash === project.name
+          clash === undefined || clash === project.dir
             ? withProj
             : titleWithSuffix(baseTitle, `（${project.name}-${digest(source).slice(2, 6)}）`)
       }
@@ -325,7 +367,7 @@ async function claudeCode({
         disclosure: meta.description,
       })
       if (!built.skipped && !titleProject.has(itemTitle)) {
-        titleProject.set(itemTitle, project.name)
+        titleProject.set(itemTitle, project.dir)
       }
       entries.push(built)
     }
@@ -347,10 +389,10 @@ interface SourceFileSpec {
   single?: boolean
 }
 
-// 一组「文件 → 迁入条目」的来源：每个文件按 sections 拆成几条。标题优先取小节标题，无小节标题或重名时按内容摘要消歧；
+// 一组「文件 → 迁入记忆」的来源：每个文件按 sections 拆成几条。标题优先取小节标题，无小节标题或重名时按内容摘要消歧；
 // 不按顺序编号：文件里插一条、删一条之后，别的条标题不能跟着变，否则去重就认不出它们了。
 async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceReadResult> {
-  const info = await stat(root).catch(() => null)
+  const info = await lstat(root).catch(() => null)
   if (!info?.isDirectory()) return { root, found: false, entries: [] }
   const entries: SourceEntry[] = []
   const usedTitles = new Set<string>()
@@ -491,12 +533,15 @@ export const SOURCES: Record<
   openclaw: { name: 'OpenClaw 工作区的记忆文件', read: openclaw },
 }
 
-// 认得、但迁不了的来源，说明原因
+// 认得、但不可迁移的来源，说明原因
 export const UNSUPPORTED_SOURCES: Record<string, string> = {
   codex:
-    'Codex 自带的 Memories 存在它自己的数据库里，格式没有公开，迁不了；它在本地默认是关着的，多半没有内容',
+    'Codex 自带的 Memories 存在它自己的数据库里，格式未公开，无法迁移；它在本地默认处于关闭状态',
   pi: 'pi 没有自带的长期记忆',
   dsh: 'DeepSeek Harness 没有自带的长期记忆',
+  opencode: 'OpenCode 没有自带的长期记忆文件',
+  gemini: 'Gemini CLI 没有自带的独立长期记忆目录',
+  agy: 'Antigravity 没有自带的长期记忆文件',
 }
 
 export function sourceNames(): string {

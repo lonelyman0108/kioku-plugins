@@ -84,6 +84,9 @@ describe('DeepSeek Harness 的补丁', () => {
       { serverUrl: 'https://kioku.example.com', apiKey: 'a\nb' },
       { serverUrl: 'https://kioku.example.com', apiKey: 'a b' },
       { serverUrl: 'https://kioku .example.com', apiKey: 'k' },
+      { serverUrl: 'https://kioku.example.com/?token=1', apiKey: 'k' },
+      { serverUrl: 'https://kioku.example.com/#frag', apiKey: 'k' },
+      { serverUrl: 'https://user:pass@kioku.example.com', apiKey: 'k' },
       { serverUrl: 'ftp://kioku.example.com', apiKey: 'k' },
     ]) {
       writeFileSync(file, JSON.stringify(value))

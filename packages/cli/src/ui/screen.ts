@@ -3,6 +3,25 @@
 
 import { displayWidth } from './width.ts'
 
+const rawRestoreHooks = new Set<() => void>()
+
+export function registerRawRestore(fn: () => void): () => void {
+  rawRestoreHooks.add(fn)
+  return () => {
+    rawRestoreHooks.delete(fn)
+  }
+}
+
+export function restoreRawModes(): void {
+  for (const fn of [...rawRestoreHooks]) {
+    try {
+      fn()
+    } catch {
+      // 终端已关闭时忽略
+    }
+  }
+}
+
 export interface ScreenStream {
   isTTY?: boolean
   columns?: number
@@ -104,11 +123,13 @@ export class InlineScreen {
     }
     this.onSigInt = () => {
       const only = process.listenerCount('SIGINT') === 1
+      restoreRawModes()
       this.dispose()
       if (only) process.kill(process.pid, 'SIGINT')
     }
     this.onSigTerm = () => {
       const only = process.listenerCount('SIGTERM') === 1
+      restoreRawModes()
       this.dispose()
       if (only) process.kill(process.pid, 'SIGTERM')
     }
@@ -118,6 +139,7 @@ export class InlineScreen {
     if (process.platform === 'win32') {
       this.onSigBreak = () => {
         const only = process.listenerCount('SIGBREAK') === 1
+        restoreRawModes()
         this.dispose()
         if (only) process.kill(process.pid, 'SIGBREAK')
       }

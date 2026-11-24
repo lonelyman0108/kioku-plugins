@@ -6,10 +6,21 @@ import { Readable } from 'node:stream'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { addCommand, getCommand, lsCommand, searchCommand } from '../commands/memory.ts'
+import {
+  addCommand,
+  bootCommand,
+  deleteCommand,
+  editCommand,
+  getCommand,
+  lsCommand,
+  parseEditorCommand,
+  searchCommand,
+  transferCommand,
+} from '../commands/memory.ts'
 import { KiokuFailure, UsageError, writeProfile } from '../core.ts'
 import { resolveIdentity, writeCliPreferences } from '../identity.ts'
 import { importMemories } from '../import.ts'
+import { main } from '../index.ts'
 import type { Env } from '../types.ts'
 
 const KEY = 'kioku_test_key'
@@ -68,10 +79,18 @@ beforeAll(async () => {
               disclosure: '需要组织回复时读取',
               score: 0.91,
               via: ['semantic'],
-              cues: [],
+              cues: ['风格', '结论优先'],
             },
           ],
-          subjects: [],
+          subjects: [
+            {
+              role: 'sender',
+              name: 'Alice',
+              facts: [
+                { shortId: 'm-fact01', content: '使用 pnpm', updatedAt: '2026-01-01T00:00:00Z' },
+              ],
+            },
+          ],
         })
       }
 
@@ -168,7 +187,82 @@ beforeAll(async () => {
             updatedAt: '2026-01-01T00:00:00Z',
           })
         }
+        if (id === 'm-secok2') {
+          return send(200, {
+            id: 'mem-3',
+            shortId: 'm-secok2',
+            circleId: 'c1',
+            circleSlug: 'personal',
+            kind: 'entry',
+            title: '已解密机密记忆',
+            sensitivity: 'secret',
+            version: 1,
+            variants: [
+              {
+                id: 'v-sec2',
+                when: {},
+                whenSignature: '{}',
+                sortOrder: 0,
+                content: 'decrypted-secret-content',
+              },
+            ],
+          })
+        }
         return send(404, { error: '记忆不存在或无权读取' })
+      }
+
+      if (req.method === 'PATCH' && url.pathname === '/v1/entries') {
+        return send(200, {
+          id: 'mem-1',
+          shortId: 'm-234567',
+          circleId: 'c1',
+          circleSlug: 'personal',
+          kind: 'entry',
+          title: body?.title ?? '回复风格偏好',
+          sensitivity: body?.sensitivity ?? 'private',
+          priority: body?.priority ?? 5,
+          disclosure: body?.disclosure ?? null,
+          version: 4,
+          variants: [],
+        })
+      }
+
+      if (req.method === 'DELETE' && url.pathname === '/v1/entries') {
+        res.writeHead(204).end()
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/entries/transfer') {
+        return send(200, {
+          id: 'mem-1',
+          shortId: 'm-234567',
+          circleId: 'c2',
+          circleSlug: String(body?.toCircle ?? 'team'),
+          kind: 'entry',
+          title: '回复风格偏好',
+          sensitivity: 'internal',
+          priority: 5,
+          disclosure: null,
+          version: 4,
+          variants: [],
+        })
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/boot') {
+        return send(200, {
+          personaTraits: [{ traitKey: 'tone', title: '表达风格', content: '简洁直接' }],
+          entries: [
+            {
+              shortId: 'm-234567',
+              title: '工作原则',
+              circleId: 'c1',
+              circleSlug: 'personal',
+              kind: 'entry',
+              content: '代码规范优先',
+            },
+          ],
+          omitted: ['m-888888'],
+        })
       }
 
       if (req.method === 'GET' && url.pathname === '/v1/entries/browse') {
@@ -332,17 +426,29 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     await writeProfile('codex', { url: base, key: KEY }, env)
   })
 
-  it('search：格式化 Strata 结果框、短 ID、匹配切面与 --json 输出', async () => {
+  it('search：格式化 Strata 结果框、短 ID、适用条件、联系人事实与 --json 输出', async () => {
     const out1 = captureOut()
-    expect(await searchCommand(['回复风格', '--limit', '5'], { env, out: out1.stream })).toBe(0)
+    expect(
+      await searchCommand(
+        ['回复风格', '--limit', '5', '--when', 'realm=work', '--no-cross-circle'],
+        { env, out: out1.stream },
+      ),
+    ).toBe(0)
     const text = out1.read()
     expect(text).toContain('回复风格偏好')
     expect(text).toContain('m-234567')
-    expect(text).toContain('正式词条')
+    expect(text).toContain('正式记忆')
     expect(text).toContain('realm=work')
     expect(text).toContain('另有 1 个变体')
     expect(text).toContain('0.91')
-    expect(lastRequests.at(-1)?.body).toEqual({ query: '回复风格', limit: 5 })
+    expect(text).toContain('使用 pnpm')
+    expect(text).toContain('风格、结论优先')
+    expect(lastRequests.at(-1)?.body).toEqual({
+      query: '回复风格',
+      limit: 5,
+      facets: { realm: ['work'] },
+      crossCircle: false,
+    })
 
     const outEmpty = captureOut()
     expect(await searchCommand(['empty'], { env, out: outEmpty.stream })).toBe(0)
@@ -354,7 +460,7 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     expect(parsed.candidates[0].shortId).toBe('m-234567')
   })
 
-  it('get：支持短 ID、--circle 与 --all-variants，完整保留缩进正文与双链', async () => {
+  it('get：支持短 ID、--circle 与 --all-variants，区分未返回正文与已解密机密正文', async () => {
     const out = captureOut()
     expect(await getCommand(['m-234567'], { env, out: out.stream })).toBe(0)
     const text = out.read()
@@ -363,7 +469,7 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     expect(text).toContain('记忆圈：personal')
     expect(text).toContain('  - 保留缩进列表')
     expect(text).toContain('x'.repeat(40))
-    expect(text).toContain('其他切面变体（1）')
+    expect(text).toContain('其他变体（1）')
     expect(text).toContain('→ m-345678')
 
     const allOut = captureOut()
@@ -374,15 +480,20 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
       }),
     ).toBe(0)
     const allText = allOut.read()
-    expect(allText).toContain('── 切面：通用 ──')
-    expect(allText).toContain('── 切面：realm=work ──')
+    expect(allText).toContain('── 适用条件：通用 ──')
+    expect(allText).toContain('── 适用条件：realm=work ──')
     expect(allText).toContain('工作场景下先给结论。')
     expect(lastRequests.at(-1)?.url).toContain('circle=personal')
     expect(lastRequests.at(-1)?.url).toContain('allVariants=true')
 
     const secretOut = captureOut()
     expect(await getCommand(['m-999999'], { env, out: secretOut.stream })).toBe(0)
-    expect(secretOut.read()).toContain('机密记忆正文不随读取返回')
+    expect(secretOut.read()).toContain('正文未返回，需管理界面或具备机密读权限的访问密钥查看')
+
+    const decryptedOut = captureOut()
+    expect(await getCommand(['m-secok2'], { env, out: decryptedOut.stream })).toBe(0)
+    expect(decryptedOut.read()).toContain('机密正文已解密读取')
+    expect(decryptedOut.read()).toContain('decrypted-secret-content')
 
     await expect(getCommand(['m-404040'], { env, out: captureOut().stream })).rejects.toThrow(
       KiokuFailure,
@@ -427,9 +538,28 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
     await expect(lsCommand(['invalid-dim'], { env, out: captureOut().stream })).rejects.toThrow(
       UsageError,
     )
+
+    const filteredWhenOut = captureOut()
+    expect(
+      await lsCommand(['--when', 'realm=work', '--platform', 'codex'], {
+        env,
+        out: filteredWhenOut.stream,
+      }),
+    ).toBe(0)
+    expect(filteredWhenOut.read()).toContain('回复风格偏好')
+    expect(lastRequests.at(-1)?.url).toBe('/v1/entries/browse?groupBy=topic')
+
+    const unmatchedWhenOut = captureOut()
+    expect(
+      await lsCommand(['--when', 'realm=home', '--platform', 'codex'], {
+        env,
+        out: unmatchedWhenOut.stream,
+      }),
+    ).toBe(0)
+    expect(unmatchedWhenOut.read()).toContain('暂无可见记忆')
   })
 
-  it('add：支持标题、切面 --when、主题 --topic、--circle 与明文拦阻检查', async () => {
+  it('add / edit / delete / transfer / boot：支持完整日常读写操作与 --version / -- 选项分隔', async () => {
     const out1 = captureOut()
     expect(
       await addCommand(
@@ -507,6 +637,88 @@ describe('日常记忆读写命令（search / get / ls / add）', () => {
         out: captureOut().stream,
       }),
     ).rejects.toThrow(UsageError)
+
+    const validToOut = captureOut()
+    expect(
+      await addCommand(
+        [
+          '--title',
+          '时效记忆',
+          '--content',
+          '限时规则',
+          '--glossary',
+          '发布,构建',
+          '--valid-to',
+          '2026-12-31T23:59:00+08:00',
+        ],
+        { env, out: validToOut.stream },
+      ),
+    ).toBe(0)
+    expect(lastRequests.at(-1)?.body).toMatchObject({
+      glossary: ['发布', '构建'],
+      validTo: '2026-12-31T23:59:00+08:00',
+    })
+
+    const editOut = captureOut()
+    expect(
+      await editCommand(
+        ['m-234567', '--title', '新标题', '--valid-to', 'clear', '--expected-version', '3'],
+        { env, out: editOut.stream },
+      ),
+    ).toBe(0)
+    expect(editOut.read()).toContain('已更新记忆')
+    expect(lastRequests.at(-1)).toMatchObject({
+      method: 'PATCH',
+      url: '/v1/entries',
+      body: { id: 'm-234567', title: '新标题', validTo: null, expectedVersion: 3 },
+    })
+
+    await expect(
+      deleteCommand(['m-234567'], {
+        env,
+        out: captureOut().stream,
+        stdin: { isTTY: false } as never,
+      }),
+    ).rejects.toThrow('--yes')
+
+    const delOut = captureOut()
+    expect(await deleteCommand(['m-234567', '--yes'], { env, out: delOut.stream })).toBe(0)
+    expect(delOut.read()).toContain('已删除记忆')
+    expect(lastRequests.at(-1)?.method).toBe('DELETE')
+
+    const trOut = captureOut()
+    expect(await transferCommand(['m-234567', '--to', 'team'], { env, out: trOut.stream })).toBe(0)
+    expect(trOut.read()).toContain('已迁移记忆')
+    expect(trOut.read()).toContain('team')
+    expect(lastRequests.at(-1)).toMatchObject({
+      method: 'POST',
+      url: '/v1/entries/transfer',
+      body: { id: 'm-234567', toCircle: 'team' },
+    })
+
+    const bootOut = captureOut()
+    expect(await bootCommand([], { env, out: bootOut.stream })).toBe(0)
+    expect(bootOut.read()).toContain('表达风格')
+    expect(bootOut.read()).toContain('代码规范优先')
+    expect(bootOut.read()).toContain('m-888888')
+
+    expect(parseEditorCommand('"/Applications/VS Code.app/code" --wait')).toEqual([
+      '/Applications/VS Code.app/code',
+      '--wait',
+    ])
+
+    let verOut = ''
+    const origWrite = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      verOut += String(chunk)
+      return true
+    }) as typeof process.stdout.write
+    try {
+      expect(await main(['--version'])).toBe(0)
+    } finally {
+      process.stdout.write = origWrite
+    }
+    expect(verOut.trim()).toMatch(/^\d+\.\d+\.\d+/)
   })
 
   it('import：支持 -y 短参数免确认写入', async () => {

@@ -9,7 +9,7 @@
 
 ## 安装与配置
 
-先在 Kioku 管理界面的「接入实例」页建一个运行时是 `OpenCode`（`opencode`）的接入实例，然后运行：
+先在 Kioku 管理界面的「客户端」页建一个运行时是 `OpenCode`（`opencode`）的客户端，然后运行：
 
 ```bash
 npx @kioku-memory/cli setup opencode --server-url https://kioku.example.com

@@ -106,7 +106,7 @@ async function main(event) {
   await cleanup(dataDir)
   let base = (process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
   let key = (process.env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
-  if (!base || !key) {
+  if (!base && !key) {
     let profile
     try {
       profile = await readProfile('claude-code', process.env)
@@ -114,8 +114,10 @@ async function main(event) {
       await rm(keyFile, { force: true })
       throw err
     }
-    if (!base && profile) base = profile.url
-    if (!key && profile) key = profile.key
+    if (profile) {
+      base = profile.url
+      key = profile.key
+    }
   }
   if (!base || !key) {
     // 配置清掉了：这个会话之前写下的访问密钥也不留着，别的会话的不动

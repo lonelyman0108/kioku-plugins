@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 
+import { assertServerSupported } from './api.ts'
 import { ensureNoConflicts } from './conflicts.ts'
 import { configure, orphanHint } from './connect.ts'
 import { KiokuFailure, UsageError, fetchFailure, isRedirect, plain, redirectError } from './core.ts'
@@ -42,7 +43,7 @@ class Redirected extends KiokuFailure {}
 
 // 取走访问密钥这一步之后出的问题：访问密钥可能已经签发、却没有落到这台机器上
 const ORPHAN_HINT =
-  '如果确认页上已经点了确认，可能已经签发了一个没被取走的访问密钥：到管理界面的接入实例页吊销它，再重新运行'
+  '如果确认页上已经点了确认，可能已经签发了一个没被取走的访问密钥：到管理界面的「客户端」页吊销它，再重新运行'
 
 async function post(
   url: string,
@@ -111,6 +112,7 @@ export async function requestGrant(
     clientName?: string
   },
 ): Promise<DeviceGrant> {
+  await assertServerSupported(url)
   const { clientName, ...rest } = body
   const { status, data } = await post(url, '/v1/device/authorize', {
     ...rest,
@@ -238,7 +240,7 @@ async function waitForApproval(
   )
 }
 
-// 等一个平台的申请被确认，返回访问密钥与接入实例
+// 等一个平台的申请被确认，返回访问密钥与客户端
 export async function waitForKey(
   url: string,
   grant: Pick<DeviceGrant, 'deviceCode' | 'expiresIn' | 'interval'>,
@@ -320,7 +322,7 @@ export function openBrowser(address: string): void {
 const HOST_SUFFIX = /\.(?:local|localdomain|lan|home|internal)$/i
 
 // 机器名是自报的：去掉控制字符与 .local 这类后缀，太长就截断；什么都不剩时用 kioku-cli。
-// 服务端把它显示在确认页上，新建的接入实例默认叫「平台名 · 机器名」
+// 服务端把它显示在确认页上，新建的客户端默认叫「平台名 · 机器名」
 export function machineName(clientName: unknown): string {
   const name = Array.from(plain(clientName).replace(HOST_SUFFIX, '').trim())
     .slice(0, 64)
@@ -419,7 +421,7 @@ export async function deviceLogin(
   try {
     const { key, client } = await waitForKey(url, grant, { sleep, now, signal: controller.signal })
     waitUi.stop()
-    out.write(`✓ 已确认：接入实例 ${plain(client.name ?? '')}（${plain(client.slug ?? '')}）\n`)
+    out.write(`✓ 已确认：客户端 ${plain(client.name ?? '')}（${plain(client.slug ?? '')}）\n`)
     return key
   } catch (err) {
     waitUi.stop()

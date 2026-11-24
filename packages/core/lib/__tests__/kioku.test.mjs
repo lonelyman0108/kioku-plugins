@@ -245,6 +245,10 @@ describe('kioku run 的参数', () => {
     })
     expect(result.code).toBe(0)
     expect(result.stdout).toContain('用法：kioku run')
+
+    const migrate = await kioku(['migrate'])
+    expect(migrate.code).toBe(2)
+    expect(migrate.stderr).toContain('npx @kioku-memory/cli migrate')
   })
 })
 
@@ -353,10 +357,9 @@ describe('kioku run', () => {
     mkdirSync(join(root, 'bin'), { recursive: true })
     mkdirSync(join(root, 'lib'))
     copyFileSync(bin, join(root, 'bin', 'kioku'))
-    copyFileSync(
-      fileURLToPath(new URL('../http.mjs', import.meta.url)),
-      join(root, 'lib', 'http.mjs'),
-    )
+    for (const file of ['http.mjs', 'text.mjs']) {
+      copyFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), join(root, 'lib', file))
+    }
     writeFileSync(
       join(root, 'lib', 'kioku.mjs'),
       // 错误的 code 里带着值：直接打印 code 就带出来了
@@ -738,7 +741,14 @@ describe('kioku run', () => {
     })
     expect(refused).toMatchObject({ code: 2, stderr: 'kioku：无法连接 Kioku（ECONNREFUSED）\n' })
 
-    // 放不进请求头的访问密钥不发出去，也不复述
+    // 放不进请求头的访问密钥与带查询参数的地址都不发出去
+    const badUrl = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
+      env: { KIOKU_SERVER_URL: `${base}/?token=secret` },
+    })
+    expect(badUrl.code).toBe(2)
+    expect(badUrl.stderr).toContain('查询参数')
+    expect(requests).toHaveLength(0)
+
     const keyFile = join(dir, 'api-key')
     writeFileSync(keyFile, 'kioku_first_half\nkioku_second_half')
     const malformed = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'], {
@@ -749,7 +759,11 @@ describe('kioku run', () => {
     expect(malformed.stderr).not.toContain('half')
     expect(requests).toHaveLength(0)
 
-    // 服务端的错误文字里万一带着访问密钥，也盖掉
+    // 普通 401 返回清晰的访问密钥错误，万一带着当前访问密钥也盖掉
+    reply = () => ({ status: 401, body: { error: '未登录或凭据无效' } })
+    const rejected = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])
+    expect(rejected.stderr).toBe('kioku：访问密钥无效或已吊销\n')
+
     reply = () => ({ status: 401, body: { error: `访问密钥 ${KEY} 无效` } })
     const echoed = await kioku(['run', '-e', 'X=pg-main#password', '--', 'true'])
     expect(echoed.stderr).toBe('kioku：访问密钥 *** 无效\n')

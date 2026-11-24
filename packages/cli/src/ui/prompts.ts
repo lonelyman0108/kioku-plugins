@@ -6,12 +6,12 @@ import { emitKeypressEvents } from 'node:readline'
 
 import { plain } from '../core.ts'
 import { applyKeys } from '../secret.ts'
-import type { Reader, Writer } from '../types.ts'
+import type { Env, Reader, Writer } from '../types.ts'
 import { copyToClipboard, osc8Link } from './clipboard.ts'
 import { createLineInput, lineInputValue, renderLineWindow, stepLineInput } from './lineInput.ts'
-import { createScreen } from './screen.ts'
+import { createScreen, registerRawRestore } from './screen.ts'
 import { createTheme, renderBox, type StrataTheme } from './theme.ts'
-import { displayWidth, padEndWidth } from './width.ts'
+import { displayWidth, padEndWidth, truncateWidth, wrapWidth } from './width.ts'
 
 export const CANCEL = Symbol('kioku:cancel')
 
@@ -91,13 +91,16 @@ export interface PromptsUi {
   text: (config: TextConfig) => Promise<string | symbol>
   password: (config: PasswordConfig) => Promise<string | symbol>
   spinner: () => SpinnerHandle
-  updateSettings?: (opts: unknown) => void
 }
 
 interface KeypressInfo {
   name?: string
   ctrl?: boolean
   meta?: boolean
+}
+
+function isCancelKey(key: KeypressInfo): boolean {
+  return key.name === 'escape' || (Boolean(key.ctrl) && (key.name === 'c' || key.name === 'd'))
 }
 
 function withRawKeypress<T>(
@@ -118,9 +121,13 @@ function withRawKeypress<T>(
     } catch {
       // 忽略非原生 TTY
     }
+    const unregisterRaw = registerRawRestore(() => {
+      if (stdin.isTTY) stdin.setRawMode?.(wasRaw)
+    })
     stdin.resume()
 
     const cleanup = () => {
+      unregisterRaw()
       stdin.off('keypress', onKeypress)
       stdin.off('end', onEnd)
       stdin.off('error', onError)
@@ -167,7 +174,9 @@ function readHiddenLine(stdin: NodeJS.ReadStream, out: Writer): Promise<string |
   return new Promise((resolve) => {
     let value = ''
     const wasRaw = stdin.isRaw ?? false
+    let unregisterRaw = () => {}
     const finish = (result: string | symbol) => {
+      unregisterRaw()
       stdin.off('data', onData)
       stdin.off('end', onEnd)
       stdin.off('error', onEnd)
@@ -192,6 +201,9 @@ function readHiddenLine(stdin: NodeJS.ReadStream, out: Writer): Promise<string |
     } catch {
       // 忽略
     }
+    unregisterRaw = registerRawRestore(() => {
+      if (stdin.isTTY) stdin.setRawMode?.(wasRaw)
+    })
     stdin.resume()
     stdin.on('data', onData)
     stdin.once('end', onEnd)
@@ -247,8 +259,9 @@ function readVisibleLine(
 export function createBuiltinPrompts(
   stdin: NodeJS.ReadStream = process.stdin,
   out: Writer & { isTTY?: boolean; columns?: number } = process.stdout,
+  env: Env = process.env,
 ): PromptsUi {
-  const theme = createTheme({ stream: out })
+  const theme = createTheme({ stream: out, env })
   const writeLines = (prefix: string, body: string) => {
     for (const line of body.split('\n')) {
       out.write(`${prefix}${line}\n`)
@@ -310,7 +323,7 @@ export function createBuiltinPrompts(
       render()
       try {
         return await withRawKeypress<T | symbol>(stdin, (str, key, done) => {
-          if (key.ctrl || key.name === 'escape') {
+          if (isCancelKey(key)) {
             screen.commit(`${theme.error('■')}  ${message}：已取消`)
             done(CANCEL)
             return
@@ -368,7 +381,7 @@ export function createBuiltinPrompts(
       render()
       try {
         return await withRawKeypress<T[] | symbol>(stdin, (str, key, done) => {
-          if (key.ctrl || key.name === 'escape') {
+          if (isCancelKey(key)) {
             screen.commit(`${theme.error('■')}  ${message}：已取消`)
             done(CANCEL)
             return
@@ -430,7 +443,7 @@ export function createBuiltinPrompts(
       render()
       try {
         return await withRawKeypress<boolean | symbol>(stdin, (str, key, done) => {
-          if (key.ctrl || key.name === 'escape') {
+          if (isCancelKey(key)) {
             screen.commit(`${theme.error('■')}  ${message}：已取消`)
             done(CANCEL)
             return
@@ -500,6 +513,7 @@ export function createBuiltinPrompts(
           timer = null
         }
       }
+      const fitSpinner = (msg: string) => truncateWidth(msg, Math.max(16, (out.columns ?? 80) - 6))
       return {
         start(msg = '') {
           current = msg
@@ -508,22 +522,25 @@ export function createBuiltinPrompts(
             return
           }
           stopTimer()
-          out.write(`${theme.rule('│')}  ${frames[frame]} ${current}`)
+          out.write(`${theme.rule('│')}  ${frames[frame]} ${fitSpinner(current)}`)
           timer = setInterval(() => {
             frame = (frame + 1) % frames.length
-            out.write(`\r\x1b[K${theme.rule('│')}  ${frames[frame]} ${current}`)
+            out.write(`\r\x1b[K${theme.rule('│')}  ${frames[frame]} ${fitSpinner(current)}`)
           }, 140)
+          if (typeof timer.unref === 'function') timer.unref()
         },
         message(msg = '') {
           current = msg
           if (out.isTTY && timer)
-            out.write(`\r\x1b[K${theme.rule('│')}  ${frames[frame]} ${current}`)
+            out.write(`\r\x1b[K${theme.rule('│')}  ${frames[frame]} ${fitSpinner(current)}`)
         },
         stop(msg = '') {
           stopTimer()
           const line = msg || current
           if (out.isTTY)
-            out.write(`\r\x1b[K${line ? `${theme.rule('│')}  ${theme.ok('•')} ${line}\n` : ''}`)
+            out.write(
+              `\r\x1b[K${line ? `${theme.rule('│')}  ${theme.ok('•')} ${fitSpinner(line)}\n` : ''}`,
+            )
           else if (line) out.write(`│  • ${line}\n`)
         },
       }
@@ -549,14 +566,16 @@ export function renderDeviceAuthBox({
   codeCopied,
   linkCopied,
   out,
-  theme = createTheme({ stream: out }),
+  env = process.env,
+  theme = createTheme({ stream: out, env }),
 }: {
   userCode: string
   verificationUrl: string
   remainingSec: number
   codeCopied: boolean
   linkCopied: boolean
-  out?: { isTTY?: boolean }
+  out?: { isTTY?: boolean; columns?: number }
+  env?: Env
   theme?: StrataTheme
 }): string {
   const cleanCode = plain(userCode)
@@ -564,12 +583,40 @@ export function renderDeviceAuthBox({
   const spaced = spacedCode(cleanCode)
   const innerWidth = Math.max(12, displayWidth(spaced) + 4)
   const statusTag = codeCopied ? theme.ok('确认码已复制') : theme.muted('对照终端输入确认码')
-  const linkShown = osc8Link(cleanUrl, cleanUrl, { stream: out })
+  const linkShown = osc8Link(cleanUrl, cleanUrl, { stream: out, env })
   const copyFeedback = linkCopied ? theme.ok('（链接已复制）') : ''
   const footerLeft = theme.muted('[o] 打开浏览器  [c] 复制链接  [Esc] 取消')
   const clock = theme.muted(formatCountdown(remainingSec))
-  const boxWidth = Math.max(54, displayWidth(cleanUrl) + 6, innerWidth + 24)
-  const gap = Math.max(2, boxWidth - 4 - displayWidth(footerLeft) - displayWidth(clock))
+  const desiredWidth = Math.max(54, displayWidth(cleanUrl) + 6, innerWidth + 24)
+  const boxWidth = out?.columns
+    ? Math.min(desiredWidth, Math.max(36, out.columns - 2))
+    : desiredWidth
+  const contentWidth = Math.max(20, boxWidth - 4)
+
+  const codeTop = `${theme.rule('┌')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┐')}`
+  const codeMid = `${theme.rule('│')}  ${theme.bold(padEndWidth(spaced, innerWidth - 4))}  ${theme.rule('│')}`
+  const codeBot = `${theme.rule('└')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┘')}`
+  const codeLines =
+    displayWidth(codeMid) + 2 + displayWidth(statusTag) <= contentWidth
+      ? [codeTop, `${codeMid}  ${statusTag}`, codeBot]
+      : [codeTop, codeMid, codeBot, statusTag]
+
+  const urlLines =
+    displayWidth(`在浏览器里打开 ${linkShown}${copyFeedback}`) <= contentWidth
+      ? [`在浏览器里打开 ${linkShown}${copyFeedback}`]
+      : [
+          '在浏览器里打开：',
+          ...wrapWidth(cleanUrl, contentWidth).map((part) =>
+            osc8Link(cleanUrl, part, { stream: out, env }),
+          ),
+          ...(copyFeedback ? [copyFeedback] : []),
+        ]
+
+  const footerGap = contentWidth - displayWidth(footerLeft) - displayWidth(clock)
+  const footerLines =
+    footerGap >= 2
+      ? [`${footerLeft}${' '.repeat(footerGap)}${clock}`]
+      : [...wrapWidth(footerLeft, contentWidth), `剩余 ${clock}`]
 
   return renderBox({
     title: '浏览器授权',
@@ -577,15 +624,7 @@ export function renderDeviceAuthBox({
     theme,
     sections: [
       {
-        lines: [
-          `${theme.rule('┌')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┐')}`,
-          `${theme.rule('│')}  ${theme.bold(padEndWidth(spaced, innerWidth - 4))}  ${theme.rule('│')}  ${statusTag}`,
-          `${theme.rule('└')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┘')}`,
-          '',
-          `在浏览器里打开 ${linkShown}${copyFeedback}`,
-          '',
-          `${footerLeft}${' '.repeat(gap)}${clock}`,
-        ],
+        lines: [...codeLines, '', ...urlLines, '', ...footerLines],
       },
     ],
   })
@@ -606,6 +645,7 @@ export async function startDeviceAuthWait({
   onCancel,
   interactive,
   copy = copyToClipboard,
+  env = process.env,
 }: {
   userCode: string
   verificationUrl: string
@@ -617,6 +657,7 @@ export async function startDeviceAuthWait({
   onCancel?: () => void
   interactive?: boolean
   copy?: typeof copyToClipboard
+  env?: Env
 }): Promise<DeviceWaitHandle> {
   const cleanCode = plain(userCode)
   const cleanUrl = plain(verificationUrl)
@@ -636,9 +677,13 @@ export async function startDeviceAuthWait({
   let codeCopied = false
   let linkCopied = false
   let remaining = expiresIn
-  const theme = createTheme({ stream: out })
+  const theme = createTheme({ stream: out, env })
   const screen = createScreen(out)
   screen.hideCursor()
+
+  const ttyIn = stdin as NodeJS.ReadStream
+  const wasRaw = ttyIn.isRaw ?? false
+  let stopped = false
 
   const draw = () => {
     screen.render(
@@ -649,6 +694,7 @@ export async function startDeviceAuthWait({
         codeCopied,
         linkCopied,
         out,
+        env,
         theme,
       }),
     )
@@ -656,8 +702,8 @@ export async function startDeviceAuthWait({
 
   draw()
   if (browser) open(cleanUrl)
-  void copy(cleanCode, { out }).then((res) => {
-    if (res.ok) {
+  void copy(cleanCode, { out, env }).then((res) => {
+    if (res.ok && !stopped) {
       codeCopied = true
       draw()
     }
@@ -669,20 +715,20 @@ export async function startDeviceAuthWait({
   }, 1000)
   timer.unref()
 
-  const ttyIn = stdin as NodeJS.ReadStream
-  const wasRaw = ttyIn.isRaw ?? false
-  let stopped = false
   emitKeypressEvents(ttyIn)
   try {
     ttyIn.setRawMode?.(true)
   } catch {
     // 忽略非原生 TTY
   }
+  const unregisterRaw = registerRawRestore(() => {
+    ttyIn.setRawMode?.(wasRaw)
+  })
   ttyIn.resume?.()
 
   const onKeypress = (str: string, key: KeypressInfo = {}) => {
     if (stopped) return
-    if (key.name === 'escape' || (key.ctrl && (key.name === 'c' || key.name === 'd'))) {
+    if (isCancelKey(key)) {
       onCancel?.()
       return
     }
@@ -691,7 +737,7 @@ export async function startDeviceAuthWait({
       return
     }
     if (str === 'c' || str === 'C') {
-      void copy(cleanUrl, { out }).then((res) => {
+      void copy(cleanUrl, { out, env }).then((res) => {
         if (res.ok && !stopped) {
           linkCopied = true
           draw()
@@ -706,6 +752,7 @@ export async function startDeviceAuthWait({
     stop(finalMessage?: string) {
       if (stopped) return
       stopped = true
+      unregisterRaw()
       clearInterval(timer)
       ttyIn.off?.('keypress', onKeypress)
       try {
@@ -722,7 +769,6 @@ export async function startDeviceAuthWait({
 }
 
 export function localized(impl: PromptsUi): PromptsUi {
-  impl.updateSettings?.({ messages: { cancel: '已取消', error: '出错了' } })
   return {
     ...impl,
     select: (options) => impl.select({ showInstructions: false, ...options }),
@@ -731,7 +777,6 @@ export function localized(impl: PromptsUi): PromptsUi {
         showInstructions: false,
         required: false,
         ...options,
-        message: `${options.message}（空格选中，回车确认）`,
       }),
     confirm: (options) => impl.confirm({ active: '是', inactive: '否', ...options }),
   }
@@ -740,10 +785,12 @@ export function localized(impl: PromptsUi): PromptsUi {
 export async function loadPrompts({
   input = process.stdin,
   output = process.stdout,
+  env = process.env,
 }: {
   input?: Reader
   output?: Writer & { isTTY?: boolean; columns?: number }
+  env?: Env
 } = {}): Promise<PromptsUi | null> {
   if (!nodeSupported()) return null
-  return localized(createBuiltinPrompts(input as NodeJS.ReadStream, output))
+  return localized(createBuiltinPrompts(input as NodeJS.ReadStream, output, env))
 }

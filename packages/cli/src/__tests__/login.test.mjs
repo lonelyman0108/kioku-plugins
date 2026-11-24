@@ -51,13 +51,15 @@ beforeAll(async () => {
       const body = raw ? JSON.parse(raw) : null
       requests.push({ url: req.url, auth: req.headers.authorization, body })
       const reply =
-        req.url === '/v1/device/authorize'
-          ? authorize()
-          : req.url === '/v1/device/token'
-            ? answers.length > 1
-              ? answers.shift()
-              : answers[0]
-            : { status: 200, body: WHO }
+        req.url === '/v1/health'
+          ? { status: 200, body: { status: 'ok', api: 2, version: '0.6.0' } }
+          : req.url === '/v1/device/authorize'
+            ? authorize()
+            : req.url === '/v1/device/token'
+              ? answers.length > 1
+                ? answers.shift()
+                : answers[0]
+              : { status: 200, body: WHO }
       res.writeHead(reply.status, { 'content-type': 'application/json', ...reply.headers })
       res.end(JSON.stringify(reply.body ?? {}))
     })
@@ -114,13 +116,14 @@ async function run(args, extra) {
   return { code, text: context.text() }
 }
 const tokenPolls = () => requests.filter((r) => r.url === '/v1/device/token')
+const authorizeCalls = () => requests.filter((r) => r.url === '/v1/device/authorize')
 
 describe('kioku login', () => {
   it('申请、显示确认码、打开确认页、等到确认后交给这个平台的 setup；访问密钥不显示', async () => {
     answers = [pending, pending, answers[0]]
     const result = await run(['pi', '--server-url', `${base}/`])
     expect(result.code).toBe(0)
-    expect(requests[0]).toMatchObject({
+    expect(authorizeCalls()[0]).toMatchObject({
       url: '/v1/device/authorize',
       body: { runtimeFamily: 'pi', clientName: 'laptop' },
     })
@@ -136,7 +139,7 @@ describe('kioku login', () => {
       serverUrl: base,
       apiKey: KEY,
     })
-    expect(result.text).toContain('✓ 已确认：接入实例 pi（pi）')
+    expect(result.text).toContain('✓ 已确认：客户端 pi（pi）')
     expect(result.text).not.toContain(KEY)
     expect(result.text).not.toContain('device-code-1')
   })
@@ -148,7 +151,7 @@ describe('kioku login', () => {
     const again = await run(['pi', '--no-browser'])
     expect(again.code).toBe(0)
     expect(opened).toEqual([])
-    expect(requests[0].url).toBe('/v1/device/authorize')
+    expect(authorizeCalls()[0].url).toBe('/v1/device/authorize')
   })
 
   it('被拒绝、过期、一直没人确认：报错，什么都不写', async () => {
@@ -280,7 +283,7 @@ describe('kioku login', () => {
     expect(readdirSync(dir)).toEqual(['pi'])
   })
 
-  it('确认码、接入实例名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
+  it('确认码、客户端名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
     authorize = () => ({ status: 201, body: { ...GRANT, userCode: 'BCDF\n✓ 假的一行' } })
     answers = [
       {
@@ -290,8 +293,8 @@ describe('kioku login', () => {
     ]
     const result = await run(['pi', '--server-url', base], { clientName: 'lap\ntop‮' })
     expect(result.text).toContain('确认码：BCDF ✓ 假的一行\n')
-    expect(result.text).toContain('接入实例 甲 乙（pi）')
-    expect(requests[0].body.clientName).toBe('lap top')
+    expect(result.text).toContain('客户端 甲 乙（pi）')
+    expect(authorizeCalls()[0].body.clientName).toBe('lap top')
   })
 
   it('参数：要写平台与地址', async () => {
@@ -316,7 +319,7 @@ describe('kioku login', () => {
     ]
     const result = await run(['claude-code', '--server-url', base, '--no-browser'])
     expect(result.code).toBe(0)
-    expect(requests[0].body.runtimeFamily).toBe('claudecode')
+    expect(authorizeCalls()[0].body.runtimeFamily).toBe('claudecode')
     expect(await readProfile('claude-code', env)).toMatchObject({ url: base, key: KEY })
     const settings = JSON.parse(readFileSync(join(dir, 'claude', 'settings.json'), 'utf8'))
     expect(settings.autoMemoryEnabled).toBe(false)

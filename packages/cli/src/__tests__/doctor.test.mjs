@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { shownUrl, writeProfile } from '../core.ts'
 import { doctor } from '../doctor.ts'
 
 const KEY = 'kioku_test_key'
@@ -81,10 +82,10 @@ describe('kioku doctor', () => {
     expect(requests[0].headers.authorization).toBe(`Bearer ${KEY}`)
     expect(result.lines).toEqual([
       `✓ 地址 ${base}`,
-      '✓ 访问密钥可用：接入实例 Claude Code（cc），运行时 claudecode',
-      '  主场记忆圈：个人圈（personal）',
-      '  读：正式词条、联系人事实、会话摘要',
-      '  写：正式词条',
+      '✓ 访问密钥可用：客户端 Claude Code（cc），运行时 claudecode',
+      '  主圈：个人圈（个人圈 · personal）',
+      '  读：会话摘要、联系人事实、正式记忆',
+      '  写：正式记忆',
       '  最高敏感级：私密',
       '  凭据：取用',
       '✓ Claude Code 的 kioku 插件已启用',
@@ -118,18 +119,30 @@ describe('kioku doctor', () => {
     const result = await run()
     expect(result.code).toBe(0)
     expect(result.text).toContain('✓ 访问密钥可用')
-    expect(result.text).toContain('没有认出平台')
+    expect(result.text).toContain('没有认出客户端')
     expect(result.text).not.toContain('插件')
   })
 
-  it('接入实例的运行时和平台对不上时提醒', async () => {
+  it('客户端的运行时和平台对不上时提醒，并支持关联圈/人格/默认语境展示', async () => {
     reply = () => ({
       status: 200,
-      body: { ...WHO, client: { ...WHO.client, runtimeFamily: 'codex' } },
+      body: {
+        ...WHO,
+        linkedCircles: [
+          { id: 'c2', slug: 'team', name: '团队圈', kind: 'shared', mode: 'read_write' },
+        ],
+        persona: { id: 'p1', slug: 'mentor', name: '代码导师' },
+        resolvedFacets: { realm: ['work'] },
+        client: { ...WHO.client, runtimeFamily: 'codex' },
+      },
     })
     const result = await run(['claude-code'])
     expect(result.code).toBe(0)
-    expect(result.text).toContain('! 这个接入实例的运行时不是 claudecode')
+    expect(result.text).toContain('关联圈：团队圈（读写）')
+    expect(result.text).toContain('独立人格：代码导师（mentor）')
+    expect(result.text).toContain('默认语境：realm=work')
+    expect(result.text).toContain('! 这个客户端的运行时不是 claudecode')
+    expect(result.text).toContain('「客户端」页')
   })
 
   it('访问密钥无效、跳转、连不上、响应不对都是 ✗，退出码 1，平台的配置照查', async () => {
@@ -194,7 +207,7 @@ describe('kioku doctor', () => {
     })
     const result = await run()
     expect(result.lines[1]).toBe(
-      '✓ 访问密钥可用：接入实例 甲 ✓ 假的一行 [2J（cc），运行时 claudecode',
+      '✓ 访问密钥可用：客户端 甲 ✓ 假的一行 [2J（cc），运行时 claudecode',
     )
     // 行分隔符、段落分隔符与改变显示方向的字符也一样；截断不切开表情
     reply = () => ({
@@ -206,14 +219,39 @@ describe('kioku doctor', () => {
     })
     const separators = await run()
     expect(separators.lines).toHaveLength(8)
-    expect(separators.lines[1]).toContain(`接入实例 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
+    expect(separators.lines[1]).toContain(`客户端 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
   })
 
-  it('地址里的账号密码与查询参数不打印', async () => {
-    env.KIOKU_SERVER_URL = `http://user:hunter-22@127.0.0.1:${new URL(base).port}/sub/?token=abc`
+  it('地址里的账号密码与查询参数不打印且会拒绝带凭据的 KIOKU_SERVER_URL', async () => {
+    const dirtyUrl = `http://user:hunter-22@127.0.0.1:${new URL(base).port}/sub/?token=abc`
+    expect(shownUrl(dirtyUrl)).toBe(`${base}/sub`)
+    env.KIOKU_SERVER_URL = dirtyUrl
     const result = await run()
-    expect(result.lines[0]).toBe(`✓ 地址 ${base}/sub`)
+    expect(result.code).toBe(1)
+    expect(result.lines[0]).toContain('不要带账号密码、查询参数')
     expect(result.text).not.toMatch(/hunter-22|token=abc/)
+  })
+
+  it('识别 database_unavailable 并防止 --all 把全局环境变量泄漏给未配置客户端', async () => {
+    reply = () => ({
+      status: 503,
+      body: { error: '数据库暂时无法连接', code: 'database_unavailable' },
+    })
+    const unavail = await run(['claude-code', '--json'])
+    expect(unavail.code).toBe(1)
+    const unavailReport = JSON.parse(unavail.text)
+    expect(unavailReport.targets[0].checks.some((c) => c.category === 'database_unavailable')).toBe(
+      true,
+    )
+
+    reply = () => ({ status: 200, body: WHO })
+    await writeProfile('pi', { url: base, key: KEY }, env)
+    const allRes = await run(['--all', '--json'])
+    expect(allRes.code).toBe(1)
+    const allReport = JSON.parse(allRes.text)
+    const agyTarget = allReport.targets.find((t) => t.id === 'agy')
+    expect(agyTarget.url).toBeUndefined()
+    expect(agyTarget.checks.some((c) => c.message.includes('尚未配置 Antigravity'))).toBe(true)
   })
 
   it('用户设置停用了、项目的设置又启用时提醒', async () => {

@@ -1,6 +1,6 @@
 // Hermes 这个平台的 kioku setup 与 kioku doctor。
-// Hermes 的记忆 provider 从这个 profile 的 .env 读 KIOKU_SERVER_URL 与 KIOKU_API_KEY，所以地址与访问密钥写在那里
-// （不另放一份）；选 provider、关掉内置的两份记忆文件是 config.yaml 里的三项，交给 Hermes 自己的 hermes config set 去改，
+// Hermes 的记忆提供方从这个 profile 的 .env 读 KIOKU_SERVER_URL 与 KIOKU_API_KEY，所以地址与访问密钥写在那里
+// （不另放一份）；选记忆提供方、关掉内置的两份记忆文件是 config.yaml 里的三项，交给 Hermes 自己的 hermes config set 去改，
 // 不自己动它的 YAML
 
 import { stat } from 'node:fs/promises'
@@ -161,7 +161,7 @@ async function undo({ dryRun }: SetupOptions, { env, out }: SetupIo): Promise<nu
   const next = withEnv(text, { [URL_KEY]: null, [API_KEY]: null })
   const changed = text !== null && next !== text
   if (changed) out.write(`${file}\n  ${URL_KEY}、${API_KEY}：去掉\n`)
-  // 只在现在选的还是 kioku 时把配置改回去：之后换成了别的 provider 的话，不去动它
+  // 只在现在选的还是 kioku 时把配置改回去：之后换成了别的记忆提供方的话，不去动它
   const provider = await configValue(env, 'memory.provider')
   const ours = provider === 'kioku'
   if (ours) {
@@ -170,7 +170,7 @@ async function undo({ dryRun }: SetupOptions, { env, out }: SetupIo): Promise<nu
   } else if (provider === null) {
     out.write('没有找到 hermes 命令，Hermes 的配置没有动\n')
   } else {
-    out.write('Hermes 现在选的记忆 provider 不是 kioku，它的配置没有动\n')
+    out.write('Hermes 现在选的记忆提供方不是 kioku，它的配置没有动\n')
   }
   if (dryRun) {
     out.write('没有写入（--dry-run）\n')
@@ -183,7 +183,7 @@ async function undo({ dryRun }: SetupOptions, { env, out }: SetupIo): Promise<nu
     if (state !== 'done') manual(out, RESTORED, state)
     else out.write('Hermes 改回用内置的记忆（两个开关都打开了；之前自己关过的要再关一次）。\n')
   }
-  out.write('provider 要另外卸载：hermes plugins remove kioku\n')
+  out.write('记忆提供方要另外卸载：hermes plugins remove kioku\n')
   return 0
 }
 
@@ -230,7 +230,7 @@ export async function setupHermes(options: SetupOptions, io: SetupIo): Promise<n
     manual(out, SETTINGS, state)
   }
   if (!(await installed(env)) && io.hints !== false) {
-    out.write(`接下来装上 provider：hermes plugins install ${SOURCE} --enable\n`)
+    out.write(`接下来装上记忆提供方：hermes plugins install ${SOURCE} --enable\n`)
   }
   return 0
 }
@@ -242,15 +242,15 @@ export async function inspectHermes(
   const home = hermesHome(env)
   if (!(await readHermesConfig(env))) {
     warn(
-      `${join(home, '.env')} 里没有 Kioku 的地址与访问密钥，provider 不会生效：运行 kioku setup hermes`,
+      `${join(home, '.env')} 里没有 Kioku 的地址与访问密钥，记忆提供方不会生效：运行 kioku setup hermes`,
     )
   }
-  if (await installed(env)) ok('Hermes 里装了 kioku 的记忆 provider')
-  else warn(`Hermes 里没有装 kioku 的记忆 provider：hermes plugins install ${SOURCE} --enable`)
+  if (await installed(env)) ok('Hermes 里装了 kioku 的记忆提供方')
+  else warn(`Hermes 里没有装 kioku 的记忆提供方：hermes plugins install ${SOURCE} --enable`)
 
   const provider = await configValue(env, 'memory.provider')
   if (provider === null) {
-    note('没有找到 hermes 命令，查不了它的配置：用 hermes memory status 看')
+    note('没有找到 hermes 命令，无法查看它的配置：用 hermes memory status 看')
     return
   }
   const flags: [string | null | undefined, string][] = [
@@ -262,8 +262,8 @@ export async function inspectHermes(
     warn('Hermes 的配置没有读出来（hermes config get 失败了）：用 hermes memory status 看')
     return
   }
-  if (provider === 'kioku') ok('Hermes 选的记忆 provider 是 kioku')
-  else warn(`Hermes 现在选的记忆 provider 不是 kioku：运行 kioku setup hermes`)
+  if (provider === 'kioku') ok('Hermes 选的记忆提供方是 kioku')
+  else warn(`Hermes 现在选的记忆提供方不是 kioku：运行 kioku setup hermes`)
   const builtin = flags
     .filter(([value]) => value && /^true$/i.test(value))
     .map(([, label]) => label)
@@ -275,7 +275,7 @@ export async function inspectHermes(
   note('只在本机的会话里生效；消息网关来的会话里不注入、不上报、不给工具')
 }
 
-// 给向导的面板：provider 装没装；自带的记忆停没停（选的是 kioku、内置的两份都关了才算停了；
+// 给向导的面板：记忆提供方装没装；自带的记忆停没停（选的是 kioku、内置的两份都关了才算停了；
 // 没有 hermes 命令、命令失败时为 null）
 export async function statusHermes({ env }: { env: Env }): Promise<PlatformStatus> {
   const plugin = await installed(env)

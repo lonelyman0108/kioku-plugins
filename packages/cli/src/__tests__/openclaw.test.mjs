@@ -300,11 +300,11 @@ describe('kioku doctor openclaw', () => {
     expect(unknown).not.toContain('没有装 kioku 的插件')
   })
 
-  it('没配过：说运行 kioku setup openclaw；没有 openclaw 命令时说明查不了', async () => {
+  it('没配过：说运行 kioku setup openclaw；没有 openclaw 命令时说明无法查看', async () => {
     env.KIOKU_OPENCLAW_BIN = join(dir, 'nowhere')
     const result = await run(doctor, ['openclaw'])
     expect(result.code).toBe(1)
-    expect(result.text).toContain('还没有给 OpenClaw 配过：运行 kioku setup openclaw')
+    expect(result.text).toContain('尚未配置 OpenClaw：运行 kioku setup openclaw')
     expect(result.text).toContain('没有找到 openclaw 命令')
   })
 })

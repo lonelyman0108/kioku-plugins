@@ -6,10 +6,18 @@ import { StringDecoder } from 'node:string_decoder'
 import { KiokuFailure } from './core.ts'
 import type { Env, Reader, Writer } from './types.ts'
 
+const MAX_SECRET_BYTES = 64 * 1024
+
 async function readAll(stream: AsyncIterable<Buffer | string>): Promise<string> {
   const chunks: Buffer[] = []
+  let total = 0
   for await (const chunk of stream) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk)
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+    total += buf.byteLength
+    if (total > MAX_SECRET_BYTES) {
+      throw new KiokuFailure('访问密钥输入超出大小上限（64 KiB）')
+    }
+    chunks.push(buf)
   }
   return Buffer.concat(chunks).toString('utf8')
 }

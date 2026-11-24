@@ -142,7 +142,7 @@ const json = (res, status, body) => {
 }
 
 const text = (value, min, max) =>
-  typeof value === 'string' && value.length >= min && Array.from(value).length <= max
+  typeof value === 'string' && value.length >= min && value.length <= max
 
 // 一个生命周期事件哪里不合契约（contracts 的 SessionStartEvent、PromptSubmitEvent、TurnEndEvent）；合格为 null
 function eventProblem(body) {
@@ -174,7 +174,10 @@ function eventProblem(body) {
 }
 
 // 假的 Kioku。runtimeFamily 决定生命周期输出的格式，和服务端的 hostOutput 一样
-export async function startFakeKioku(runtimeFamily) {
+export async function startFakeKioku(
+  runtimeFamily,
+  { apiGeneration = 2, databaseState = 'ok', legacyKeys = new Set() } = {},
+) {
   const requests = []
   const hostOutput = (event, context) => {
     if (!context) return { mode: 'none', value: null }
@@ -221,19 +224,65 @@ export async function startFakeKioku(runtimeFamily) {
       body = null
     }
     requests.push({ method: req.method, path: req.url, authorized, body })
-    if (req.url === '/v1/health') return json(res, 200, { status: 'ok', version: 'e2e' })
-    if (!authorized) return json(res, 401, { error: '访问密钥无效' })
+    if (req.url === '/v1/health') {
+      if (databaseState === 'legacy') {
+        return json(res, 503, {
+          status: 'unavailable',
+          version: 'e2e',
+          api: apiGeneration,
+          database: 'legacy',
+          code: 'legacy_database',
+        })
+      }
+      if (databaseState === 'unavailable') {
+        return json(res, 503, {
+          status: 'unavailable',
+          version: 'e2e',
+          api: apiGeneration,
+          database: 'unavailable',
+        })
+      }
+      return json(
+        res,
+        200,
+        apiGeneration === 1
+          ? { status: 'ok', version: '0.5.0' }
+          : { status: 'ok', version: 'e2e', api: apiGeneration },
+      )
+    }
+    if (databaseState === 'legacy') {
+      return json(res, 503, { error: '数据库等待管理员迁移', code: 'legacy_database' })
+    }
+    if (databaseState === 'unavailable') {
+      return json(res, 503, { error: '数据库暂时无法连接', code: 'database_unavailable' })
+    }
+    const auth = req.headers.authorization ?? ''
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (!authorized) {
+      if (legacyKeys.has(bearer)) {
+        return json(res, 401, {
+          error: '访问密钥是升级前签发的，已失效：运行 npx @kioku-memory/cli migrate 重新接入',
+          code: 'legacy_key',
+        })
+      }
+      return json(res, 401, { error: '访问密钥无效' })
+    }
     if (req.url === '/v1/whoami') {
       return json(res, 200, {
-        primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
+        primaryCircle: {
+          id: '11111111-1111-4111-8111-111111111111',
+          slug: 'personal',
+          name: '个人圈',
+          kind: 'personal',
+        },
         linkedCircles: [],
         client: {
-          id: 'app',
-          circleId: 'c1',
+          id: '22222222-2222-4222-8222-222222222222',
+          circleId: '11111111-1111-4111-8111-111111111111',
           slug: runtimeFamily,
           name: `e2e ${runtimeFamily}`,
           runtimeFamily,
-          ownerAccountId: 'a1',
+          ownerAccountId: '33333333-3333-4333-8333-333333333333',
           defaultPersonaId: null,
           config: { personMemoryMode: 'strict', recordPrompt: false },
         },
@@ -271,6 +320,29 @@ export async function startFakeKioku(runtimeFamily) {
         res.writeHead(405, { allow: 'POST' })
         return res.end()
       }
+      const accept = String(req.headers.accept ?? '').toLowerCase()
+      if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+        return json(res, 406, {
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message:
+              'Not Acceptable: Client must accept both application/json and text/event-stream',
+          },
+          id: null,
+        })
+      }
+      const contentType = String(req.headers['content-type'] ?? '').toLowerCase()
+      if (!contentType.includes('application/json')) {
+        return json(res, 415, {
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Unsupported Media Type: Content-Type must be application/json',
+          },
+          id: null,
+        })
+      }
       const reply = (result) => json(res, 200, { jsonrpc: '2.0', id: body.id, result })
       if (body?.id === undefined) {
         // 通知：没有回答
@@ -281,7 +353,8 @@ export async function startFakeKioku(runtimeFamily) {
         return reply({
           protocolVersion: body.params?.protocolVersion ?? '2025-03-26',
           capabilities: { tools: {} },
-          serverInfo: { name: 'kioku-e2e', version: '0.0.0' },
+          serverInfo: { name: 'kioku', version: 'e2e' },
+          instructions: 'Kioku 长期记忆服务',
         })
       }
       if (body.method === 'tools/list') return reply({ tools: TOOLS })

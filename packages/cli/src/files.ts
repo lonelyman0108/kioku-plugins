@@ -103,3 +103,16 @@ export function writeSettings(
 ): Promise<boolean> {
   return safeWrite(file, serialize(settings, text), text)
 }
+
+// 检查配置原文中是否带有明文凭据（Bearer、api_key、token、secret、password 或 kioku_ 前缀），
+// 有的话不写入未加密的 .kioku-backup，以免把其他工具的凭据备份成明文文件
+export function hasInlineSecret(text: string | null | undefined): boolean {
+  if (!text) return false
+  return (
+    /\bBearer\s+\S+/i.test(text) ||
+    /(?:authorization|api[_-]?token|api[_-]?key|token|secret|password)\s*["']?\s*[:=]\s*["']?[^"'\s#,}]+/i.test(
+      text,
+    ) ||
+    /\bkioku_[A-Za-z0-9_-]{4,}/.test(text)
+  )
+}

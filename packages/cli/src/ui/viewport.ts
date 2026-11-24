@@ -1,7 +1,7 @@
 // 全屏双缓冲 Alternate Screen 控制器：按行 diff 局部重绘，绝不滚屏、绝不开启鼠标捕获以保留框选复制；
 // 正常退出、Ctrl-C 或异常退出时始终恢复光标与原终端屏幕。
 
-import type { ScreenStream } from './screen.ts'
+import { restoreRawModes, type ScreenStream } from './screen.ts'
 
 export class ViewportScreen {
   readonly stream: ScreenStream
@@ -105,11 +105,13 @@ export class ViewportScreen {
     }
     this.onSigInt = () => {
       const only = process.listenerCount('SIGINT') === 1
+      restoreRawModes()
       this.dispose()
       if (only) process.kill(process.pid, 'SIGINT')
     }
     this.onSigTerm = () => {
       const only = process.listenerCount('SIGTERM') === 1
+      restoreRawModes()
       this.dispose()
       if (only) process.kill(process.pid, 'SIGTERM')
     }
@@ -119,6 +121,7 @@ export class ViewportScreen {
     if (process.platform === 'win32') {
       this.onSigBreak = () => {
         const only = process.listenerCount('SIGBREAK') === 1
+        restoreRawModes()
         this.dispose()
         if (only) process.kill(process.pid, 'SIGBREAK')
       }

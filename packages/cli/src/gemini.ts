@@ -1,17 +1,22 @@
 // Gemini CLI 这个平台的 kioku setup 与 kioku doctor。
-// setup 做三件事：
-// 1. 把服务地址与访问密钥写进本机文件（只给本人读写，扩展的钩子读它）；
-// 2. 在 ~/.gemini/settings.json 里写入 mcpServers.kioku；
-// 3. 把自带记忆工具 save_memory 加进 excludeTools 停用
+// 把服务地址与访问密钥写进本机文件（只给本人读写，扩展的钩子读它）；
+// 在 ~/.gemini/settings.json 里写入 mcpServers.kioku；并把自带记忆工具 save_memory 加进 excludeTools 停用
 
 import { existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { KiokuFailure, profileFile, readProfile, removeProfile, writeProfile } from './core.ts'
-import { type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
+import {
+  KiokuFailure,
+  profileDir,
+  profileFile,
+  readProfile,
+  removeProfile,
+  writeProfile,
+} from './core.ts'
+import { hasInlineSecret, type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
 import { resolveTarget } from './target.ts'
 import type { Env, InspectCallbacks, PlatformStatus, SetupIo, SetupOptions } from './types.ts'
 
@@ -138,13 +143,23 @@ export async function setupGemini(options: SetupOptions, io: SetupIo): Promise<n
       out.write(`${file}：去掉 mcpServers.kioku，恢复 save_memory\n`)
       if (!options.dryRun) {
         // 原文件里带着访问密钥时不留备份
-        await safeWrite(file, serialize(next, text), text, { backup: !hasStoredKey(settings) })
+        await safeWrite(file, serialize(next, text), text, {
+          backup: !hasStoredKey(settings) && !hasInlineSecret(text),
+        })
       }
     }
 
     if (options.dryRun) out.write(`${profile}：删掉\n没有写入（--dry-run）\n`)
-    else if (await removeProfile('gemini', env)) out.write(`已删掉 ${profile}\n`)
-    else out.write(`${profile} 本来就没有\n`)
+    else {
+      if (await removeProfile('gemini', env)) out.write(`已删掉 ${profile}\n`)
+      else out.write(`${profile} 本来就没有\n`)
+      await rm(join(profileDir(env), 'gemini-state'), { recursive: true, force: true }).catch(
+        () => {},
+      )
+      if (await extensionInstalled(env, cwd)) {
+        out.write('扩展要另外卸载：gemini extensions uninstall kioku\n')
+      }
+    }
     return 0
   }
 
@@ -174,7 +189,7 @@ export async function setupGemini(options: SetupOptions, io: SetupIo): Promise<n
   if (!sameProfile) await writeProfile('gemini', { url, key }, env)
   if (!sameFile) {
     const backedUp = await safeWrite(file, serialize(next, text), text, {
-      backup: !hasStoredKey(settings),
+      backup: !hasStoredKey(settings) && !hasInlineSecret(text),
     })
     if (backedUp) out.write(`原配置已备份到 ${file}.kioku-backup\n`)
   }

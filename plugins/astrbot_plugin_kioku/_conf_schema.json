@@ -8,7 +8,7 @@
   "kioku_key": {
     "description": "Kioku 的访问密钥",
     "type": "string",
-    "hint": "在 Kioku 管理界面的「接入实例」页为这个机器人新建接入实例（运行时选 astrbot），再签发访问密钥",
+    "hint": "在 Kioku 管理界面的「客户端」页为这个机器人新建客户端（运行时选 astrbot），再签发访问密钥",
     "default": ""
   },
   "boot": {

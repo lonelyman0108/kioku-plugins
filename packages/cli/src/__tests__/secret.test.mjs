@@ -17,6 +17,11 @@ describe('读访问密钥', () => {
     expect(await readSecret({ env: {}, stdin: Readable.from([]) })).toBe('')
   })
 
+  it('标准输入超过 64 KiB 限制时报错', async () => {
+    const oversized = Readable.from([Buffer.alloc(65 * 1024, 0x61)])
+    await expect(readSecret({ env: {}, stdin: oversized })).rejects.toThrow('64 KiB')
+  })
+
   it('终端里的按键：回车结束，退格删一个字，Ctrl-U 清空，方向键与粘贴标记不算输入', () => {
     expect(applyKeys('', 'kioku_a\r')).toEqual({ value: 'kioku_a', done: 'enter' })
     expect(applyKeys('ab', '\u007fc')).toEqual({ value: 'ac', done: null })

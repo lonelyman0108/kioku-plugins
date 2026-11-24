@@ -97,15 +97,16 @@ export async function createKiokuPlugin({
   }
 
   let quietUntil = 0
-  let loggedError = null
+  let reportQuietUntil = 0
+  const loggedErrors = new Set()
   const sessions = new Map()
   const cwd = worktree || directory || process.cwd()
   const deviceKey = deviceKeyOf(env)
   const projectPromise = projectOfAsync(cwd)
 
   function logOnce(reason) {
-    if (loggedError === reason) return
-    loggedError = reason
+    if (loggedErrors.has(reason)) return
+    loggedErrors.add(reason)
     stderr(`Kioku 插件未生效：${reason}`)
   }
   if (profileError) logOnce(profileError)
@@ -135,7 +136,8 @@ export async function createKiokuPlugin({
 
   async function forward(event, body, signal) {
     if (!profile) return undefined
-    if (now() < quietUntil) return undefined
+    const blockedUntil = event === 'turn.end' ? reportQuietUntil : quietUntil
+    if (now() < blockedUntil) return undefined
     try {
       const project = await projectPromise
       const payload = {
@@ -145,12 +147,16 @@ export async function createKiokuPlugin({
         ...body,
       }
       const res = await postEvent(profile.url, profile.key, payload, TIMEOUTS[event], signal)
-      loggedError = null
       const json = await res.json().catch(() => null)
-      return contextOf(json?.hostOutput) ?? null
+      if (!json || typeof json !== 'object') {
+        throw new KiokuFailure('Kioku 的响应格式不对')
+      }
+      loggedErrors.clear()
+      return contextOf(json.hostOutput) ?? null
     } catch (err) {
       if (signal?.aborted) return undefined
-      quietUntil = now() + QUIET_MS
+      if (event === 'turn.end') reportQuietUntil = now() + QUIET_MS
+      else quietUntil = now() + QUIET_MS
       logOnce(failureText(err))
       return undefined
     }

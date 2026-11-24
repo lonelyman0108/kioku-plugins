@@ -1,4 +1,4 @@
-// kioku status [--json]：只读展示服务端与本机各平台的接入现状。
+// kioku status [--json]：只读展示服务端与本机各客户端的接入现状。
 // 交互模式使用 Strata 细线卡片排版并折叠未安装的客户端，--json 输出结构化结果（绝不含访问密钥）。
 
 import { UsageError, plain, shownUrl } from '../core.ts'
@@ -18,11 +18,12 @@ import {
   kindLabel,
   renderBox,
   sensitivityBadge,
+  sortEntryKinds,
 } from '../ui/theme.ts'
 
 export const STATUS_USAGE = `用法：kioku status [--server-url <地址>] [--json]
 
-查看 Kioku 服务端连接状态与本机各平台的接入、插件、自带记忆停用现状。
+查看 Kioku 服务端连接状态与本机各客户端的接入、插件、自带记忆停用现状。
 
   --server-url <地址>  指定要核对的 Kioku 地址
   --json               以 JSON 格式输出（不含访问密钥）
@@ -42,13 +43,22 @@ export function parseStatusArgs(argv: string[]): { serverUrl?: string; json: boo
   return options
 }
 
-function serverLines(state: PanelState, out: Writer & { isTTY?: boolean }): string[] {
-  const theme = createTheme({ stream: out })
+function formatFacets(facets?: Record<string, string[]>): string {
+  if (!facets) return ''
+  const parts = Object.keys(facets)
+    .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
+    .sort()
+    .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
+  return parts.join(' · ')
+}
+
+function serverLines(state: PanelState, out: Writer & { isTTY?: boolean }, env: Env): string[] {
+  const theme = createTheme({ stream: out, env })
   const { server } = state
   if (!server) {
     return [`${theme.warn('!')} 尚未配置服务器地址（运行 kioku connect 或传入 --server-url）`]
   }
-  const urlShown = osc8Link(shownUrl(server.url), shownUrl(server.url), { stream: out })
+  const urlShown = osc8Link(shownUrl(server.url), shownUrl(server.url), { stream: out, env })
   if (!server.reachable) {
     return [`${urlShown}  ${theme.error(`✗ 无法连接（${server.problem ?? '未知错误'}）`)}`]
   }
@@ -56,12 +66,16 @@ function serverLines(state: PanelState, out: Writer & { isTTY?: boolean }): stri
     server.problem ? theme.warn(`! ${server.problem}`) : theme.ok('✓ 可连接'),
   ]
   if (server.version) parts.push(`版本 ${plain(server.version)}`)
-  if (server.needsSetup) parts.push(theme.warn('未初始化（请先打开管理界面创建管理员）'))
+  if (server.needsSetup) parts.push(theme.warn('尚未初始化（在管理界面建立第一个管理员）'))
   return [`${urlShown}  ${parts.join(' · ')}`]
 }
 
-function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean }): string[] {
-  const theme = createTheme({ stream: out })
+function platformSummaryLines(
+  state: PanelState,
+  out: Writer & { isTTY?: boolean },
+  env: Env,
+): string[] {
+  const theme = createTheme({ stream: out, env })
   const active: PlatformRow[] = []
   const uninstalled: PlatformRow[] = []
 
@@ -96,12 +110,42 @@ function platformSummaryLines(state: PanelState, out: Writer & { isTTY?: boolean
         lines.push(`  ${theme.muted(details.details.join(' · '))}`)
       }
       if (row.connection === 'ok' && row.who) {
-        const readStr = (row.who.scopes.readKinds ?? []).map(kindLabel).join('、') || '无'
-        const writeStr = (row.who.scopes.writeKinds ?? []).map(kindLabel).join('、') || '无'
-        const sens = sensitivityBadge(row.who.scopes.maxSensitivity ?? 'internal', theme)
-        const cred = capabilityLabel(row.who.scopes.credentials)
+        const who = row.who
+        const primaryKind = who.primaryCircle.kind === 'shared' ? '独立圈' : '个人圈'
+        const linkedStr = who.linkedCircles
+          .map(
+            (c) =>
+              `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
+          )
+          .join('、')
         lines.push(
-          `  ${theme.muted(`读 ${readStr} · 写 ${writeStr} · 上限 ${sens} · 凭据 ${cred}`)}`,
+          `  ${theme.muted(
+            `主圈 ${plain(who.primaryCircle.name)}（${primaryKind}）${linkedStr ? ` · 关联圈 ${linkedStr}` : ''}`,
+          )}`,
+        )
+
+        const extra: string[] = []
+        if (who.persona) extra.push(`独立人格 ${plain(who.persona.name)}`)
+        const facetText = formatFacets(who.resolvedFacets ?? who.contextFacets)
+        if (facetText) extra.push(`默认语境 ${facetText}`)
+        if (extra.length) lines.push(`  ${theme.muted(extra.join(' · '))}`)
+
+        const readStr =
+          sortEntryKinds(who.scopes.readKinds ?? [])
+            .map(kindLabel)
+            .join('、') || '无'
+        const writeStr =
+          sortEntryKinds(who.scopes.writeKinds ?? [])
+            .map(kindLabel)
+            .join('、') || '无'
+        const sens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal', theme)
+        const cred = capabilityLabel(who.scopes.credentials)
+        const realmNote = Array.isArray(who.scopes.allowedRealms)
+          ? ` · 场域白名单 ${who.scopes.allowedRealms.length ? who.scopes.allowedRealms.map((r) => plain(r)).join('、') : '空（受限）'}`
+          : ''
+        const adminNote = who.scopes.admin ? ' · 管理权限' : ''
+        lines.push(
+          `  ${theme.muted(`读 ${readStr} · 写 ${writeStr} · 上限 ${sens} · 凭据 ${cred}${realmNote}${adminNote}`)}`,
         )
       }
     }
@@ -138,14 +182,14 @@ export async function statusCommand(
     return 0
   }
 
-  const theme = createTheme({ stream: out })
+  const theme = createTheme({ stream: out, env })
   const box = renderBox({
     title: 'Kioku 状态',
     width: Math.min(92, (out.columns ?? 88) - 2),
     theme,
     sections: [
-      { title: '服务端', lines: serverLines(state, out) },
-      { title: '本机客户端', lines: platformSummaryLines(state, out) },
+      { title: '服务端', lines: serverLines(state, out, env) },
+      { title: '本机客户端', lines: platformSummaryLines(state, out, env) },
     ],
   })
   out.write(`${box}\n`)

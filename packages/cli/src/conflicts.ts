@@ -9,7 +9,7 @@ import { agyHome, agyMcpFile } from './agy.ts'
 import { bracketDelta, codexHome, headerOf } from './codex.ts'
 import { KiokuFailure, capture, hasCommand, plain } from './core.ts'
 import { dshHome } from './dsh.ts'
-import { readSettings, readText, safeWrite, serialize } from './files.ts'
+import { hasInlineSecret, readSettings, readText, safeWrite, serialize } from './files.ts'
 import { geminiHome, geminiSettingsFile } from './gemini.ts'
 import { hermesHome, withEnv } from './hermes.ts'
 import { confirm } from './import.ts'
@@ -465,7 +465,7 @@ async function scanClaudeConflicts(items: ConflictItem[], { env, cwd }: { env: E
             { noBackupFiles } = { env: process.env, cwd: process.cwd(), noBackupFiles: new Set() },
           ) => {
             if (hasCommand('claude', env)) {
-              await capture('claude', ['plugins', 'uninstall', pluginId], env, { timeout: 20_000 })
+              await capture('claude', ['plugin', 'uninstall', pluginId], env, { timeout: 20_000 })
             }
             const latest = await readSettings(settingsFile)
             const curEnabled = latest.settings?.enabledPlugins
@@ -849,7 +849,9 @@ async function scanCodexConflicts(items: ConflictItem[], { env }: { env: Env }) 
           const next = { ...latest.settings }
           if (Object.keys(nextHooks).length) next.hooks = nextHooks
           else delete next.hooks
-          await safeWrite(hooksFile, serialize(next, latest.text), latest.text)
+          await safeWrite(hooksFile, serialize(next, latest.text), latest.text, {
+            backup: !hasInlineSecret(latest.text) && !hasJsonSecret(latest.settings),
+          })
           return { changed: true, message: `已从 ${plain(hooksFile)} 移除 Lore 钩子` }
         },
       })
@@ -1151,12 +1153,12 @@ function removeDshManagedBlock(content: string): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith('#'))
   if (meaningful.length === 0) {
-    const comments = remaining
+    const trimmedComments = remaining
       .split(/\r?\n/)
       .filter((line) => line.trim().startsWith('#') || line.trim() === '')
       .join('\n')
-      .replace(/\n+$/, '\n')
-    return `${comments}[]\n`
+      .replace(/\n+$/, '')
+    return trimmedComments ? `${trimmedComments}\n[]\n` : '[]\n'
   }
   return `${remaining.replace(/\s+$/, '')}\n`
 }
@@ -1266,7 +1268,7 @@ async function scanHermesConflicts(items: ConflictItem[], { env }: { env: Env })
         tool: 'lore',
         toolName: 'Lore',
         kind: 'provider',
-        summary: `Hermes 当前记忆 provider 为 ${plain(provider)}`,
+        summary: `Hermes 当前记忆提供方为 ${plain(provider)}`,
         removable: true,
         remove: async () => {
           const setRes = await capture(bin, ['config', 'set', 'memory.provider', ''], env, {
@@ -1289,7 +1291,7 @@ async function scanHermesConflicts(items: ConflictItem[], { env }: { env: Env })
         tool: 'lore',
         toolName: 'Lore',
         kind: 'warning',
-        summary: `${plain(join(home, 'config.yaml'))} 里的 provider 为 lore（缺少 hermes 命令，需手动清除或重新接入）`,
+        summary: `${plain(join(home, 'config.yaml'))} 里的记忆提供方为 lore（缺少 hermes 命令，需手动清除或重新接入）`,
         removable: false,
       })
     }

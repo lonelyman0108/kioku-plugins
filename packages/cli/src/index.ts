@@ -1,5 +1,7 @@
 // @kioku-memory/cli 的统一入口：交互式控制台面板与各个子命令分发
 
+import { readFileSync } from 'node:fs'
+
 import { clean, CLEAN_USAGE } from './clean.ts'
 import {
   CONNECT_USAGE,
@@ -16,13 +18,22 @@ import {
 import {
   ADD_USAGE,
   addCommand,
+  BOOT_USAGE,
+  bootCommand,
+  DELETE_USAGE,
+  deleteCommand,
+  EDIT_USAGE,
+  editCommand,
   GET_USAGE,
   getCommand,
   LS_USAGE,
   lsCommand,
   SEARCH_USAGE,
   searchCommand,
+  TRANSFER_USAGE,
+  transferCommand,
 } from './commands/memory.ts'
+import { MIGRATE_USAGE, migrateCommand } from './commands/migrate.ts'
 import { STATUS_USAGE, statusCommand } from './commands/status.ts'
 import { KiokuFailure, run, UsageError } from './core.ts'
 import { doctor, DOCTOR_USAGE } from './doctor.ts'
@@ -40,32 +51,92 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
 
 日常记忆读写：
   search      召回相关记忆，支持交互展开详情与 --json
-  get         按短 ID、标题或兼容路径读取单条词条、切面变体与双链
-  ls          按记忆圈、场域、主题或物种分组浏览记忆目录
-  add         写入新词条（支持标准输入管道、编辑器、切面条件与明文拦阻确认）
+  get         按短 ID、标题或旧坐标读取单条记忆、变体与双链
+  ls          按记忆圈、场域、主题或形态分组浏览记忆目录
+  add         写入新正式记忆（支持管道输入、编辑器、适用条件与明文拦阻确认）
+  edit        修改记忆属性、正文或适用条件变体
+  delete      软删除单条记忆（别名 rm）
+  transfer    在有读写权限的独立圈之间迁移记忆
+  boot        预览会话启动加载的独立人格与高优先级记忆
 
-客户端与连接管理：
-  status      查看服务端连接状态与本机各平台接入概况（支持 --json）
+客户端与接入管理：
+  status      查看服务端连接状态与本机各客户端接入概况（支持 --json）
   connect     一站式接入：浏览器授权、配置写入、安装插件与 MCP 握手测试
-  disconnect  断开某个平台的接入，恢复自带记忆并清理托管插件
+  disconnect  断开某个客户端的接入，恢复自带记忆并清理托管插件
   upgrade     升级已安装插件并刷新 MCP 工具清单缓存
-  doctor      诊断地址、访问密钥权限与各平台配置（支持 --all / --json）
+  migrate     识别并迁移旧版插件来源、缓存与已失效访问密钥
+  doctor      诊断地址、访问密钥权限与各客户端配置（支持 --all / --json）
   clean       检测并卸载冲突的记忆工具（Lore 及常见记忆 MCP）
 
 自动化、本机服务与凭据：
-  login       用浏览器授权签发访问密钥并配好单个平台
-  setup       停用平台自带的长期记忆，由 Kioku 接管
-  install     批量接入多个平台，访问密钥从环境变量读（给脚本用）
-  import      把平台自带的本地长期记忆迁进 Kioku
+  login       用浏览器授权签发访问密钥并配好单个客户端
+  setup       停用客户端自带的长期记忆，由 Kioku 接管
+  install     批量接入多个客户端，访问密钥从环境变量读（脚本用）
+  import      把客户端自带的本地长期记忆迁进 Kioku
   local       使用 Docker Compose 管理本机 Kioku 服务（up / down / status / logs）
   open        在默认浏览器中打开 Kioku 管理界面
   run         向 Kioku 取凭据的值，放进环境变量交给命令
 
-在终端里不带参数运行 kioku 是交互式控制台：浏览各平台现状并按需完成接入、诊断与迁移。
+常用全局参数：--version / -v 查看版本号，--help / -h 查看帮助。
+在终端里不带参数运行 kioku 是交互式控制台：浏览各客户端现状并按需完成接入、诊断与迁移。
 各子命令的说明：kioku <子命令> --help
 `
 
 const NO_WIZARD = '交互式的向导需要 Node.js 20.12 以上版本。\n'
+
+const VALUE_FLAGS = new Set([
+  '--title',
+  '--content',
+  '--query',
+  '--disclosure',
+  '--circle',
+  '--path',
+  '--platform',
+  '--server-url',
+  '--topic',
+  '--when',
+  '--remove-when',
+  '--sensitivity',
+  '--priority',
+  '--limit',
+  '--dir',
+  '--from',
+  '--to',
+  '--valid-to',
+  '--glossary',
+  '--glossary-add',
+  '--glossary-remove',
+  '--expected-version',
+  '--kind',
+  '--tail',
+  '--lines',
+  '-n',
+  '-t',
+  '-c',
+  '-m',
+  '-p',
+  '-l',
+])
+
+function readCliVersion(): string {
+  try {
+    const raw = readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    const pkg = JSON.parse(raw) as { version?: unknown }
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+function wantsHelp(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--') return false
+    if (arg === '-h' || arg === '--help') return true
+    if (VALUE_FLAGS.has(arg)) i++
+  }
+  return false
+}
 
 async function startWizard(): Promise<number> {
   if (!nodeSupported()) {
@@ -90,7 +161,7 @@ async function guarded(
   fn: (argv: string[]) => Promise<number>,
   argv: string[],
 ): Promise<number> {
-  if (argv.includes('-h') || argv.includes('--help')) {
+  if (wantsHelp(argv)) {
     process.stdout.write(usage)
     return 0
   }
@@ -122,17 +193,29 @@ export async function main(
     process.stdout.write(OVERVIEW)
     return 0
   }
+  if (sub === '-v' || sub === '--version') {
+    process.stdout.write(`${readCliVersion()}\n`)
+    return 0
+  }
   if (sub === 'run') return run(rest)
   if (sub === 'search') return guarded('search', SEARCH_USAGE, (a) => searchCommand(a), rest)
   if (sub === 'get') return guarded('get', GET_USAGE, (a) => getCommand(a), rest)
   if (sub === 'ls') return guarded('ls', LS_USAGE, (a) => lsCommand(a), rest)
   if (sub === 'add') return guarded('add', ADD_USAGE, (a) => addCommand(a), rest)
+  if (sub === 'edit') return guarded('edit', EDIT_USAGE, (a) => editCommand(a), rest)
+  if (sub === 'delete' || sub === 'rm') {
+    return guarded(sub, DELETE_USAGE, (a) => deleteCommand(a), rest)
+  }
+  if (sub === 'transfer')
+    return guarded('transfer', TRANSFER_USAGE, (a) => transferCommand(a), rest)
+  if (sub === 'boot') return guarded('boot', BOOT_USAGE, (a) => bootCommand(a), rest)
   if (sub === 'status') return guarded('status', STATUS_USAGE, (a) => statusCommand(a), rest)
   if (sub === 'connect') return guarded('connect', CONNECT_USAGE, (a) => connectCommand(a), rest)
   if (sub === 'disconnect') {
     return guarded('disconnect', DISCONNECT_USAGE, (a) => disconnectCommand(a), rest)
   }
   if (sub === 'upgrade') return guarded('upgrade', UPGRADE_USAGE, (a) => upgradeCommand(a), rest)
+  if (sub === 'migrate') return guarded('migrate', MIGRATE_USAGE, (a) => migrateCommand(a), rest)
   if (sub === 'local') return guarded('local', LOCAL_USAGE, (a) => localCommand(a), rest)
   if (sub === 'open') return guarded('open', OPEN_USAGE, (a) => openCommand(a), rest)
   if (sub === 'login') return guarded('login', LOGIN_USAGE, (a) => login(a), rest)

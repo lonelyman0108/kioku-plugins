@@ -17,11 +17,95 @@ function collectTsFiles(dir: string): string[] {
   return out.sort()
 }
 
-function stripLineComments(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => (line.trimStart().startsWith('//') ? '' : line))
-    .join('\n')
+function stripComments(text: string): string {
+  let out = ''
+  let i = 0
+  let inBlock = false
+  let quote: '"' | "'" | '`' | null = null
+  let inRegex = false
+  let inRegexClass = false
+  let prevSig = ''
+
+  while (i < text.length) {
+    const ch = text[i]
+    const next = text[i + 1]
+
+    if (inBlock) {
+      if (ch === '*' && next === '/') {
+        inBlock = false
+        i += 2
+        continue
+      }
+      if (ch === '\n') out += '\n'
+      i++
+      continue
+    }
+
+    if (quote) {
+      out += ch
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[i + 1]
+        i += 2
+        continue
+      }
+      if (ch === quote) {
+        quote = null
+        prevSig = '"'
+      }
+      i++
+      continue
+    }
+
+    if (inRegex) {
+      out += ch
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[i + 1]
+        i += 2
+        continue
+      }
+      if (ch === '[') inRegexClass = true
+      else if (ch === ']' && inRegexClass) inRegexClass = false
+      else if (ch === '/' && !inRegexClass) {
+        inRegex = false
+        prevSig = '/'
+      } else if (ch === '\n') {
+        inRegex = false
+        inRegexClass = false
+      }
+      i++
+      continue
+    }
+
+    if (ch === '/' && next === '*') {
+      inBlock = true
+      i += 2
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i++
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch
+      out += ch
+      i++
+      continue
+    }
+    if (
+      ch === '/' &&
+      (!prevSig || '(=,:[!&|?{};\n'.includes(prevSig) || /[+\-*%<>^~!]/.test(prevSig))
+    ) {
+      inRegex = true
+      inRegexClass = false
+      out += ch
+      i++
+      continue
+    }
+    out += ch
+    if (!/[\t ]/.test(ch)) prevSig = ch
+    i++
+  }
+  return out
 }
 
 const ALLOWED_URL_HOSTS = new Set([
@@ -34,23 +118,28 @@ const ALLOWED_URL_HOSTS = new Set([
   'docs.astral.sh',
 ])
 
-const GENERAL_BANNED: Array<[RegExp, string]> = [
+const BANNED_RULES: Array<[RegExp, string]> = [
   [/[一这那每几]把|共 ?\S* ?把|\d\s*把/, '访问密钥的量词应使用「个」而非「把」'],
   [/(?:私人|基础)层|个人画像|分区|情节/, '已废弃的旧模型术语'],
   [/设备码|设备授权/, '对用户显示的文案应写「浏览器授权」「确认码」'],
   [/kioku_[a-zA-Z0-9_-]{16,}/, '源码中不得硬编码访问密钥样例'],
-]
-
-const NEW_MODULE_RE = /^(?:ui\/|commands\/|installer\.ts$|identity\.ts$)/
-
-const NEW_MODULE_BANNED: Array<[RegExp, string]> = [
+  [/接入实例/, '应使用「客户端」而非旧词「接入实例」'],
+  [/物种/, '应使用「形态」而非旧词「物种」'],
+  [/正式词条|词条/, '应使用「正式记忆」或「记忆」而非旧词「词条」'],
+  [/切片/, '应使用「变体」而非旧词「切片」'],
+  [/切面/, '应使用「适用条件」或「语境」而非旧词「切面」'],
+  [/主场|客场/, '应使用「主圈」或「关联圈」而非「主场」「客场」'],
+  [/触发场景|触发条件/, '应使用「召回说明」而非「触发场景」「触发条件」'],
+  [/记忆 ?provider/i, '应使用「记忆提供方」'],
+  [/启动上下文/, '应使用「启动加载」而非「启动上下文」'],
+  [/宿主/, '对用户显示的文案应使用「客户端」而非「宿主」'],
   [/你/, '不使用第二人称「你」'],
-  [/宿主/, '对用户显示的文案写「客户端」'],
-  [/还没/, '写「暂无」或「尚未」'],
-  [/(?<!地|提示|弹出|外|组件)层(?!次)/, '记忆分类用「物种」或「记忆圈」，不称「层」'],
+  [/还没/, '应写「暂无」或「尚未」'],
+  [/占着|用不了|读不了|拿不到|看得到|读得到|查不了|查不到/, '应使用正式产品用语替代口语'],
+  [/(?<!旧)坐标/, '不再使用旧坐标体系（仅兼容提示保留「旧坐标」）'],
+  [/(?<!地|提示|弹出|外|组件|底)层(?!次|叠)/, '记忆分类用「形态」或「记忆圈」，不称「层」'],
   [/(?<![\w/`.])Keys?(?![\w`])/, '对外术语应为「访问密钥」而非「Key」'],
-  [/坐标/, '不再使用旧坐标体系'],
-  [/(?:所属|这个|该)应用|「应用」/, '服务端客户端实体称「接入实例」'],
+  [/(?:所属|这个|该)应用|「应用」/, '服务端客户端实体应称「客户端」'],
 ]
 
 describe('CLI 文案与仓库公开信息规范', () => {
@@ -60,20 +149,13 @@ describe('CLI 文案与仓库公开信息规范', () => {
     const violations: string[] = []
     for (const file of files) {
       const rel = relative(SRC_DIR, file).replaceAll('\\', '/')
-      const body = stripLineComments(readFileSync(file, 'utf8'))
+      const body = stripComments(readFileSync(file, 'utf8'))
       const lines = body.split('\n')
 
       lines.forEach((line, index) => {
-        for (const [pattern, reason] of GENERAL_BANNED) {
+        for (const [pattern, reason] of BANNED_RULES) {
           if (pattern.test(line)) {
             violations.push(`${rel}:${index + 1} [${reason}]: ${line.trim()}`)
-          }
-        }
-        if (NEW_MODULE_RE.test(rel)) {
-          for (const [pattern, reason] of NEW_MODULE_BANNED) {
-            if (pattern.test(line)) {
-              violations.push(`${rel}:${index + 1} [${reason}]: ${line.trim()}`)
-            }
           }
         }
         const urls = line.matchAll(/https?:\/\/([A-Za-z0-9.-]+)/g)

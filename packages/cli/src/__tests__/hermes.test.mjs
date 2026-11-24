@@ -252,15 +252,15 @@ describe('kioku setup hermes', () => {
 })
 
 describe('kioku doctor hermes', () => {
-  it('配好并装了 provider 时各项正常，地址与访问密钥取自 Hermes 的 .env', async () => {
+  it('配好并装了记忆提供方时各项正常，地址与访问密钥取自 Hermes 的 .env', async () => {
     await run(setup, ['hermes', '--server-url', base])
     mkdirSync(join(home, 'plugins', 'kioku'), { recursive: true })
     writeFileSync(join(home, 'plugins', 'kioku', 'plugin.yaml'), 'name: kioku\n')
     const result = await run(doctor, ['hermes'])
     expect(result.code).toBe(0)
     expect(result.text).toContain(`✓ 地址 ${base}（${dotenv}）`)
-    expect(result.text).toContain('✓ Hermes 里装了 kioku 的记忆 provider')
-    expect(result.text).toContain('✓ Hermes 选的记忆 provider 是 kioku')
+    expect(result.text).toContain('✓ Hermes 里装了 kioku 的记忆提供方')
+    expect(result.text).toContain('✓ Hermes 选的记忆提供方是 kioku')
     expect(result.text).toContain('✓ Hermes 内置的记忆文件已停用')
     expect(result.text).not.toMatch(/^[!✗]/m)
     expect(result.text).not.toContain(KEY)
@@ -273,9 +273,9 @@ describe('kioku doctor hermes', () => {
     )
     const result = await run(doctor, ['hermes'])
     expect(result.code).toBe(1)
-    expect(result.text).toContain('✗ 还没有给 Hermes 配过：运行 kioku setup hermes')
-    expect(result.text).toContain('! Hermes 里没有装 kioku 的记忆 provider')
-    expect(result.text).toContain('! Hermes 现在选的记忆 provider 不是 kioku')
+    expect(result.text).toContain('✗ 尚未配置 Hermes：运行 kioku setup hermes')
+    expect(result.text).toContain('! Hermes 里没有装 kioku 的记忆提供方')
+    expect(result.text).toContain('! Hermes 现在选的记忆提供方不是 kioku')
     expect(result.text).toContain('! Hermes 内置的 MEMORY.md 还开着')
   })
 
@@ -289,14 +289,14 @@ describe('kioku doctor hermes', () => {
   })
 
   it('环境变量里配了但不对时照原样报，不说成没配过', async () => {
-    env.KIOKU_SERVER_URL = 'not a url'
+    env.KIOKU_SERVER_URL = 'not-a-url'
     env.KIOKU_API_KEY = KEY
     const result = await run(doctor, ['hermes'])
     expect(result.text).toContain('KIOKU_SERVER_URL 不是有效的地址')
-    expect(result.text).not.toContain('还没有给 Hermes 配过')
+    expect(result.text).not.toContain('尚未配置 Hermes')
   })
 
-  it('找不到 hermes 命令时说明查不了它的配置', async () => {
+  it('找不到 hermes 命令时说明无法查看它的配置', async () => {
     await run(setup, ['hermes', '--server-url', base])
     env.KIOKU_HERMES_BIN = join(dir, 'no-such-hermes')
     const result = await run(doctor, ['hermes'])
