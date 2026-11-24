@@ -139,7 +139,7 @@ describe('kioku login', () => {
       serverUrl: base,
       apiKey: KEY,
     })
-    expect(result.text).toContain('✓ 已确认：接入实例 pi（pi）')
+    expect(result.text).toContain('✓ 已确认：客户端 pi（pi）')
     expect(result.text).not.toContain(KEY)
     expect(result.text).not.toContain('device-code-1')
   })
@@ -283,7 +283,7 @@ describe('kioku login', () => {
     expect(readdirSync(dir)).toEqual(['pi'])
   })
 
-  it('确认码、接入实例名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
+  it('确认码、客户端名里的控制字符不原样显示；机器名压成一行再报上去', async () => {
     authorize = () => ({ status: 201, body: { ...GRANT, userCode: 'BCDF\n✓ 假的一行' } })
     answers = [
       {
@@ -293,7 +293,7 @@ describe('kioku login', () => {
     ]
     const result = await run(['pi', '--server-url', base], { clientName: 'lap\ntop‮' })
     expect(result.text).toContain('确认码：BCDF ✓ 假的一行\n')
-    expect(result.text).toContain('接入实例 甲 乙（pi）')
+    expect(result.text).toContain('客户端 甲 乙（pi）')
     expect(authorizeCalls()[0].body.clientName).toBe('lap top')
   })
 

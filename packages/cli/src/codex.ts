@@ -19,7 +19,7 @@ import {
   shownUrl,
   writeProfile,
 } from './core.ts'
-import { readText, safeWrite } from './files.ts'
+import { hasInlineSecret, readText, safeWrite } from './files.ts'
 import { resolveTarget } from './target.ts'
 import type { Env, InspectCallbacks, PlatformStatus, SetupIo, SetupOptions } from './types.ts'
 
@@ -236,11 +236,9 @@ export async function setupCodex(options: SetupOptions, io: SetupIo): Promise<nu
   const { env, out } = io
   if (options.undo) return undo(options, io)
   const file = join(codexHome(env), 'config.toml')
-  const text = await readText(file)
-  const found = scanConfig(text)
 
-  const refuseUnsupported = async () => {
-    if (!found.unsupported) return
+  const checkSupported = (parsed: ReturnType<typeof scanConfig>) => {
+    if (!parsed.unsupported) return
     throw new KiokuFailure(
       `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务，没有改动它：删掉那个定义后重新运行`,
     )
@@ -248,10 +246,12 @@ export async function setupCodex(options: SetupOptions, io: SetupIo): Promise<nu
   // 要走浏览器授权时先看这个：访问密钥签发了却写不进去的话，会留下一个没人拿着的
   const { url, key, saved } = await resolveTarget({ id: 'codex', name: 'Codex' }, options, {
     ...io,
-    beforeLogin: refuseUnsupported,
+    beforeLogin: () => preflightCodex({ env }),
   })
-  // 地址与访问密钥都定下来之后、写文件之前再看一次
-  await refuseUnsupported()
+  // 浏览器授权可能耗时较长，授权后再重新读一遍 config.toml 避免 TOCTOU 覆盖并发改动
+  const text = await readText(file)
+  const found = scanConfig(text)
+  checkSupported(found)
 
   const before = blockValues(found)
   const sameBlock = Boolean(before && key && before.url === url && before.key === key)
@@ -277,7 +277,9 @@ export async function setupCodex(options: SetupOptions, io: SetupIo): Promise<nu
     const body = sameBlock
       ? rewrite(found, null, { memoriesOff: true, keep: true })
       : rewrite(found, blockOf({ url, key }), { memoriesOff: true })
-    const backedUp = await safeWrite(file, body, text, { backup: !holdsKey(found) })
+    const backedUp = await safeWrite(file, body, text, {
+      backup: !holdsKey(found) && !hasInlineSecret(text),
+    })
     if (backedUp) out.write(`原来的设置备份在 ${file}.kioku-backup\n`)
   }
   if (!sameProfile) await writeProfile('codex', { url, key }, env)
@@ -295,7 +297,7 @@ export async function preflightCodex({ env }: { env: Env }): Promise<void> {
   const file = join(codexHome(env), 'config.toml')
   if (scanConfig(await readText(file)).unsupported) {
     throw new KiokuFailure(
-      `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务：删掉那个定义后重新运行`,
+      `${file} 里已经用行内表或带点的键定义了 kioku 这个 MCP 服务，没有改动它：删掉那个定义后重新运行`,
     )
   }
 }
@@ -315,7 +317,7 @@ export async function inspectCodex(
   if (found.unsupported) {
     warn(`${file} 里的 kioku 服务用了行内表或带点的键，没有核对它：改成 kioku setup codex 的写法`)
   } else if (!block) {
-    warn(`${file} 里没有 Kioku 的 MCP 服务，读写记忆的工具用不了：运行 kioku setup codex`)
+    warn(`${file} 里没有 Kioku 的 MCP 服务，读写记忆的工具不可用：运行 kioku setup codex`)
   } else if (profile && (block.url !== profile.url || block.key !== profile.key)) {
     bad(`${file} 里 Kioku 的 MCP 服务和钩子用的地址或访问密钥对不上：重新运行 kioku setup codex`)
   } else ok('Codex 里配了 Kioku 的 MCP 服务')
@@ -326,7 +328,7 @@ export async function inspectCodex(
       `Codex 的 kioku 插件没有启用：codex plugin marketplace add ${MARKETPLACE}，再 codex plugin add kioku@kioku`,
     )
   }
-  note('钩子要在 Codex 的 /hooks 里信任过才会运行，这里查不到')
+  note('钩子要在 Codex 的 /hooks 里信任过才会运行，这里无法检测')
 
   if (found.memoriesUnknown && !found.memories) {
     warn(`${file} 里 features 的写法认不出来，没有核对 Memories：用 codex features list 看它开没开`)

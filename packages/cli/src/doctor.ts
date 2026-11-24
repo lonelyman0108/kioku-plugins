@@ -20,14 +20,14 @@ import { detectLegacyPlugin } from './legacy.ts'
 import { detectPlatformPresence } from './panel.ts'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.ts'
 import type { Env, SavedProfile, TargetConfig, WhoamiResponse, Writer } from './types.ts'
-import { capabilityLabel, kindLabel } from './ui/theme.ts'
+import { capabilityLabel, kindLabel, sortEntryKinds } from './ui/theme.ts'
 
 export const DOCTOR_USAGE = `用法：kioku doctor [平台] [--all] [--json]
 
-检查 Kioku 的地址与访问密钥、访问密钥的权限，以及平台的配置（插件是否启用、自带的长期记忆是否已停用）。
+检查 Kioku 的地址与访问密钥、访问密钥的权限，以及客户端的配置（插件是否启用、自带的长期记忆是否已停用）。
 
-  [平台]  ${platformNames()}；不写时按当前所在的会话认，否则检查全部已安装或已配过的平台
-  --all   检查全部受支持的平台
+  [平台]  ${platformNames()}；不写时按当前所在的会话认，否则检查全部已安装或已配过的客户端
+  --all   检查全部受支持的客户端
   --json  以 JSON 格式输出结果（不含访问密钥）
 
 有问题的项以 ✗ 开头，这时退出码为 1。
@@ -47,7 +47,9 @@ function named(names: Record<string, string>, value: string | undefined): string
 
 function kindsText(kinds: string[] | undefined): string {
   if (!Array.isArray(kinds) || !kinds.length) return '无'
-  return kinds.map((kind) => kindLabel(kind)).join('、')
+  return sortEntryKinds(kinds)
+    .map((kind) => kindLabel(kind))
+    .join('、')
 }
 
 export function parseDoctorArgs(argv: string[]): {
@@ -82,7 +84,12 @@ function claudeOptionConfig(env: Env): TargetConfig | null {
 }
 
 type DoctorIssueCategory =
-  'server_generation' | 'legacy_database' | 'legacy_key' | 'legacy_source' | 'outdated_plugin'
+  | 'server_generation'
+  | 'legacy_database'
+  | 'database_unavailable'
+  | 'legacy_key'
+  | 'legacy_source'
+  | 'outdated_plugin'
 
 interface DoctorTargetReport {
   id: string | null
@@ -102,7 +109,12 @@ interface DoctorTargetReport {
 
 async function inspectOne(
   id: string | null,
-  { env, cwd, out }: { env: Env; cwd: string; out?: Writer },
+  {
+    env,
+    cwd,
+    out,
+    allowEnvFallback = true,
+  }: { env: Env; cwd: string; out?: Writer; allowEnvFallback?: boolean },
 ): Promise<DoctorTargetReport> {
   const platform = id ? PLATFORMS[id] : null
   const report: DoctorTargetReport = {
@@ -137,26 +149,41 @@ async function inspectOne(
       : null
     let config: TargetConfig | null = profile
     if (!config) {
-      try {
-        config = await loadConfig(env)
-      } catch (err) {
-        if (id === 'claude-code' && err instanceof NotConfigured) {
+      if (!allowEnvFallback) {
+        if (id === 'claude-code') {
           config = claudeOptionConfig(env)
           if (!config) {
             throw new KiokuFailure(
-              '还没有给 Claude Code 配过：运行 kioku login claude-code 或 kioku setup claude-code，或在 /plugin 里填写',
+              '尚未配置 Claude Code：运行 kioku login claude-code 或 kioku setup claude-code，或在 /plugin 里填写',
             )
           }
-        } else if (platform?.readConfig && err instanceof NotConfigured) {
-          throw new KiokuFailure(`还没有给 ${platform.name} 配过：运行 kioku setup ${id}`)
+        } else if (platform?.readConfig) {
+          throw new KiokuFailure(`尚未配置 ${platform.name}：运行 kioku setup ${id}`)
         } else {
-          throw err
+          config = await loadConfig(env)
+        }
+      } else {
+        try {
+          config = await loadConfig(env)
+        } catch (err) {
+          if (id === 'claude-code' && err instanceof NotConfigured) {
+            config = claudeOptionConfig(env)
+            if (!config) {
+              throw new KiokuFailure(
+                '尚未配置 Claude Code：运行 kioku login claude-code 或 kioku setup claude-code，或在 /plugin 里填写',
+              )
+            }
+          } else if (platform?.readConfig && err instanceof NotConfigured) {
+            throw new KiokuFailure(`尚未配置 ${platform.name}：运行 kioku setup ${id}`)
+          } else {
+            throw err
+          }
         }
       }
     }
     report.url = shownUrl(config.url)
     if (profile?.file) report.profileFile = profile.file
-    ok(`地址 ${report.url}${profile ? `（${profile.file}）` : ''}`)
+    ok(`地址 ${report.url}${profile ? `（${plain(profile.file)}）` : ''}`)
     try {
       who = await whoami(config)
     } catch (err) {
@@ -166,7 +193,9 @@ async function inspectOne(
           : err instanceof ServerMismatch
             ? err.probe.state === 'legacy'
               ? 'legacy_database'
-              : 'server_generation'
+              : err.probe.state === 'unavailable'
+                ? 'database_unavailable'
+                : 'server_generation'
             : err instanceof KeyRejected && err.legacy
               ? 'legacy_key'
               : undefined
@@ -182,32 +211,50 @@ async function inspectOne(
     report.client = client
     report.scopes = scopes
     ok(
-      `访问密钥可用：接入实例 ${plain(client.name)}（${plain(client.slug)}），运行时 ${plain(client.runtimeFamily)}`,
+      `访问密钥可用：客户端 ${plain(client.name)}（${plain(client.slug)}），运行时 ${plain(client.runtimeFamily)}`,
     )
-    const linkedCount = Array.isArray(linkedCircles) ? linkedCircles.length : 0
-    const linked = linkedCount > 0 ? `，关联 ${linkedCount} 个客场圈` : ''
-    out?.write(
-      `  主场记忆圈：${plain(primaryCircle.name)}（${plain(primaryCircle.slug)}）${linked}\n`,
-    )
-    out?.write(`  读：${kindsText(scopes.readKinds)}\n`)
-    out?.write(`  写：${kindsText(scopes.writeKinds)}\n`)
-    out?.write(`  最高敏感级：${named(SENSITIVITIES, scopes.maxSensitivity)}\n`)
+    const primaryKind = primaryCircle.kind === 'shared' ? '独立圈' : '个人圈'
+    note(`主圈：${plain(primaryCircle.name)}（${primaryKind} · ${plain(primaryCircle.slug)}）`)
+    if (Array.isArray(linkedCircles) && linkedCircles.length) {
+      const linked = linkedCircles
+        .map(
+          (c) =>
+            `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
+        )
+        .join('、')
+      note(`关联圈：${linked}`)
+    }
+    if (who.persona) {
+      note(`独立人格：${plain(who.persona.name)}（${plain(who.persona.slug)}）`)
+    }
+    const facets = who.resolvedFacets ?? who.contextFacets
+    if (facets) {
+      const facetParts = Object.keys(facets)
+        .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
+        .sort()
+        .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
+      if (facetParts.length) note(`默认语境：${facetParts.join(' · ')}`)
+    }
+    note(`读：${kindsText(scopes.readKinds)}`)
+    note(`写：${kindsText(scopes.writeKinds)}`)
+    note(`最高敏感级：${named(SENSITIVITIES, scopes.maxSensitivity)}`)
     if (Array.isArray(scopes.allowedRealms)) {
       const realms = scopes.allowedRealms.length
         ? scopes.allowedRealms.map((r) => plain(r)).join('、')
         : '空（受限）'
-      out?.write(`  场域白名单：${realms}\n`)
+      note(`场域白名单：${realms}`)
     }
-    out?.write(`  凭据：${capabilityLabel(scopes.credentials)}\n`)
+    note(`凭据：${capabilityLabel(scopes.credentials)}`)
+    if (scopes.admin === true) note('管理权限：是')
     if (platform && client.runtimeFamily !== platform.runtimeFamily) {
       warn(
-        `这个接入实例的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面为 ${platform.name} 另建一个接入实例`,
+        `这个客户端的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面「客户端」页为 ${platform.name} 另建一个客户端`,
       )
     }
   }
 
   if (!platform || !id) {
-    out?.write(`没有认出平台，只查了地址与访问密钥；要查平台的配置，写上平台：${platformNames()}\n`)
+    out?.write(`没有认出客户端，只查了地址与访问密钥；要查具体配置，写上平台：${platformNames()}\n`)
     return report
   }
 
@@ -225,8 +272,8 @@ async function inspectOne(
     const conflicts = await scanConflicts(id, { env, cwd }).catch(() => [])
     if (!conflicts.length) return
     for (const item of conflicts) {
-      const hint = item.hint ? `（${item.hint}）` : ''
-      warn(`发现冲突的记忆工具（${item.toolName}）：${item.summary}${hint}`)
+      const hint = item.hint ? `（${plain(item.hint)}）` : ''
+      warn(`发现冲突的记忆工具（${plain(item.toolName)}）：${plain(item.summary)}${hint}`)
     }
     if (conflicts.some((item) => item.removable)) {
       note(`清理冲突：运行 kioku clean ${id}`)
@@ -236,11 +283,9 @@ async function inspectOne(
   if (platform.inspect) {
     try {
       await platform.inspect({ env, cwd }, { ok, warn, bad, note })
-      await checkConflictsAndLegacy()
     } catch (err) {
       bad(failureText(err))
     }
-    return report
   }
   await checkConflictsAndLegacy()
   return report
@@ -287,7 +332,14 @@ export async function doctor(
       if (index > 0) out.write('\n')
       out.write(`── ${PLATFORMS[targetId].name} ──\n`)
     }
-    reports.push(await inspectOne(targetId, { env, cwd, out: opts.json ? undefined : out }))
+    reports.push(
+      await inspectOne(targetId, {
+        env,
+        cwd,
+        out: opts.json ? undefined : out,
+        allowEnvFallback: !opts.all,
+      }),
+    )
   }
 
   const failed = reports.some((r) => r.failed)

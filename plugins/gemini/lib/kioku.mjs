@@ -19,6 +19,7 @@ const OVERVIEW = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [--pur
 const FULL_CLI_COMMANDS = new Set([
   'connect',
   'disconnect',
+  'migrate',
   'upgrade',
   'status',
   'login',
@@ -33,6 +34,11 @@ const FULL_CLI_COMMANDS = new Set([
   'get',
   'ls',
   'add',
+  'edit',
+  'delete',
+  'rm',
+  'transfer',
+  'boot',
 ])
 
 export async function main(argv) {

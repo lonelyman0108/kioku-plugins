@@ -56,10 +56,12 @@ describe('mcpCall', () => {
     expect(requests[0].body).toEqual({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
   })
 
-  it('回答是事件流时取最后一条 data', async () => {
+  it('回答是事件流时合并多行 data 并取最后一条', async () => {
+    const encoded = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { n: 2 } })
+    const splitAt = encoded.indexOf('"result"')
     reply = () => ({
       headers: { 'content-type': 'text/event-stream' },
-      text: `event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\nevent: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { n: 2 } })}\n\n`,
+      text: `event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\nevent: message\ndata: ${encoded.slice(0, splitAt)}\ndata: ${encoded.slice(splitAt)}\n\n`,
     })
     expect(await mcpCall(target(), 'tools/call', {}, 1000)).toEqual({ n: 2 })
   })

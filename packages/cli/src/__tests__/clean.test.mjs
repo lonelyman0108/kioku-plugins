@@ -491,7 +491,7 @@ describe('doctor / setup / login / install / wizard 冲突联动', () => {
       true,
     )
 
-    // claude-connect：即使自动记忆已停用，存在冲突时仍先展示清理计划并卸载
+    // connect 接入 Claude Code：即使自动记忆已停用，存在冲突时仍先展示清理计划并卸载
     mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })
     writeFileSync(
       join(env.CLAUDE_CONFIG_DIR, 'settings.json'),
@@ -500,7 +500,7 @@ describe('doctor / setup / login / install / wizard 冲突联动', () => {
     const ccGuidance2 = join(env.CLAUDE_CONFIG_DIR, 'lore-guidance.md')
     writeFileSync(ccGuidance2, '# lore')
     const ccNotes = []
-    const ccChoices = ['claude-connect', 'exit']
+    const ccChoices = ['connect', 'exit']
     await wizard({
       ui: {
         isCancel: () => false,
@@ -510,6 +510,7 @@ describe('doctor / setup / login / install / wizard 冲突联动', () => {
         spinner: () => ({ start: () => {}, stop: () => {} }),
         log: { warn: () => {}, info: () => {}, error: () => {}, success: () => {} },
         select: async () => ccChoices.shift(),
+        multiselect: async () => ['claude-code'],
         confirm: async () => true,
       },
       env,
@@ -521,12 +522,11 @@ describe('doctor / setup / login / install / wizard 冲突联动', () => {
           server: { url: base, reachable: true, problem: null, needsSetup: false },
           platforms: [await scanPlatform('claude-code', { env, cwd: dir, url: base })],
         }),
+        connectPlatforms: async () => [],
         pluginSteps: async () => '',
       },
     })
-    expect(ccNotes.some((n) => n.title === '计划' && n.msg.includes('清理冲突的记忆工具'))).toBe(
-      true,
-    )
+    expect(ccNotes.some((n) => n.title === '计划' && n.msg.includes('先清理 Lore'))).toBe(true)
     expect(existsSync(ccGuidance2)).toBe(false)
   })
 })

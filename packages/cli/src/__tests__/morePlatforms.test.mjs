@@ -198,5 +198,22 @@ describe('opencode / gemini / agy 接入与检查', () => {
     writeFileSync(mcpPath, JSON.stringify({ mcpServers: { kioku: { httpUrl: base } } }))
     const warnDoc = await run(doctor, ['agy'])
     expect(warnDoc.text).toContain('缺少 url')
+
+    // 原配置含其他服务的 Bearer 密钥时不落 .kioku-backup
+    rmSync(`${mcpPath}.kioku-backup`, { force: true })
+    writeFileSync(
+      mcpPath,
+      JSON.stringify({
+        mcpServers: {
+          other: {
+            url: 'http://127.0.0.1:9/mcp',
+            headers: { Authorization: 'Bearer other_secret' },
+          },
+        },
+      }),
+    )
+    const secretSafe = await run(setup, ['agy', '--server-url', base])
+    expect(secretSafe.code).toBe(0)
+    expect(existsSync(`${mcpPath}.kioku-backup`)).toBe(false)
   })
 })

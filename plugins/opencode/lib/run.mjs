@@ -21,6 +21,7 @@ import {
   rejectionOf,
 } from './http.mjs'
 import { createRedactor, MIN_REDACT_CHARS, redactable } from './redact.mjs'
+import { plain } from './text.mjs'
 import { UsageError } from './usage.mjs'
 
 // 等 Kioku 取值的上限（毫秒）
@@ -145,14 +146,10 @@ function parsePurpose(value) {
   return text || undefined
 }
 
-// 服务端的错误文字原样给出，只去掉控制字符；万一带着访问密钥也盖掉
+// 服务端的错误文字原样给出，去掉控制与格式字符；万一带着访问密钥也盖掉
 function serverError(data, status, key) {
   const text = typeof data?.error === 'string' ? data.error : ''
-  const clean = text
-    .split(key)
-    .join('***')
-    .replace(/\p{Cc}+/gu, ' ')
-    .trim()
+  const clean = plain(key ? text.split(key).join('***') : text)
   return clean || `Kioku 返回 HTTP ${status}`
 }
 
@@ -160,10 +157,9 @@ function serverError(data, status, key) {
 // 格式不对的项跳过，不因为提示让整次失败。打印之前去掉控制字符
 function expiredOf(data) {
   if (!Array.isArray(data?.expired)) return []
-  const clean = (text) => text.replace(/\p{Cc}+/gu, ' ').trim()
   return data.expired.flatMap((item) =>
     typeof item?.identifier === 'string' && typeof item.expiresAt === 'string'
-      ? [{ identifier: clean(item.identifier), expiresAt: clean(item.expiresAt) }]
+      ? [{ identifier: plain(item.identifier), expiresAt: plain(item.expiresAt) }]
       : [],
   )
 }
@@ -207,10 +203,14 @@ async function resolveValues({ url, key }, refs, purpose) {
   } catch {
     // 不是 JSON 时按没有错误文字处理
   }
-  // 升级前签发的访问密钥、待迁移的库：用这边的说法，指明下一步
+  // 升级前签发的访问密钥、待迁移的库与普通无效访问密钥：优先用这边的清晰提示（服务端原文若误带出当前密钥则留待打码）
   const rejected = res.ok ? null : rejectionOf(res.status, data, url)
   if ((rejected instanceof KeyRejected && rejected.legacy) || rejected instanceof LegacyDatabase) {
     throw rejected
+  }
+  if (rejected instanceof KeyRejected) {
+    const echoed = typeof data?.error === 'string' && data.error.includes(key)
+    if (!echoed) throw rejected
   }
   if (!res.ok) throw new KiokuFailure(serverError(data, res.status, key))
   const values = valuesOf(data, refs)
@@ -368,7 +368,14 @@ export async function run(argv) {
     return 2
   }
   const env = { ...process.env }
-  for (const name of KEY_VARIABLES) delete env[name]
+  if (process.platform === 'win32') {
+    const blocked = new Set(KEY_VARIABLES.map((n) => n.toUpperCase()))
+    for (const k of Object.keys(env)) {
+      if (blocked.has(k.toUpperCase())) delete env[k]
+    }
+  } else {
+    for (const name of KEY_VARIABLES) delete env[name]
+  }
   for (const [name, index] of variables) env[name] = values[index]
   const short = variables.filter(([, index]) => !redactable(values[index])).map(([name]) => name)
   if (short.length > 0) process.stderr.write(`kioku：${short.join('、')} 的值太短，输出里不打码\n`)

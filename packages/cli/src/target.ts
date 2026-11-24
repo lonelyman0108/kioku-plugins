@@ -2,7 +2,14 @@
 // 先看格式，再连一次 Kioku 核对，都过了才轮到各平台去写文件
 
 import { whoami } from './api.ts'
-import { KiokuFailure, UsageError, keyFormatError, readProfile, serverUrlProblem } from './core.ts'
+import {
+  KiokuFailure,
+  UsageError,
+  keyFormatError,
+  plain as defaultPlain,
+  readProfile,
+  serverUrlProblem,
+} from './core.ts'
 import type { Env, SavedProfile, SetupIo, SetupOptions } from './types.ts'
 
 // 服务地址：这次给的、环境变量里的、上次写下的，依次取；没有、格式不对时抛错
@@ -29,7 +36,7 @@ export async function resolveTarget(
   io: SetupIo,
 ): Promise<{ url: string; key: string; saved: SavedProfile | null }> {
   const { env, out, readKey, plain, login, beforeLogin, readSaved } = io
-  const formatPlain = plain ?? ((v: unknown) => String(v ?? ''))
+  const formatPlain = plain ?? defaultPlain
   // 上次写下的：平台有自己放的地方时由它读（readSaved），否则读 kioku setup 写的那个文件
   const saved = readSaved ? await readSaved() : await readProfile(id, env).catch(() => null)
   const url = resolveServerUrl(options, env, saved)
@@ -48,7 +55,7 @@ export async function resolveTarget(
     await beforeLogin?.()
     key = await login({ url, id })
   }
-  // 写文件、发请求之前先看格式：带着换行这类字符的访问密钥写进配置文件会让整份配置读不了
+  // 写文件、发请求之前先看格式：带着换行这类字符的访问密钥写进配置文件会让整份配置无法读取
   const keyProblem = key ? keyFormatError(key) : null
   if (keyProblem) throw new KiokuFailure(keyProblem)
   if (!key && !options.dryRun) {
@@ -60,11 +67,11 @@ export async function resolveTarget(
     const who = await whoami({ url, key })
     const family = who.client.runtimeFamily
     out.write(
-      `✓ 访问密钥可用：接入实例 ${formatPlain(who.client.name)}，运行时 ${formatPlain(family)}\n`,
+      `✓ 访问密钥可用：客户端 ${formatPlain(who.client.name)}，运行时 ${formatPlain(family)}\n`,
     )
     if (family !== expectedFamily) {
       out.write(
-        `! 这个接入实例的运行时不是 ${expectedFamily}，注入的内容不按 ${name} 的格式：在管理界面为 ${name} 另建一个接入实例\n`,
+        `! 这个客户端的运行时不是 ${expectedFamily}，注入的内容不按 ${name} 的格式：在管理界面「客户端」页为 ${name} 另建一个客户端\n`,
       )
     }
   }

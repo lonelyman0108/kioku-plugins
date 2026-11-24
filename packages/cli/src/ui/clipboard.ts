@@ -35,7 +35,8 @@ export function osc8Link(
 ): string {
   const active = enabled ?? supportsOsc8(stream, env)
   if (!active) return label
-  return `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`
+  const safeUrl = url.replace(/\p{Cc}/gu, '')
+  return `\x1b]8;;${safeUrl}\x07${label}\x1b]8;;\x07`
 }
 
 export function osc52Sequence(text: string): string {

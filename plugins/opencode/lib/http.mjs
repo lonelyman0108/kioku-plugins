@@ -62,6 +62,7 @@ export function failureText(err) {
 // legacy_key 是升级前签发的访问密钥（401），legacy_database 是库还没从旧结构迁移过来（503）
 export const LEGACY_KEY_CODE = 'legacy_key'
 export const LEGACY_DATABASE_CODE = 'legacy_database'
+export const DATABASE_UNAVAILABLE_CODE = 'database_unavailable'
 
 export const INVALID_KEY_TEXT = '访问密钥无效或已吊销'
 export const LEGACY_KEY_TEXT =
@@ -93,7 +94,7 @@ export function legacyDatabaseText(url) {
     // 地址解析不了时不举例
   }
   const where = base ? `打开 ${base}/legacy-upgrade` : '打开管理界面的升级页'
-  return `服务端已升级、尚未迁移旧数据：${where} 按引导迁移，完成后运行 kioku migrate 重新接入`
+  return `服务端已升级、尚未迁移旧数据：${where} 按引导迁移，完成后运行 npx @kioku-memory/cli migrate 重新接入`
 }
 
 // 401 与带 legacy_database 的 503 的统一解读：返回要抛的失败，别的状态返回 null

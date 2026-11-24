@@ -352,3 +352,30 @@ def test_turns_reach_the_server_in_order(kioku):
     s.flush()
     users = [r["body"]["user"] for r in kioku.requests if r["body"].get("event") == "turn.end"]
     assert users == [f"问 {index}" for index in range(8)]
+
+
+def test_session_id_utf16_clipping_restart_reset_and_trailing_slash_git_remote(kioku, monkeypatch):
+    import subprocess
+
+    from hermes.kioku_bridge import project_of
+
+    s = session(kioku)
+    s.start("😀" * 150, platform="cli")
+    assert len(s.session_id.encode("utf-16-le")) == 400
+    s.switch("😀" * 150)
+    assert len(s.session_id.encode("utf-16-le")) == 400
+
+    # 二次 start 若平台不再是本地入口，会重置 active 与 _boot 状态
+    s.start("s2", platform="telegram")
+    assert not s.active
+    assert s.boot() == ""
+
+    # 带结尾斜杠的 origin URL 也能提取仓库名
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_kw: subprocess.CompletedProcess(
+            [], 0, "https://github.com/org/my-repo/\n", ""
+        ),
+    )
+    assert project_of("/tmp/workdir") == {"dirName": "workdir", "repoName": "my-repo"}

@@ -224,7 +224,8 @@ describe('本地记忆的解析', () => {
 
   it('标题压成一行，去掉控制字符，按码点截断', () => {
     expect(titleOf(' 甲\n乙\u0007 ')).toBe('甲 乙')
-    expect(Array.from(titleOf('😀'.repeat(100)))).toHaveLength(80)
+    expect(Array.from(titleOf('😀'.repeat(100)))).toHaveLength(100)
+    expect(Array.from(titleOf('😀'.repeat(250)))).toHaveLength(200)
   })
 
   it('文件头：键值与缩进一层的键值；没有文件头时正文就是全文', () => {
@@ -248,6 +249,15 @@ describe('本地记忆的解析', () => {
     ])
     expect(sections('只有一段')).toEqual([{ heading: null, text: '只有一段' }])
     expect(sections('  \n')).toEqual([])
+    expect(
+      sections('## 小节一\n正文\n```markdown\n## 代码块里不是小节\n\u00a7\n```\n## 小节二\n内容'),
+    ).toEqual([
+      {
+        heading: '小节一',
+        text: '## 小节一\n正文\n```markdown\n## 代码块里不是小节\n\u00a7\n```',
+      },
+      { heading: '小节二', text: '## 小节二\n内容' },
+    ])
   })
 
   it('Claude Code 的项目名：去掉主目录与常见的上级目录；前缀要对到一段的边界；太长时留后面的', () => {
@@ -414,7 +424,7 @@ describe('kioku import --from claude-code', () => {
   })
 
   it('不迁的列出原因：太长的、没有内容的、和前面的重名的', async () => {
-    memory('-x-code-kioku', 'long', 'user', '长'.repeat(20_001))
+    memory('-x-code-kioku', 'long', 'user', '长'.repeat(100_001))
     memory('-x-code-kioku', 'blank', 'user', '  ')
     memory('-x-code-kioku', 'Dup', 'user', '正文一', '重复标题')
     file(
@@ -422,7 +432,7 @@ describe('kioku import --from claude-code', () => {
       '---\nname: dup\ndescription: 重复标题\nmetadata:\n  type: user\n---\n另一条\n',
     )
     const result = await run(['--from', 'claude-code', '--dry-run'])
-    expect(result.text).toContain('正文超过 20000 个字')
+    expect(result.text).toContain('正文超过 100000 个字')
     expect(result.text).toContain('没有内容')
     expect(result.text).toContain('和前面的一条重名 重复标题')
     expect(result.text).toContain('新建 1 条')
@@ -442,8 +452,11 @@ describe('kioku import --from claude-code', () => {
     expect(one.text).toContain('a 的说明')
     expect(one.text).not.toContain('b 的说明')
     await expect(run(['--from', 'claude-code', '--path', join(dir, 'nope')])).rejects.toThrow(
-      '没有找到',
+      '未找到',
     )
+    await expect(
+      run(['--from', 'claude-code', '--circle', 'nope-circle', '--dry-run']),
+    ).rejects.toThrow('未找到记忆圈：nope-circle')
     mkdirSync(join(dir, 'empty'))
     const none = await run(['--from', 'claude-code', '--path', join(dir, 'empty')])
     expect(none.text).toContain('没有可以迁的记忆')
@@ -456,11 +469,11 @@ describe('kioku import --from claude-code', () => {
     expect(requests).toHaveLength(0)
   })
 
-  it('参数：要写来源；认得但迁不了的来源说明原因', async () => {
+  it('参数：要写来源；认得但不可迁移的来源说明原因', async () => {
     for (const args of [[], ['--from'], ['--from', 'nope'], ['--from', 'claude-code', '--x']]) {
       await expect(run(args), args.join(' ')).rejects.toThrow(UsageError)
     }
-    await expect(run(['--from', 'codex'])).rejects.toThrow('格式没有公开')
+    await expect(run(['--from', 'codex'])).rejects.toThrow('格式未公开')
     await expect(run(['--from', 'pi'])).rejects.toThrow('没有自带的长期记忆')
   })
 })
@@ -623,15 +636,15 @@ describe('kioku import：读文件与写入的边界', () => {
     expect(result.text).toContain('本地的文件没有动')
   })
 
-  it('--platform 用 kioku setup 给那个平台写下的配置；没配过、不认得的分别说明', async () => {
+  it('--platform 用已配置客户端的身份；没配过、不认得的分别说明', async () => {
     memory('-x-code-kioku', 'a', 'user')
     env = { CLAUDE_CONFIG_DIR: join(dir, 'claude'), KIOKU_CONFIG_DIR: join(dir, 'kioku') }
     await expect(run(['--from', 'claude-code', '--platform', 'pi', '--yes'])).rejects.toThrow(
-      '还没有给 pi 配过',
+      '尚未配置 pi',
     )
     await expect(
       run(['--from', 'claude-code', '--platform', 'claude-code', '--yes']),
-    ).rejects.toThrow('还没有给 claude-code 配过')
+    ).rejects.toThrow('尚未配置 claude-code')
     await expect(run(['--from', 'claude-code', '--platform', 'nope'])).rejects.toThrow(UsageError)
     mkdirSync(join(dir, 'kioku'))
     writeFileSync(
@@ -714,8 +727,8 @@ describe('kioku import：读文件与写入的边界', () => {
     expect(matched.text).toContain('已有，内容一样  冲突标题（m-dup1）')
   })
 
-  it('fromFiles 超长重名标题保留摘要后缀且不截断尾标，--overwrite 替换通用切片时传 removeVariantWhens', async () => {
-    const longHeading = '超'.repeat(80)
+  it('fromFiles 超长重名标题保留摘要后缀且不截断尾标，--overwrite 替换通用变体时传 removeVariantWhens', async () => {
+    const longHeading = '超'.repeat(200)
     file(
       'hermes/memories/MEMORY.md',
       `## ${longHeading}\n第一段正文\n\n## ${longHeading}\n第二段正文\n`,
@@ -728,7 +741,7 @@ describe('kioku import：读文件与写入的边界', () => {
       expect(hermesRun.text).toContain('写入 2 条')
       const createdTitles = writes().map((r) => r.body.title)
       expect(createdTitles[0]).toBe(longHeading)
-      expect(createdTitles[1]).toMatch(/^超{72}（[0-9a-f]{6}）$/)
+      expect(createdTitles[1]).toMatch(/^超{192}（[0-9a-f]{6}）$/)
     } finally {
       env = { ...env, HERMES_HOME: oldHome }
     }

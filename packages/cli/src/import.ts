@@ -1,20 +1,25 @@
-// kioku import：把平台自带的本地长期记忆迁进 Kioku。先读本地文件出一份计划（每条的标题、切面与目标记忆圈），
-// 和 Kioku 里已有的比过之后列出来，确认了才写。按标题去重（兼容旧 URI 兜底对照）：
+// kioku import：把客户端自带的本地长期记忆迁进 Kioku。先读本地文件出一份计划（每条的标题、适用条件与目标记忆圈），
+// 和 Kioku 里已有的比过之后列出来，确认了才写。按标题去重（兼容旧坐标兜底对照）：
 // 已经有、内容一样的跳过；已经有、内容不一样的不覆盖（可能在 Kioku 里改过），要覆盖得明说。
 // 本地的文件不删、不改
 
-import { whoami } from './api.ts'
+import { createHash } from 'node:crypto'
+
+import { UNAVAILABLE_TEXT, whoami } from './api.ts'
+import { plaintextKindLabel } from './commands/memory.ts'
 import {
+  DATABASE_UNAVAILABLE_CODE,
   KiokuFailure,
   UsageError,
+  errorCodeOf,
   fetchFailure,
   isRedirect,
-  loadConfig,
   plain,
   redirectError,
+  rejectionOf,
   shownUrl,
 } from './core.ts'
-import { isInteractiveTty } from './identity.ts'
+import { isInteractiveTty, resolveIdentity } from './identity.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
 import { isCancel, loadPrompts } from './prompts.ts'
 import {
@@ -24,26 +29,26 @@ import {
   titleWithSuffix,
   UNSUPPORTED_SOURCES,
 } from './sources.ts'
-import type { Env, Reader, TargetConfig, Writer } from './types.ts'
+import type { Env, Reader, TargetConfig, WhoamiResponse, Writer } from './types.ts'
 
 export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--circle <记忆圈>]
                 [--dry-run] [-y|--yes] [--select] [--overwrite]
 
-把平台自带的本地长期记忆迁进 Kioku：先列出每条将写入的标题与记忆圈，确认之后才写。
+把客户端自带的本地长期记忆迁进 Kioku：先列出每条将写入的标题与记忆圈，确认之后才写。
 
   --from <来源>      ${sourceNames()}
   --path <目录>      不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
-  --platform <平台>  用 kioku setup 给这个平台配好的地址与访问密钥（${platformNames()}）；不写时读环境变量
-  --circle <记忆圈>  目标记忆圈 slug（默认写入当前访问密钥所属接入实例的主场记忆圈）
+  --platform <平台>  使用已配置客户端的地址与访问密钥（${platformNames()}）；省略时自动解析身份或环境变量
+  --circle <记忆圈>  目标记忆圈 slug（默认写入当前客户端的主圈）
   --dry-run          只列出计划，不写
   -y, --yes          不问，直接写（不在终端里运行时要带上）
   --select           在交互式终端里逐条勾选本次要写入的记忆子集
-  --overwrite        Kioku 里同名词条已经有、内容不一样的也覆盖（默认跳过）
+  --overwrite        Kioku 里同名记忆已经有、内容不一样的也覆盖（默认跳过）
 
 本地的文件不删、不改。重复运行不会重复写：已经迁过、内容没变的会跳过。
 疑似明文凭据的不写，列出是哪个文件的哪一行：先把值存成凭据，或者从文件里去掉再迁。
-地址与访问密钥读 KIOKU_SERVER_URL 与 KIOKU_API_KEY（Claude Code 的会话里已经配好），或者用 --platform 指明。
-记忆迁进目标记忆圈（默认为主场记忆圈）。
+未指定 --platform 时按环境变量 KIOKU_SERVER_URL/KIOKU_API_KEY 或本机已配置的默认客户端身份解析。
+记忆迁进目标记忆圈（默认为主圈）。
 指令文件（AGENTS.md、CLAUDE.md）不是记忆，不迁。
 `
 
@@ -77,6 +82,8 @@ export interface ComparedEntry extends UsableSourceEntry {
   version?: number
   shortId?: string
   replaceGenericVariant?: boolean
+  matchedByLegacy?: boolean
+  appendVariant?: boolean
 }
 
 export interface ImportPlan {
@@ -106,13 +113,21 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     select: false,
     overwrite: false,
   }
+  let endOfFlags = false
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === '--dry-run') options.dryRun = true
-    else if (arg === '--yes' || arg === '-y') options.yes = true
-    else if (arg === '--select') options.select = true
-    else if (arg === '--overwrite') options.overwrite = true
-    else if (arg === '--from' || arg === '--path' || arg === '--platform' || arg === '--circle') {
+    if (!endOfFlags && arg === '--') {
+      endOfFlags = true
+      continue
+    }
+    if (!endOfFlags && arg === '--dry-run') options.dryRun = true
+    else if (!endOfFlags && (arg === '--yes' || arg === '-y')) options.yes = true
+    else if (!endOfFlags && arg === '--select') options.select = true
+    else if (!endOfFlags && arg === '--overwrite') options.overwrite = true
+    else if (
+      !endOfFlags &&
+      (arg === '--from' || arg === '--path' || arg === '--platform' || arg === '--circle')
+    ) {
       const value = argv[++i]
       if (!value) throw new UsageError(`${arg} 后面要写值`)
       if (arg === '--from') options.from = value
@@ -129,9 +144,7 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     throw new UsageError(`不认识的来源 ${options.from}，可以用的：${sourceNames()}`)
   }
   if (options.platform !== undefined && !PLATFORMS[options.platform]?.readConfig) {
-    throw new UsageError(
-      `--platform 只收用 kioku setup 写下配置的平台，可以用的：${platformNames()}`,
-    )
+    throw new UsageError(`--platform 只收本机保存了配置的客户端，可以用的：${platformNames()}`)
   }
   return options as ImportOptions
 }
@@ -157,6 +170,10 @@ function formatWhenTag(when?: Record<string, string[]>): string {
     .sort()
     .map((k) => `${k}=${when[k].join(',')}`)
   return parts.length ? ` [${parts.join(' ')}]` : ''
+}
+
+function sourceHash6(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 6)
 }
 
 async function request(
@@ -185,6 +202,11 @@ async function request(
   }
   if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
+  }
+  const rejected = res.ok ? null : rejectionOf(res.status, data, url)
+  if (rejected) throw rejected
+  if (res.status === 503 && errorCodeOf(data) === DATABASE_UNAVAILABLE_CODE) {
+    throw new KiokuFailure(UNAVAILABLE_TEXT)
   }
   return { status: res.status, data }
 }
@@ -227,8 +249,28 @@ function isDisjointProjectEntry(
   })
 }
 
-// 和 Kioku 里现有的比：优先按旧 URI 精确匹配，404 时再按标题兜底（跨项目重名自动转项目后缀，避免顶掉其他项目词条）；
-// new 没有，same 有且对应切面正文一样，differs 有但不一样（含读不到正文的机密）
+function validateImportTarget(who: WhoamiResponse, requestedCircle?: string): string {
+  if (who.scopes.writeKinds !== undefined && !who.scopes.writeKinds.includes('entry')) {
+    throw new KiokuFailure('当前客户端访问密钥无权写入正式记忆')
+  }
+  const targetCircle = requestedCircle ?? who.primaryCircle.slug
+  const matchesPrimary =
+    who.primaryCircle.slug === targetCircle || who.primaryCircle.id === targetCircle
+  if (matchesPrimary) return who.primaryCircle.slug
+  const linked = who.linkedCircles.find(
+    (c) => (c.slug && c.slug === targetCircle) || c.id === targetCircle,
+  )
+  if (!linked) {
+    throw new KiokuFailure(`未找到记忆圈：${plain(targetCircle)}`)
+  }
+  if (linked.mode !== 'read_write') {
+    throw new KiokuFailure(`记忆圈 ${plain(targetCircle)} 为只读，无法写入记忆`)
+  }
+  return linked.slug ?? linked.id
+}
+
+// 和 Kioku 里现有的比：优先按旧坐标精确匹配，404 时再按标题兜底（跨项目重名自动转项目后缀，避免顶掉其他项目记忆）；
+// new 没有，same 有且对应变体正文一样，differs 有但不一样或需要新增变体（含无法读取正文的机密）
 async function compare(
   config: TargetConfig,
   circleSlug: string,
@@ -257,6 +299,12 @@ async function compare(
         effectiveTitle = projTitle
         res = await fetchEntry(config, effectiveTitle, circleSlug)
       }
+    } else if (res.status === 409) {
+      const disambiguated = titleWithSuffix(effectiveTitle, `（${sourceHash6(item.source)}）`)
+      if (disambiguated !== effectiveTitle) {
+        effectiveTitle = disambiguated
+        res = await fetchEntry(config, effectiveTitle, circleSlug)
+      }
     } else if (res.status === 404 && item.baseTitle && item.baseTitle !== effectiveTitle) {
       const baseRes = await fetchEntry(config, item.baseTitle, circleSlug)
       const baseVariants = Array.isArray(baseRes.data?.variants)
@@ -265,6 +313,23 @@ async function compare(
       if (baseRes.status === 200 && baseVariants.some((v) => v?.whenSignature === sig)) {
         effectiveTitle = item.baseTitle
         res = baseRes
+      }
+    } else if (
+      res.status === 404 &&
+      !item.baseTitle &&
+      proj &&
+      !effectiveTitle.endsWith(`（${proj}）`)
+    ) {
+      const suffixedTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
+      if (suffixedTitle !== effectiveTitle) {
+        const suffixedRes = await fetchEntry(config, suffixedTitle, circleSlug)
+        const suffixedVariants = Array.isArray(suffixedRes.data?.variants)
+          ? (suffixedRes.data.variants as Array<{ whenSignature?: unknown }>)
+          : []
+        if (suffixedRes.status === 200 && suffixedVariants.some((v) => v?.whenSignature === sig)) {
+          effectiveTitle = suffixedTitle
+          res = suffixedRes
+        }
       }
     }
   }
@@ -278,6 +343,9 @@ async function compare(
       reason: serverText(data, status, config.key),
     }
   }
+  if (matchedByLegacy && typeof data?.title === 'string' && data.title.trim()) {
+    effectiveTitle = data.title
+  }
   const variants = Array.isArray(data?.variants)
     ? (data.variants as Array<{ whenSignature?: unknown; content?: unknown }>)
     : []
@@ -287,6 +355,7 @@ async function compare(
       ? variants[0]
       : undefined
   const matched = exactMatch ?? genericFallback
+  const appendVariant = !matched && variants.length > 0
   const same = typeof matched?.content === 'string' && matched.content.trim() === item.content
   return {
     ...item,
@@ -295,6 +364,8 @@ async function compare(
     version: typeof data?.version === 'number' ? data.version : undefined,
     shortId: typeof data?.shortId === 'string' ? data.shortId : undefined,
     ...(!same && genericFallback ? { replaceGenericVariant: true } : {}),
+    ...(matchedByLegacy ? { matchedByLegacy: true } : {}),
+    ...(appendVariant ? { appendVariant: true } : {}),
   }
 }
 
@@ -318,15 +389,35 @@ async function write(
     ...(item.topics?.length ? { topics: item.topics } : {}),
     ...(item.disclosure ? { disclosure: item.disclosure } : {}),
   }
-  const { status, data } =
+  let { status, data } =
     item.state === 'differs'
       ? await request(config, 'PATCH', '/v1/entries', {
           id: item.shortId ?? item.title,
-          ...commonFields,
+          circle: circleSlug,
+          content: item.content,
+          ...(hasWhen ? { when: item.when } : {}),
+          ...(item.matchedByLegacy
+            ? {}
+            : {
+                title: item.title,
+                ...(item.topics?.length ? { topics: item.topics } : {}),
+                ...(item.disclosure ? { disclosure: item.disclosure } : {}),
+              }),
           ...(item.replaceGenericVariant ? { removeVariantWhens: [{}] } : {}),
           ...(Number.isInteger(item.version) ? { expectedVersion: item.version } : {}),
         })
       : await request(config, 'POST', '/v1/entries', commonFields)
+  if (item.state === 'new' && status === 409 && !item.when?.project?.length) {
+    const disambiguated = titleWithSuffix(item.title, `（${sourceHash6(item.source)}）`)
+    if (disambiguated !== item.title) {
+      const retry = await request(config, 'POST', '/v1/entries', {
+        ...commonFields,
+        title: disambiguated,
+      })
+      status = retry.status
+      data = retry.data
+    }
+  }
   if (status === 200 || status === 201) return { ok: true }
   const plaintext = Array.isArray(data?.plaintext) ? (data.plaintext as PlaintextSpot[]) : null
   return { ok: false, reason: serverText(data, status, config.key), plaintext }
@@ -338,12 +429,44 @@ const KINDS: Record<'new' | 'same' | 'differs', string> = {
   differs: '已有，内容不一样',
 }
 
-// 问一句是或否；只认 y 开头的回答
+// 问一句是或否；只认 y 开头的回答，不因提前退出关闭 stdin 迭代器
 export async function confirm(
   question: string,
-  { stdin, out }: { stdin: AsyncIterable<Buffer | string>; out: Writer },
+  { stdin, out }: { stdin: Reader; out: Writer },
 ): Promise<boolean> {
   out.write(question)
+  if (typeof stdin.on === 'function') {
+    return new Promise((resolve) => {
+      let line = ''
+      let settled = false
+      const cleanup = () => {
+        if (settled) return
+        settled = true
+        stdin.off?.('data', onData)
+        stdin.off?.('end', onEnd)
+        stdin.off?.('error', onError)
+        stdin.removeListener?.('data', onData)
+        stdin.removeListener?.('end', onEnd)
+        stdin.removeListener?.('error', onError)
+        stdin.pause?.()
+      }
+      const finish = (answer: string) => {
+        cleanup()
+        resolve(/^\s*y/i.test(answer))
+      }
+      const onData = (chunk: unknown) => {
+        line +=
+          typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8')
+        if (/[\r\n]/.test(line)) finish(line)
+      }
+      const onEnd = () => finish(line)
+      const onError = () => finish('')
+      stdin.resume?.()
+      stdin.on?.('data', onData)
+      stdin.on?.('end', onEnd)
+      stdin.on?.('error', onError)
+    })
+  }
   for await (const chunk of stdin) {
     return /^\s*y/i.test(chunk.toString('utf8'))
   }
@@ -380,8 +503,7 @@ async function mapLimit<T, R>(
 // 和 Kioku 里比时同时发的请求数
 const COMPARE_CONCURRENCY = 8
 
-// 计划里还没迁进 Kioku 的条数（Kioku 里同名词条还没有的）。有比对失败的（不是 200、404）时
-// 说不准，pending 为 null，reason 写明几条读取失败
+// 计划里尚未迁进 Kioku 的条数。有比对失败的（不是 200、404）时说不准，pending 为 null，reason 写明几条读取失败
 export function pendingOf(plan: Pick<ImportPlan, 'compared'>): {
   pending: number | null
   reason?: string
@@ -391,7 +513,7 @@ export function pendingOf(plan: Pick<ImportPlan, 'compared'>): {
   return { pending: plan.compared.filter((item) => item.state === 'new').length }
 }
 
-// 读本地的记忆、和 Kioku 里的比过，列出计划：每条的标题、切面与目标记忆圈。
+// 读本地的记忆、和 Kioku 里的比过，列出计划：每条的标题、适用条件与目标记忆圈。
 // 返回 { compared, skipped, todo }；没有可以迁的时 todo 是空的、empty 为真
 export async function planImport(
   config: TargetConfig,
@@ -405,14 +527,14 @@ export async function planImport(
 ): Promise<ImportPlan> {
   const source = SOURCES[from]
   const who = await whoami(config)
-  const targetCircle = circle ?? who.primaryCircle.slug
+  const targetCircle = validateImportTarget(who, circle)
   out.write(
-    `Kioku：${shownUrl(config.url)}，接入实例 ${plain(who.client.name)}（${plain(who.client.slug)}），记忆圈 ${plain(targetCircle)}\n`,
+    `Kioku：${shownUrl(config.url)}，客户端 ${plain(who.client.name)}（${plain(who.client.slug)}），记忆圈 ${plain(targetCircle)}\n`,
   )
 
   const { root, found, entries } = await source.read({ env, path, client: who.client.slug })
   if (!found) {
-    throw new KiokuFailure(`没有找到${source.name}：${plain(root)} 不是目录，用 --path 指明位置`)
+    throw new KiokuFailure(`未找到${source.name}：${plain(root)} 不是目录，用 --path 指明位置`)
   }
   out.write(`来源：${source.name}（${plain(root)}）\n`)
   if (!entries.length) {
@@ -440,7 +562,12 @@ export async function planImport(
 
   out.write('\n')
   for (const item of compared) {
-    const kind = item.state === 'failed' ? `读取失败（${item.reason}）` : KINDS[item.state]
+    const kind =
+      item.state === 'failed'
+        ? `读取失败（${item.reason}）`
+        : item.appendVariant
+          ? '已有，将追加变体'
+          : KINDS[item.state]
     const idNote = item.shortId ? `（${plain(item.shortId)}）` : ''
     out.write(
       `${kind}  ${plain(item.title)}${idNote}${formatWhenTag(item.when)}\n    ← ${plain(item.source)}\n`,
@@ -489,7 +616,7 @@ export async function writeImport(
     out.write(`没有写入  ${plain(item.title)}\n    ← ${plain(item.source)}\n    ${reason}\n`)
     // 只说第几行、哪一类，不带值；行号按正文算（文件头之后）
     for (const spot of plaintext ?? []) {
-      out.write(`    正文第 ${Number(spot.line) || '?'} 行：${plain(spot.kind)}\n`)
+      out.write(`    正文第 ${Number(spot.line) || '?'} 行：${plaintextKindLabel(spot.kind)}\n`)
     }
   }
   if (failed.some((entry) => entry.plaintext)) {
@@ -513,16 +640,12 @@ export async function importMemories(
   }: { env?: Env; out?: Writer; stdin?: Reader } = {},
 ): Promise<number> {
   const options = parseImportArgs(argv)
-  // 地址与访问密钥：指明了平台就用 kioku setup 给它写下的，否则读环境变量
-  let config: TargetConfig | null
-  if (options.platform) {
-    config = (await PLATFORMS[options.platform].readConfig?.(env)) ?? null
-    if (!config) {
-      throw new KiokuFailure(
-        `还没有给 ${options.platform} 配过：先运行 kioku setup ${options.platform}`,
-      )
-    }
-  } else config = await loadConfig(env)
+  const { config } = await resolveIdentity({
+    ...(options.platform !== undefined ? { platform: options.platform } : {}),
+    env,
+    stdin,
+    out,
+  })
   const plan = await planImport(config, options, { env, out })
   if (plan.empty) return 0
   if (options.dryRun) {
@@ -539,7 +662,7 @@ export async function importMemories(
       if (!isInteractiveTty(stdin, out as Writer & { isTTY?: boolean })) {
         throw new KiokuFailure('--select 需要在交互式终端中运行')
       }
-      const ui = await loadPrompts({ input: stdin, output: out })
+      const ui = await loadPrompts({ input: stdin, output: out, env })
       if (!ui) throw new KiokuFailure('--select 需要 Node.js 20.12 以上版本')
       const picked = await ui.multiselect({
         message: '选择本次要写入的记忆',

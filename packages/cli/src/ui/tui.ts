@@ -4,7 +4,7 @@
 import { emitKeypressEvents } from 'node:readline'
 
 import { upgradePageOf } from '../api.ts'
-import { migrateCommand, planMigration, renderMigrationPlan } from '../commands/migrate.ts'
+import { migrateCommand, planMigration, type MigrationPlan } from '../commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
 import {
@@ -73,10 +73,13 @@ import {
 import { formatCountdown, spacedCode, type DeviceWaitHandle } from './prompts.ts'
 import type { ScreenStream } from './screen.ts'
 import {
+  bandForKind,
   capabilityLabel,
   createTheme,
+  kindLabel,
   renderBox,
   sensitivityBadge,
+  sortEntryKinds,
   type StrataTheme,
 } from './theme.ts'
 import { createViewport, type ViewportScreen } from './viewport.ts'
@@ -153,6 +156,13 @@ export type TuiModal =
       kind: 'help'
       title: string
       lines: string[]
+      scroll?: number
+    }
+  | {
+      kind: 'report'
+      title: string
+      lines: string[]
+      scroll: number
     }
 
 export interface TuiState {
@@ -168,6 +178,7 @@ export interface TuiState {
   busyLabel: string | null
   toast: TuiToast | null
   resultsById: Record<string, ClientLogRecord>
+  globalLog?: ClientLogRecord | null
   pendingById: Record<string, { pending: number | null; reason?: string }>
   modal: TuiModal | null
 }
@@ -478,10 +489,21 @@ function sectionHeader(title: string, width: number, theme: StrataTheme): string
   return ` ${theme.accent('▸')} ${theme.bold(label)} ${theme.hairline('─'.repeat(rest))}`
 }
 
-function kvLine(label: string, value: string, width: number, theme: StrataTheme): string {
+function kvLines(label: string, value: string, width: number, theme: StrataTheme): string[] {
   const prefix = `  ${theme.muted(fitWidth(label, 10))} `
-  const restWidth = Math.max(8, width - 14)
-  return fitWidth(`${prefix}${truncateWidth(value, restWidth)}`, width)
+  const indent = ' '.repeat(13)
+  const restWidth = Math.max(8, width - 13)
+  const parts = wrapWidth(value, restWidth)
+  if (!parts.length) return [fitWidth(prefix, width)]
+  return parts.map((part, idx) => fitWidth(`${idx === 0 ? prefix : indent}${part}`, width))
+}
+
+function manualInstallCommands(row: PlatformRow | null): string[] {
+  if (!row) return []
+  if (!(row.plugin === false || row.connection === 'none' || row.connection === 'manual')) {
+    return []
+  }
+  return PLATFORMS[row.id].install.commands.filter((cmd) => cmd !== row.id)
 }
 
 function pushCommandBlock(
@@ -548,21 +570,33 @@ function buildDetailBody(
     out.push(`  ${theme.keycap('s', '设置或更换 Kioku 服务地址')}`)
     out.push(`  ${theme.keycap('l', '在本机用 Docker Compose 启动 Kioku')}`)
     out.push(`  ${theme.keycap('o', '在浏览器打开 Kioku 管理界面')}`)
+    if (state.globalLog) {
+      out.push('')
+      out.push(sectionHeader(state.globalLog.title, width, theme))
+      for (const line of state.globalLog.lines) {
+        if (!line) {
+          out.push('')
+          continue
+        }
+        pushWrapped(styledResultLine(line, theme), '  ')
+      }
+      out.push(`  ${theme.muted('（按 Esc 关闭通知）')}`)
+    }
     return out
   }
 
   // 服务与权限分区
   out.push(sectionHeader('服务与权限', width, theme))
   if (row.checking) {
-    out.push(kvLine('接入状态', theme.muted('正在向服务端校验访问密钥…'), width, theme))
+    out.push(...kvLines('接入状态', theme.muted('正在向服务端校验访问密钥…'), width, theme))
   } else if (row.connection === 'ok' && row.who) {
-    const { primaryCircle, linkedCircles, client, scopes } = row.who
+    const { primaryCircle, linkedCircles, client, scopes, persona } = row.who
     const clientText = `${theme.bold(plain(client.name))} ${theme.muted(`（${plain(client.slug)}）`)}`
     const mismatch =
       client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily
         ? ` ${theme.error('! 运行时类型不匹配')}`
         : ''
-    out.push(kvLine('接入实例', `${clientText}${mismatch}`, width, theme))
+    out.push(...kvLines('客户端', `${clientText}${mismatch}`, width, theme))
 
     const circle =
       typeof primaryCircle.name === 'string' && primaryCircle.name
@@ -571,30 +605,70 @@ function buildDetailBody(
           ? plain(primaryCircle.slug)
           : typeof primaryCircle.id === 'string'
             ? plain(primaryCircle.id).slice(0, 8)
-            : '主场记忆圈'
-    const linkedCount = Array.isArray(linkedCircles) ? linkedCircles.length : 0
-    const linked = linkedCount > 0 ? ` · 关联 ${linkedCount} 圈` : ''
+            : '主圈'
+    const primaryKindKey = primaryCircle.kind === 'shared' ? 'shared' : 'personal'
+    const primaryKindText = primaryKindKey === 'shared' ? '独立圈' : '个人圈'
     const acct =
       typeof row.who.accountName === 'string' && row.who.accountName
         ? ` · ${theme.muted(`账号 ${plain(row.who.accountName)}`)}`
         : ''
-    out.push(kvLine('主场记忆圈', `${circle}${linked}${acct}`, width, theme))
+    out.push(...kvLines('主圈', `${circle}（${primaryKindText}）${acct}`, width, theme))
+
+    if (Array.isArray(linkedCircles) && linkedCircles.length) {
+      const linkedText = linkedCircles
+        .map(
+          (c) =>
+            `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
+        )
+        .join('、')
+      out.push(...kvLines('关联圈', linkedText, width, theme))
+    }
+
+    if (persona) {
+      out.push(
+        ...kvLines('独立人格', `${plain(persona.name)}（${plain(persona.slug)}）`, width, theme),
+      )
+    }
+
+    const facets = row.who.resolvedFacets ?? row.who.contextFacets
+    if (facets) {
+      const facetParts = Object.keys(facets)
+        .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
+        .sort()
+        .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
+      if (facetParts.length) {
+        out.push(...kvLines('默认语境', facetParts.join(' · '), width, theme))
+      }
+    }
 
     const readChips =
-      (scopes.readKinds ?? []).map((k) => theme.kindChip(k)).join('  ') || theme.muted('无')
+      sortEntryKinds(scopes.readKinds ?? [])
+        .map((k) => theme.kindChip(bandForKind(k, primaryKindKey), kindLabel(k)))
+        .join('  ') || theme.muted('无')
     const writeChips =
-      (scopes.writeKinds ?? []).map((k) => theme.kindChip(k)).join('  ') || theme.muted('无')
-    out.push(kvLine('读取物种', readChips, width, theme))
-    out.push(kvLine('写入物种', writeChips, width, theme))
+      sortEntryKinds(scopes.writeKinds ?? [])
+        .map((k) => theme.kindChip(bandForKind(k, primaryKindKey), kindLabel(k)))
+        .join('  ') || theme.muted('无')
+    out.push(...kvLines('读取形态', readChips, width, theme))
+    out.push(...kvLines('写入形态', writeChips, width, theme))
 
-    const sens = sensitivityBadge(scopes.maxSensitivity ?? 'internal', theme)
-    const cred = capabilityLabel(scopes.credentials)
-    out.push(kvLine('安全边界', `${sens} · 凭据 ${cred}`, width, theme))
+    const bounds = [
+      sensitivityBadge(scopes.maxSensitivity ?? 'internal', theme),
+      `凭据 ${capabilityLabel(scopes.credentials)}`,
+    ]
+    if (Array.isArray(scopes.allowedRealms)) {
+      const realmsText = scopes.allowedRealms.length
+        ? scopes.allowedRealms.map((r) => plain(r)).join('、')
+        : '空（受限）'
+      bounds.push(`场域白名单 ${realmsText}`)
+    }
+    if (scopes.admin === true) bounds.push('管理权限')
+    out.push(...kvLines('安全边界', bounds.join(' · '), width, theme))
   } else if (row.connection === 'invalid' || row.connection === 'broken') {
-    out.push(kvLine('接入状态', theme.error(row.reason || connectionText(row)), width, theme))
+    out.push(...kvLines('接入状态', theme.error(row.reason || connectionText(row)), width, theme))
   } else {
     out.push(
-      kvLine(
+      ...kvLines(
         '接入状态',
         row.reason ? theme.muted(row.reason) : theme.muted(connectionText(row)),
         width,
@@ -604,7 +678,7 @@ function buildDetailBody(
   }
 
   if (row.otherServer && row.url) {
-    out.push(kvLine('已配地址', theme.warn(shownUrl(row.url)), width, theme))
+    out.push(...kvLines('已配地址', theme.warn(shownUrl(row.url)), width, theme))
   }
 
   // 本机环境分区
@@ -623,7 +697,7 @@ function buildDetailBody(
         : row.connection !== 'none'
           ? theme.warn('! 本机未检出（客户端可能已卸载）')
           : theme.muted('○ 本机未检出')
-  out.push(kvLine('客户端', clientDesc, width, theme))
+  out.push(...kvLines('本机程序', clientDesc, width, theme))
 
   const noCliNote = row.hasCli === false ? '无法判断（未找到命令）' : '无法判断'
   const pluginText =
@@ -632,7 +706,7 @@ function buildDetailBody(
       : row.plugin === false
         ? theme.warn('! 未安装')
         : theme.muted(noCliNote)
-  out.push(kvLine('插件状态', pluginText, width, theme))
+  out.push(...kvLines('插件状态', pluginText, width, theme))
 
   const memLabel =
     row.memory === 'off'
@@ -643,13 +717,17 @@ function buildDetailBody(
           ? theme.muted('无内置记忆')
           : theme.muted(noCliNote)
   const reenabled = row.reenabledIn ? theme.error(`（被 ./${row.reenabledIn} 重新启用）`) : ''
-  out.push(kvLine('自带记忆', `${memLabel}${reenabled}`, width, theme))
+  out.push(...kvLines('自带记忆', `${memLabel}${reenabled}`, width, theme))
 
   if (row.legacyPlugin?.legacySource) {
-    out.push(kvLine('旧插件来源', theme.warn(`! ${row.legacyPlugin.legacySource}`), width, theme))
+    out.push(
+      ...kvLines('旧插件来源', theme.warn(`! ${row.legacyPlugin.legacySource}`), width, theme),
+    )
   }
   if (row.legacyPlugin?.outdatedPlugin) {
-    out.push(kvLine('旧版插件', theme.warn(`! ${row.legacyPlugin.outdatedPlugin}`), width, theme))
+    out.push(
+      ...kvLines('旧版插件', theme.warn(`! ${row.legacyPlugin.outdatedPlugin}`), width, theme),
+    )
   }
 
   if (row.local !== undefined && row.local !== null) {
@@ -660,18 +738,20 @@ function buildDetailBody(
         : row.pending.pending > 0
           ? theme.warn(`（待迁移 ${row.pending.pending} 条）`)
           : theme.ok('（已全部迁移）')
-    out.push(kvLine('本地记忆', `${row.local} 条${pendingText}`, width, theme))
+    out.push(...kvLines('本地记忆', `${row.local} 条${pendingText}`, width, theme))
   }
 
   if (row.conflicts?.length) {
-    out.push(kvLine('冲突工具', theme.error(`! ${conflictToolsText(row.conflicts)}`), width, theme))
+    out.push(
+      ...kvLines('冲突工具', theme.error(`! ${conflictToolsText(row.conflicts)}`), width, theme),
+    )
     for (const conflict of row.conflicts) {
       pushWrapped(`${conflict.removable ? '可清理' : '提示'} · ${conflict.summary}`, '    ')
     }
   }
 
   // 最近结果或操作指引
-  const record = state.resultsById[row.id]
+  const record = state.resultsById[row.id] ?? state.globalLog
   out.push('')
   if (record) {
     out.push(sectionHeader(record.title, width, theme))
@@ -682,6 +762,8 @@ function buildDetailBody(
       }
       pushWrapped(styledResultLine(line, theme), '  ')
     }
+    out.push('')
+    out.push(`  ${theme.muted('（按 Esc 返回操作指引）')}`)
   } else {
     out.push(sectionHeader('操作指引', width, theme))
     if (!state.server) {
@@ -691,7 +773,11 @@ function buildDetailBody(
     } else if (state.server.needsSetup) {
       pushWrapped('服务端尚未初始化管理员：按 o 打开网页端完成首次初始化。')
     } else if (row.connection === 'invalid') {
-      pushWrapped('当前访问密钥已失效或被吊销：按 Enter 重新走浏览器授权签发新访问密钥。')
+      if (row.legacyKey) {
+        pushWrapped('升级前访问密钥已失效：按 Enter 或 M 从旧版迁移（更新插件并重新授权）。')
+      } else {
+        pushWrapped('当前访问密钥已失效或被吊销：按 Enter 重新走浏览器授权签发新访问密钥。')
+      }
     } else if (row.connection === 'broken') {
       pushWrapped('本机配置文件格式无法解析：检查文件后按 Enter 重新写入，或按 d 查看诊断。')
     } else if (row.connection === 'manual') {
@@ -710,7 +796,9 @@ function buildDetailBody(
           : '在对应客户端插件配置中填写服务地址与访问密钥。',
       )
     } else if (row.plugin === false) {
-      pushWrapped('凭据已配置，但尚未检测到客户端插件：按 p 自动安装，或按 y 复制命令手动执行。')
+      pushWrapped(
+        '访问密钥已配置，但尚未检测到客户端插件：按 p 自动安装，或按 y 复制命令手动执行。',
+      )
     } else {
       pushWrapped(
         '接入状态正常。可按 d 运行完整诊断，按 p 更新插件并刷新工具缓存，或按 o 打开网页端管理记忆与访问密钥。',
@@ -725,14 +813,19 @@ function buildDetailBody(
       )
     }
 
-    if (row.plugin === false || row.connection === 'none' || row.connection === 'manual') {
-      const guide = PLATFORMS[row.id].install
-      if (guide.commands.length) {
-        out.push('')
-        out.push(`  ${theme.muted('手动安装命令（按 y 复制）：')}`)
-        pushCommandBlock(guide.commands, width, out, theme)
-        if (guide.after) pushWrapped(theme.muted(guide.after), '  ')
-      }
+    const manualCmds = manualInstallCommands(row)
+    if (manualCmds.length) {
+      out.push('')
+      out.push(`  ${theme.muted('手动安装命令（按 y 复制）：')}`)
+      pushCommandBlock(manualCmds, width, out, theme)
+      const after = PLATFORMS[row.id].install.after
+      if (after) pushWrapped(theme.muted(after), '  ')
+    } else if (
+      (row.plugin === false || row.connection === 'none' || row.connection === 'manual') &&
+      PLATFORMS[row.id].install.after
+    ) {
+      out.push('')
+      pushWrapped(theme.muted(PLATFORMS[row.id].install.after!), '  ')
     }
   }
 
@@ -788,10 +881,13 @@ function renderClientDetail(
   if (!row || !titleBadge) {
     headerLine = fitWidth(` ${theme.bold('概览')}${scrollNote}`, width)
   } else {
-    const left = ` ${theme.bold(row.name)}  ${theme.muted(row.id)}`
+    const rawLeft = ` ${theme.bold(row.name)}  ${theme.muted(row.id)}`
     const badgePart = `${titleBadge.icon} ${titleBadge.coloredStatus}`
     const rightText = scrollNote ? `${badgePart} ${scrollNote}` : badgePart
-    const gap = Math.max(1, width - displayWidth(left) - displayWidth(rightText) - 1)
+    const rightW = displayWidth(rightText)
+    const leftMax = Math.max(4, width - rightW - 2)
+    const left = displayWidth(rawLeft) > leftMax ? truncateWidth(rawLeft, leftMax) : rawLeft
+    const gap = Math.max(1, width - displayWidth(left) - rightW - 1)
     headerLine = fitWidth(`${left}${' '.repeat(gap)}${rightText}`, width)
   }
 
@@ -839,6 +935,7 @@ function renderBottomBar(
     state.platforms.some((p) => p.conflicts?.some((c) => c.removable))
 
   const items: string[] = [theme.keycap('↑↓', '选择')]
+  let hasPluginKey = false
   if (
     ready &&
     migrationCandidates({ server: state.server, platforms: state.platforms }).length > 0
@@ -846,15 +943,20 @@ function renderBottomBar(
     items.push(theme.keycap('M', '旧版迁移'))
   }
   if (row && ready) {
-    if (row.connection === 'invalid') items.push(theme.keycap('Enter', '重授权'))
-    else if (row.connection !== 'ok' || row.otherServer) {
+    if (row.connection === 'invalid') {
+      items.push(theme.keycap('Enter', row.legacyKey ? '旧版迁移' : '重授权'))
+    } else if (row.connection !== 'ok' || row.otherServer) {
       if (PLATFORMS[row.id].setup) items.push(theme.keycap('Enter', '接入'))
     } else if (row.plugin === false) {
       items.push(theme.keycap('p', '装插件'))
+      hasPluginKey = true
     }
   }
   if (ready && connectCandidates(state).length > 0) items.push(theme.keycap('a', '批量'))
-  if (row) items.push(theme.keycap('p', '插件'), theme.keycap('d', '诊断'))
+  if (row) {
+    if (!hasPluginKey) items.push(theme.keycap('p', '插件'))
+    items.push(theme.keycap('d', '诊断'))
+  }
   if (canMigrateRow(row, ready)) items.push(theme.keycap('i', '迁移'))
   if (anyRemovableConflict) items.push(theme.keycap('x', '消冲突'))
   if (canDisableClaudeMemory(row)) items.push(theme.keycap('m', '停记忆'))
@@ -864,7 +966,7 @@ function renderBottomBar(
     items.push(theme.keycap('l', '容器'))
   }
   if (state.url) items.push(theme.keycap('o', '网页'))
-  if ((row && PLATFORMS[row.id].install.commands.length) || state.url) {
+  if (manualInstallCommands(row).length || state.url) {
     items.push(theme.keycap('y', '复制'))
   }
   if (uninstalledCount > 0) items.push(theme.keycap('Tab', '未检出'))
@@ -927,21 +1029,19 @@ function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: Strat
     const noBtn = !modal.value
       ? `${theme.ok('●')} ${theme.bold(modal.noLabel)}`
       : `${theme.muted('○')} ${modal.noLabel}`
-    const sections = [
-      ...(clipped.length ? [{ lines: clipped }] : []),
-      {
-        lines: [
-          theme.bold(modal.question),
-          `${yesBtn}   /   ${noBtn}   ${theme.muted('(←/→ 切换 · y/n · Enter 确认 · Esc 取消)')}`,
-        ],
-      },
-    ]
+    const buttons = `${yesBtn}   /   ${noBtn}`
+    const hint = theme.muted('(←/→ 切换 · y/n · Enter 确认 · Esc 取消)')
+    const choiceLines =
+      displayWidth(`${buttons}   ${hint}`) <= width - 6
+        ? [theme.bold(modal.question), `${buttons}   ${hint}`]
+        : [theme.bold(modal.question), buttons, ...wrapWidth(hint, width - 6)]
+    const sections = [...(clipped.length ? [{ lines: clipped }] : []), { lines: choiceLines }]
     return renderBox({ title: modal.title, width, theme, sections })
   }
 
   if (modal.kind === 'multiselect') {
     const width = Math.min(maxBoxWidth, 68)
-    const maxOpts = Math.max(3, rows - 9)
+    const maxOpts = Math.max(3, rows - 10)
     const scroll = Math.max(0, Math.min(modal.scroll, Math.max(0, modal.options.length - maxOpts)))
     const slice = modal.options.slice(scroll, scroll + maxOpts)
     const selectedSet = new Set(modal.selected)
@@ -953,13 +1053,17 @@ function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: Strat
       const hint = opt.hint ? theme.muted(` (${opt.hint})`) : ''
       return `${ptr} ${box} ${label}${hint}`
     })
+    const hintLines = wrapWidth(
+      '↑/↓ 移动 · Space 勾选 · a 全选 · Enter 确认 · Esc 取消',
+      Math.max(16, width - 6),
+    ).map((line) => theme.muted(line))
     const lines = [
       modal.prompt,
       '',
       ...optLines,
       ...(modal.error ? ['', theme.error(`! ${modal.error}`)] : []),
       '',
-      theme.muted('↑/↓ 移动 · Space 勾选 · a 全选 · Enter 确认 · Esc 取消'),
+      ...hintLines,
     ]
     return renderBox({ title: modal.title, width, theme, sections: [{ lines }] })
   }
@@ -980,24 +1084,31 @@ function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: Strat
       maxBoxWidth,
       Math.max(58, displayWidth(openLine) + 6, innerWidth + 24, displayWidth(footerLeft) + 14),
     )
-    const gap = Math.max(2, width - 4 - displayWidth(footerLeft) - displayWidth(clock))
     const urlLines =
       displayWidth(openLine) <= width - 4 ? [openLine] : wrapWidth(openLine, width - 4)
+    const codeBoxTop = `${theme.rule('┌')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┐')}`
+    const codeBoxMidLeft = `${theme.rule('│')}  ${theme.bold(truncateWidth(spaced, innerWidth - 4))}  ${theme.rule('│')}`
+    const codeBoxBot = `${theme.rule('└')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┘')}`
+    const inlineStatus = displayWidth(`${codeBoxMidLeft}  ${statusTag}`) <= width - 4
+    const codeLines = inlineStatus
+      ? [codeBoxTop, `${codeBoxMidLeft}  ${statusTag}`, codeBoxBot]
+      : [codeBoxTop, codeBoxMidLeft, codeBoxBot, statusTag]
+    const inlineFooter = displayWidth(footerLeft) + 2 + displayWidth(clock) <= width - 4
+    const footerLines = inlineFooter
+      ? [
+          `${footerLeft}${' '.repeat(Math.max(2, width - 4 - displayWidth(footerLeft) - displayWidth(clock)))}${clock}`,
+        ]
+      : [
+          ...wrapWidth(footerLeft, Math.max(16, width - 4)),
+          `${' '.repeat(Math.max(0, width - 4 - displayWidth(clock)))}${clock}`,
+        ]
     return renderBox({
       title: modal.title,
       width,
       theme,
       sections: [
         {
-          lines: [
-            `${theme.rule('┌')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┐')}`,
-            `${theme.rule('│')}  ${theme.bold(truncateWidth(spaced, innerWidth - 4))}  ${theme.rule('│')}  ${statusTag}`,
-            `${theme.rule('└')}${theme.rule('─'.repeat(innerWidth))}${theme.rule('┘')}`,
-            '',
-            ...urlLines,
-            '',
-            `${footerLeft}${' '.repeat(gap)}${clock}`,
-          ],
+          lines: [...codeLines, '', ...urlLines, '', ...footerLines],
         },
       ],
     })
@@ -1020,18 +1131,36 @@ function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: Strat
     return renderBox({ title: modal.title, width, theme, sections: [{ lines }] })
   }
 
-  // help
-  const width = Math.min(maxBoxWidth, 76)
+  // help / report
+  const maxWidth = modal.kind === 'report' ? Math.min(maxBoxWidth, 92) : Math.min(maxBoxWidth, 76)
   const maxLines = Math.max(5, rows - 6)
   const wrapped: string[] = []
   for (const line of modal.lines) {
-    wrapped.push(...(line ? wrapWidth(line, width - 6) : ['']))
+    wrapped.push(...(line ? wrapWidth(line, Math.max(16, maxWidth - 6)) : ['']))
   }
+  const needsScroll = modal.kind === 'report' || wrapped.length > maxLines
+  if (!needsScroll) {
+    return renderBox({
+      title: modal.title,
+      width: maxWidth,
+      theme,
+      sections: [{ lines: wrapped }],
+    })
+  }
+  const bodyCap = Math.max(3, maxLines - 2)
+  const maxScroll = Math.max(0, wrapped.length - bodyCap)
+  const scroll = Math.max(0, Math.min(modal.scroll ?? 0, maxScroll))
+  const visibleSlice = wrapped.slice(scroll, scroll + bodyCap)
+  const rangeText = `${scroll + 1}-${Math.min(wrapped.length, scroll + visibleSlice.length)}/${wrapped.length}`
+  const footerHint = `↑/↓ · PgUp/PgDn 翻页（${rangeText}）· Esc/Enter 关闭`
   return renderBox({
     title: modal.title,
-    width,
+    width: maxWidth,
     theme,
-    sections: [{ lines: wrapped.slice(0, maxLines) }],
+    sections: [
+      { lines: visibleSlice },
+      { lines: [theme.muted(truncateWidth(footerHint, Math.max(16, maxWidth - 6)))] },
+    ],
   })
 }
 
@@ -1425,15 +1554,69 @@ export async function runTui({
     })
   }
 
+  const wrappedModalLines = (rawLines: string[], capWidth: number): string[] => {
+    const outLines: string[] = []
+    const textWidth = Math.max(16, capWidth - 6)
+    for (const line of rawLines) {
+      outLines.push(...(line ? wrapWidth(line, textWidth) : ['']))
+    }
+    return outLines
+  }
+
+  const openReportModal = (title: string, lines: string[]): Promise<void> =>
+    new Promise((resolve) => {
+      const modal: Extract<TuiModal, { kind: 'report' }> = {
+        kind: 'report',
+        title,
+        lines,
+        scroll: 0,
+      }
+      state.modal = modal
+      paint()
+      modalHandler = (str, key) => {
+        const boxW = Math.min(Math.max(32, viewport.cols - 4), 92)
+        const maxLines = Math.max(5, viewport.rows - 6)
+        const bodyCap = Math.max(3, maxLines - 2)
+        const total = wrappedModalLines(modal.lines, boxW).length
+        const maxScroll = Math.max(0, total - bodyCap)
+        if (key.name === 'up' || str === 'k') {
+          modal.scroll = Math.max(0, Math.min(modal.scroll, maxScroll) - 1)
+          paint()
+        } else if (key.name === 'down' || str === 'j') {
+          modal.scroll = Math.min(maxScroll, modal.scroll + 1)
+          paint()
+        } else if (key.name === 'pageup' || str === '[') {
+          modal.scroll = Math.max(0, Math.min(modal.scroll, maxScroll) - bodyCap)
+          paint()
+        } else if (key.name === 'pagedown' || str === ']') {
+          modal.scroll = Math.min(maxScroll, modal.scroll + bodyCap)
+          paint()
+        } else if (
+          key.name === 'escape' ||
+          key.name === 'return' ||
+          key.name === 'enter' ||
+          str === 'q' ||
+          str === ' ' ||
+          (key.ctrl && (key.name === 'c' || key.name === 'd'))
+        ) {
+          modalHandler = null
+          state.modal = null
+          paint()
+          resolve()
+        }
+      }
+    })
+
   const openHelpModal = (): Promise<void> =>
     new Promise((resolve) => {
-      state.modal = {
+      const modal: Extract<TuiModal, { kind: 'help' }> = {
         kind: 'help',
         title: '操作说明与分工边界',
+        scroll: 0,
         lines: [
           '快捷键：',
           '  ↑ / ↓ 或 j / k      切换客户端',
-          '  Enter / c           接入当前客户端（或重新授权已失效访问密钥）',
+          '  Enter / c           接入当前客户端（或重新授权/旧版迁移）',
           '  a                   批量接入多个客户端（浏览器确认一次）',
           '  M                   迁移旧版客户端插件与已失效访问密钥',
           '  p                   自动安装或更新客户端插件并刷新工具缓存',
@@ -1445,6 +1628,7 @@ export async function runTui({
           '  s / l               设置 Kioku 服务地址 / 启动本机 Docker 容器',
           '  o / y               在浏览器打开管理界面 / 复制安装命令或服务地址',
           '  Tab / [ / ] / r     展开未检出 / 滚动详情面板 / 重新扫描',
+          '  Esc                 清除提示或收起当前客户端日志回到指引',
           '',
           '职责分工：',
           '  本控制台专注于本机客户端插件、配置文件与本地记忆迁移；',
@@ -1453,8 +1637,38 @@ export async function runTui({
           '按任意键关闭说明',
         ],
       }
+      state.modal = modal
       paint()
-      modalHandler = () => {
+      modalHandler = (str, key) => {
+        const boxW = Math.min(Math.max(32, viewport.cols - 4), 76)
+        const maxLines = Math.max(5, viewport.rows - 6)
+        const total = wrappedModalLines(modal.lines, boxW).length
+        const needsScroll = total > maxLines
+        if (needsScroll) {
+          const bodyCap = Math.max(3, maxLines - 2)
+          const maxScroll = Math.max(0, total - bodyCap)
+          const cur = Math.max(0, Math.min(modal.scroll ?? 0, maxScroll))
+          if (key.name === 'up' || str === 'k') {
+            modal.scroll = Math.max(0, cur - 1)
+            paint()
+            return
+          }
+          if (key.name === 'down' || str === 'j') {
+            modal.scroll = Math.min(maxScroll, cur + 1)
+            paint()
+            return
+          }
+          if (key.name === 'pageup' || str === '[') {
+            modal.scroll = Math.max(0, cur - bodyCap)
+            paint()
+            return
+          }
+          if (key.name === 'pagedown' || str === ']') {
+            modal.scroll = Math.min(maxScroll, cur + bodyCap)
+            paint()
+            return
+          }
+        }
         modalHandler = null
         state.modal = null
         paint()
@@ -1661,8 +1875,13 @@ export async function runTui({
           `${installRes.status === 'failed' ? '✗' : installRes.status === 'manual' ? '!' : '✓'} ${installRes.message}`,
         )
         if (installRes.status === 'manual') {
-          const steps = await deps.pluginSteps([id], { env, cwd, url: state.url })
-          if (steps) lines.push('', ...steps.split('\n'))
+          if (installRes.commands?.length) {
+            lines.push('', '请手动运行：', ...installRes.commands.map((cmd) => `  ${cmd}`))
+            if (installRes.after) lines.push('', installRes.after)
+          } else {
+            const steps = await deps.pluginSteps([id], { env, cwd, url: state.url })
+            if (steps) lines.push('', ...steps.split('\n'))
+          }
         }
         const cfg = await PLATFORMS[id].readConfig?.(env).catch(() => null)
         if (cfg) {
@@ -1732,11 +1951,107 @@ export async function runTui({
         if (!keep) return
       }
       state.url = url
+      state.resultsById = {}
       state.pendingById = {}
+      state.globalLog = null
       await deps.rememberServerUrl(url, env).catch(() => {})
       setToast('ok', `已切换到 ${shownUrl(url)}`)
       await refreshAll()
     })
+
+  const formatPlanLines = (plan: MigrationPlan): string[] => {
+    const outLines = [
+      `目标服务器：${shownUrl(plan.url)}`,
+      `待迁移 ${plan.items.length} 个客户端：${plan.items.map((item) => item.name).join('、')}`,
+      '',
+    ]
+    for (const item of plan.items) {
+      const steps: string[] = []
+      if (item.removeLegacySource) steps.push('卸载旧插件来源')
+      if (item.clearCache) steps.push('清理工具清单缓存')
+      if (item.pluginAction === 'reinstall') steps.push('重新安装新版插件')
+      else if (item.pluginAction === 'upgrade') steps.push('更新新版插件')
+      if (item.reauth) steps.push('浏览器批量重新授权')
+      if (item.findings.manualInstallDir) {
+        steps.push(`手动替换目录 ${plain(item.findings.manualInstallDir)}`)
+      }
+      outLines.push(`${item.name}：${item.reasons.join(' · ')}`)
+      outLines.push(`  步骤：${steps.join(' → ')}`)
+    }
+    return outLines
+  }
+
+  const stripPlanBoxLines = (raw: string): string[] => {
+    const lines = raw.split('\n')
+    const result: string[] = []
+    let inBox = false
+    let skippedFirstBox = false
+    for (const line of lines) {
+      if (!skippedFirstBox && !inBox && line.startsWith('┌')) {
+        inBox = true
+        continue
+      }
+      if (inBox) {
+        if (line.startsWith('└')) {
+          inBox = false
+          skippedFirstBox = true
+        }
+        continue
+      }
+      result.push(line)
+    }
+    while (result.length && !result[0].trim()) result.shift()
+    return result.filter((l, idx) => l.length > 0 || (idx > 0 && result[idx - 1].length > 0))
+  }
+
+  const migrateLegacyInternal = async (targetIds?: string[]) => {
+    if (!state.url || !isServerReady(state.server)) {
+      setToast('warn', '请先确保服务端已连接并完成迁移与初始化')
+      return
+    }
+    state.busyLabel = '正在生成旧版迁移计划…'
+    paint()
+    const plan = await deps.planMigration(state.url, {
+      ...(targetIds?.length ? { platforms: targetIds } : {}),
+      env,
+      cwd,
+    })
+    state.busyLabel = null
+    if (!plan.items.length) {
+      setToast('info', '本机已接入客户端均已是最新，无需迁移')
+      paint()
+      return
+    }
+    const ok = await openConfirmModal({
+      title: '旧版客户端迁移计划',
+      lines: formatPlanLines(plan),
+      question: '确认执行以上迁移？',
+    })
+    if (!ok) return
+
+    state.busyLabel = '正在迁移旧版客户端…'
+    paint()
+    const buf = bufferOut()
+    const code = await deps.migrateCommand(
+      [...plan.items.map((item) => item.id), '--server-url', state.url, '-y'],
+      {
+        env,
+        cwd,
+        out: buf,
+        open: deps.open,
+        authPrompt: tuiAuthPrompt,
+      },
+    )
+    const lines = stripPlanBoxLines(buf.text())
+    for (const item of plan.items) {
+      state.resultsById[item.id] = { title: '旧版迁移结果', lines }
+    }
+    setToast(
+      code === 0 ? 'ok' : 'warn',
+      code === 0 ? '旧版客户端迁移完成' : '部分客户端迁移未完成，请看详情面板',
+    )
+    await refreshAll()
+  }
 
   const actionEnter = () =>
     doAction(async () => {
@@ -1746,8 +2061,20 @@ export async function runTui({
         setToast('warn', '请先按 [s] 设置服务地址，或按 [l] 在本机启动 Kioku')
         return
       }
+      if (state.server.checking) {
+        setToast('info', '正在连接服务器，请稍候')
+        return
+      }
       if (!state.server.reachable) {
         setToast('warn', '服务器当前无法连接，可按 [s] 更换地址或 [l] 检查本机容器')
+        return
+      }
+      if (state.server.mismatch === 'legacy') {
+        setToast('warn', '服务端等待迁移旧数据，请按 [o] 打开升级页')
+        return
+      }
+      if (state.server.problem) {
+        setToast('warn', state.server.problem)
         return
       }
       if (state.server.needsSetup) {
@@ -1755,7 +2082,8 @@ export async function runTui({
         return
       }
       if (row.connection === 'invalid') {
-        await connectIds([row.id], { reauth: true })
+        if (row.legacyKey) await migrateLegacyInternal([row.id])
+        else await connectIds([row.id], { reauth: true })
         return
       }
       if (row.connection === 'ok' && !row.otherServer) {
@@ -1838,7 +2166,10 @@ export async function runTui({
       lines.push(...formatHandshakeLines(handshake))
     }
     state.resultsById[row.id] = { title: '插件与连通性', lines }
-    setToast(res.status === 'failed' ? 'error' : 'ok', res.message)
+    setToast(
+      res.status === 'failed' ? 'error' : res.status === 'manual' ? 'warn' : 'ok',
+      res.message,
+    )
     await refreshAll()
   }
 
@@ -1857,18 +2188,18 @@ export async function runTui({
       paint()
       const buf = bufferOut()
       const exitCode = await deps.doctor([all ? '--all' : row!.id], { env, out: buf, cwd })
+      state.busyLabel = null
       const lines = buf.text().split('\n')
-      if (all) {
-        const targetId = row?.id ?? state.platforms[0]?.id ?? 'all'
-        state.resultsById[targetId] = { title: '全量诊断报告（doctor --all）', lines }
-      } else if (row) {
-        state.resultsById[row.id] = { title: '诊断报告（doctor）', lines }
-      }
-      state.detailScroll = 0
       setToast(
         exitCode === 0 ? 'ok' : 'warn',
         exitCode === 0 ? '诊断通过' : '诊断发现需要注意的项目',
       )
+      if (all) {
+        await openReportModal('全量诊断报告（doctor --all）', lines)
+      } else if (row) {
+        state.resultsById[row.id] = { title: '诊断报告（doctor）', lines }
+        state.detailScroll = 0
+      }
     })
 
   const actionImport = () =>
@@ -1884,13 +2215,24 @@ export async function runTui({
         setToast('warn', '请先确保服务端已连接并可用')
         return
       }
+      if (row.otherServer) {
+        setToast(
+          'warn',
+          `${row.name} 当前接到另一台服务器，请先按 [s] 切换地址或按 [Enter] 重新接入`,
+        )
+        return
+      }
       let config: TargetConfig | null = platform.readConfig ? await platform.readConfig(env) : null
+      if (config && state.url && config.url !== state.url) {
+        setToast('warn', `${row.name} 已配置到 ${shownUrl(config.url)}，请先切换地址或重新接入`)
+        return
+      }
       if (!config) {
         config = await deps.loadConfig(env).catch(() => null)
         if ((!config || (state.url && config.url !== state.url)) && state.url) {
           const secret = await openTextModal({
             title: `填写 ${row.name} 访问密钥`,
-            prompt: `${row.name} 所属接入实例的访问密钥（记忆将写入其主场记忆圈）`,
+            prompt: `${row.name} 所属客户端的访问密钥（记忆将写入其主圈）`,
             secret: true,
             validate: (text) => keyFormatError((text ?? '').trim()) ?? undefined,
           })
@@ -1942,59 +2284,12 @@ export async function runTui({
       }
       setToast(
         code === 0 ? 'ok' : 'warn',
-        code === 0 ? '本地记忆迁移完成' : '部分记忆未写入，请看右侧详情',
+        code === 0 ? '本地记忆迁移完成' : '部分记忆未写入，请看详情面板',
       )
       await refreshAll()
     })
 
-  const actionMigrateLegacy = () =>
-    doAction(async () => {
-      if (!state.url || !isServerReady(state.server)) {
-        setToast('warn', '请先确保服务端已连接并完成迁移与初始化')
-        return
-      }
-      state.busyLabel = '正在生成旧版迁移计划…'
-      paint()
-      const plan = await deps.planMigration(state.url, { env, cwd })
-      state.busyLabel = null
-      if (!plan.items.length) {
-        setToast('info', '本机已接入客户端均已是最新，无需迁移')
-        paint()
-        return
-      }
-      const previewLines = renderMigrationPlan(plan, { columns: Math.min(80, viewport.cols - 6) })
-        .split('\n')
-        .filter(Boolean)
-      const ok = await openConfirmModal({
-        title: '旧版客户端迁移计划',
-        lines: previewLines,
-        question: '确认执行以上迁移？',
-      })
-      if (!ok) return
-
-      state.busyLabel = '正在迁移旧版客户端…'
-      paint()
-      const buf = bufferOut()
-      const code = await deps.migrateCommand(
-        [...plan.items.map((item) => item.id), '--server-url', state.url, '-y'],
-        {
-          env,
-          cwd,
-          out: buf,
-          open: deps.open,
-          authPrompt: tuiAuthPrompt,
-        },
-      )
-      const lines = buf.text().split('\n').filter(Boolean)
-      for (const item of plan.items) {
-        state.resultsById[item.id] = { title: '旧版迁移结果', lines }
-      }
-      setToast(
-        code === 0 ? 'ok' : 'warn',
-        code === 0 ? '旧版客户端迁移完成' : '部分客户端迁移未完成，请看右侧详情',
-      )
-      await refreshAll()
-    })
+  const actionMigrateLegacy = () => doAction(() => migrateLegacyInternal())
 
   const actionClean = () =>
     doAction(async () => {
@@ -2109,7 +2404,11 @@ export async function runTui({
       const ok = await openConfirmModal({
         title: `断开 ${row.name}`,
         lines,
-        question: `确认断开 ${row.name} 并恢复自带记忆？`,
+        question:
+          row.memory === 'none'
+            ? `确认断开 ${row.name}？`
+            : `确认断开 ${row.name} 并恢复自带记忆？`,
+        yesLabel: '断开',
         danger: true,
       })
       if (!ok) return
@@ -2164,16 +2463,38 @@ export async function runTui({
 
   const actionLocal = () =>
     doAction(async () => {
+      class LocalWaitCancelled extends Error {}
+      const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> => {
+        if (signal.aborted) return Promise.reject(new LocalWaitCancelled())
+        return new Promise<T>((resolve, reject) => {
+          const onAbort = () => reject(new LocalWaitCancelled())
+          signal.addEventListener('abort', onAbort, { once: true })
+          promise.then(
+            (val) => {
+              signal.removeEventListener('abort', onAbort)
+              resolve(val)
+            },
+            (err) => {
+              signal.removeEventListener('abort', onAbort)
+              reject(err)
+            },
+          )
+        })
+      }
+
       const local = deps.local
       if (await local.healthy(LOCAL_URL)) {
         state.url = LOCAL_URL
+        state.resultsById = {}
+        state.pendingById = {}
+        state.globalLog = null
         await deps.rememberServerUrl(LOCAL_URL, env).catch(() => {})
         setToast('ok', `本机 ${LOCAL_PORT} 端口已有 Kioku 运行，已切换地址`)
         await refreshAll()
         return
       }
       if (!(await local.hasCompose(env))) {
-        throw new KiokuFailure('没有找到 docker compose：先装好 Docker（含 compose 插件）再来')
+        throw new KiokuFailure('未找到 docker compose：请安装 Docker（含 compose 插件）后重试')
       }
       const rawDir = await openTextModal({
         title: '本机启动 Kioku（Docker）',
@@ -2186,117 +2507,158 @@ export async function runTui({
       const existing = await local.composeState(dir, env)
       let code: string | null
 
-      if (existing === 'running') {
-        const up = await runProgress(
-          { title: '本机 Kioku 容器', message: '等待容器健康检查通过…' },
-          ({ signal }) =>
-            local.waitUntil(() => local.healthy(LOCAL_URL), { timeoutMs: 180_000, signal }),
-        )
-        if (!up) {
-          throw new KiokuFailure(
-            `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 看原因`,
+      try {
+        if (existing === 'running') {
+          const up = await runProgress(
+            { title: '本机 Kioku 容器', message: '等待容器健康检查通过…' },
+            async ({ signal }) => {
+              const ready = await local.waitUntil(() => local.healthy(LOCAL_URL), {
+                timeoutMs: 180_000,
+                signal,
+              })
+              if (signal.aborted) throw new LocalWaitCancelled()
+              return ready
+            },
           )
-        }
-        code = await local.setupCodeIn(dir)
-      } else if (existing === 'stopped') {
-        const ok = await openConfirmModal({
-          title: '启动本机 Kioku',
-          lines: [`目录：${dir}`, '该目录已有配置，将执行 docker compose up -d。'],
-          question: '立即启动？',
-        })
-        if (!ok) return
-        const up = await runProgress(
-          { title: '启动本机 Kioku', message: '正在运行 docker compose up -d…' },
-          async ({ signal, update }) => {
-            await local.composeUp(dir, env)
-            update('等待 Kioku 就绪…')
-            return local.waitUntil(() => local.healthy(LOCAL_URL), { timeoutMs: 180_000, signal })
-          },
-        )
-        if (!up) {
-          throw new KiokuFailure(
-            `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 看原因`,
-          )
-        }
-        code = await local.setupCodeIn(dir)
-      } else {
-        if (await local.portBusy(LOCAL_PORT)) {
-          throw new KiokuFailure(
-            `端口 ${LOCAL_PORT} 被别的程序占用：先停掉对应进程，或修改 compose.yaml 端口后手动启动`,
-          )
-        }
-        state.busyLabel = '正在获取最新版本信息…'
-        paint()
-        const release = await local.latestRelease()
-        state.busyLabel = null
-        const ok = await openConfirmModal({
-          title: '准备本机 Kioku 部署',
-          lines: [
-            `目录：${dir}`,
-            `版本：${release.imageTag}${release.release ? '（最新正式版）' : `（未取到正式版：${release.problem}，退回 edge）`}`,
-            `下载 ${release.ref} 的 compose.yaml 与 .env.example（已有文件不覆盖）`,
-            `生成随机密钥写入 .env，端口仅绑定 127.0.0.1:${LOCAL_PORT}`,
-          ],
-          question: '开始准备并启动？',
-        })
-        if (!ok) return
-
-        let prepared
-        try {
-          prepared = await local.prepareDir(dir, release)
-        } catch (err) {
-          if (err instanceof KiokuFailure) {
-            const target = selectedRowOf(state)?.id ?? state.platforms[0]?.id
-            if (target) {
-              state.resultsById[target] = {
-                title: '手动下载部署文件',
-                lines: manualDownload(dir, release.ref).split('\n'),
-              }
-            }
+          if (!up) {
+            throw new KiokuFailure(
+              `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 查看日志`,
+            )
           }
-          throw err
-        }
-        code = prepared.env.setupCode
-        if (prepared.env.written) {
-          const target = selectedRowOf(state)?.id ?? state.platforms[0]?.id
-          if (target) {
-            state.resultsById[target] = {
-              title: '本机 Kioku 部署提示',
-              lines: [
-                `! 主密钥保存在 ${prepared.env.file} 的 KIOKU_MASTER_KEY`,
-                '  请另外备份该密钥，并与数据库备份分开放；丢失将无法解开机密记忆与托管凭据。',
-              ],
-            }
-          }
-        }
-        const up = await runProgress(
-          {
+          code = await local.setupCodeIn(dir)
+        } else if (existing === 'stopped') {
+          const ok = await openConfirmModal({
             title: '启动本机 Kioku',
-            message: '正在执行 docker compose up -d（首次拉取镜像可能需要几分钟）…',
-            lines: prepared.env.written
-              ? [`主密钥保存在 ${prepared.env.file}（KIOKU_MASTER_KEY），请另外备份。`]
-              : [`已沿用现有的 ${prepared.env.file}`],
-          },
-          async ({ signal, update }) => {
-            await local.composeUp(dir, env)
-            update('等待 Kioku 健康检查通过…')
-            return local.waitUntil(() => local.healthy(LOCAL_URL), { timeoutMs: 180_000, signal })
-          },
-        )
-        if (!up) {
-          throw new KiokuFailure(
-            `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 看原因`,
+            lines: [`目录：${dir}`, '该目录已有配置，将执行 docker compose up -d。'],
+            question: '立即启动？',
+          })
+          if (!ok) return
+          const up = await runProgress(
+            { title: '启动本机 Kioku', message: '正在运行 docker compose up -d…' },
+            async ({ signal, update }) => {
+              await raceAbort(local.composeUp(dir, env), signal)
+              update('等待 Kioku 就绪…')
+              const ready = await local.waitUntil(() => local.healthy(LOCAL_URL), {
+                timeoutMs: 180_000,
+                signal,
+              })
+              if (signal.aborted) throw new LocalWaitCancelled()
+              return ready
+            },
           )
+          if (!up) {
+            throw new KiokuFailure(
+              `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 查看日志`,
+            )
+          }
+          code = await local.setupCodeIn(dir)
+        } else {
+          if (await local.portBusy(LOCAL_PORT)) {
+            throw new KiokuFailure(
+              `端口 ${LOCAL_PORT} 已被其他进程占用：请先停止对应进程，或修改 compose.yaml 端口后手动启动`,
+            )
+          }
+          state.busyLabel = '正在获取最新版本信息…'
+          paint()
+          const release = await local.latestRelease()
+          state.busyLabel = null
+          const ok = await openConfirmModal({
+            title: '准备本机 Kioku 部署',
+            lines: [
+              `目录：${dir}`,
+              `版本：${release.imageTag}${release.release ? '（最新正式版）' : `（未取到正式版：${release.problem}，退回 edge）`}`,
+              `下载 ${release.ref} 的 compose.yaml 与 .env.example（已有文件不覆盖）`,
+              `生成随机密钥写入 .env，端口仅绑定 127.0.0.1:${LOCAL_PORT}`,
+            ],
+            question: '开始准备并启动？',
+          })
+          if (!ok) return
+
+          let prepared
+          try {
+            prepared = await local.prepareDir(dir, release)
+          } catch (err) {
+            if (err instanceof KiokuFailure) {
+              const downloadLines = manualDownload(dir, release.ref).split('\n')
+              const selected = selectedRowOf(state)
+              if (selected) {
+                state.resultsById[selected.id] = { title: '手动下载部署文件', lines: downloadLines }
+              } else {
+                state.globalLog = { title: '手动下载部署文件', lines: downloadLines }
+              }
+              await openReportModal('手动下载部署文件', downloadLines)
+            }
+            throw err
+          }
+          code = prepared.env.setupCode
+          if (prepared.env.written) {
+            const masterKeyLines = [
+              `! 主密钥保存在 ${prepared.env.file} 的 KIOKU_MASTER_KEY`,
+              '  请另外备份该密钥，并与数据库备份分开放；丢失将无法解开机密记忆与托管凭据。',
+            ]
+            const selected = selectedRowOf(state)
+            if (selected) {
+              state.resultsById[selected.id] = {
+                title: '本机 Kioku 部署提示',
+                lines: masterKeyLines,
+              }
+            } else {
+              state.globalLog = { title: '本机 Kioku 部署提示', lines: masterKeyLines }
+            }
+          }
+          const up = await runProgress(
+            {
+              title: '启动本机 Kioku',
+              message: '正在执行 docker compose up -d（首次拉取镜像可能需要几分钟）…',
+              lines: prepared.env.written
+                ? [`主密钥保存在 ${prepared.env.file}（KIOKU_MASTER_KEY），请另外备份。`]
+                : [`已沿用现有的 ${prepared.env.file}`],
+            },
+            async ({ signal, update }) => {
+              await raceAbort(local.composeUp(dir, env), signal)
+              update('等待 Kioku 健康检查通过…')
+              const ready = await local.waitUntil(() => local.healthy(LOCAL_URL), {
+                timeoutMs: 180_000,
+                signal,
+              })
+              if (signal.aborted) throw new LocalWaitCancelled()
+              return ready
+            },
+          )
+          if (!up) {
+            throw new KiokuFailure(
+              `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 查看日志`,
+            )
+          }
         }
+      } catch (err) {
+        if (err instanceof LocalWaitCancelled) {
+          setToast('info', '已中止等待本机 Kioku 就绪')
+          return
+        }
+        throw err
       }
 
       state.url = LOCAL_URL
+      state.resultsById = {}
+      state.pendingById = {}
       await deps.rememberServerUrl(LOCAL_URL, env).catch(() => {})
       let readyToConnect = await local.setupDone(LOCAL_URL)
       if (!readyToConnect) {
         readyToConnect = await awaitLocalSetup(dir, code)
       }
       await refreshAll()
+      const masterNotice =
+        state.globalLog?.title === '本机 Kioku 部署提示'
+          ? state.globalLog
+          : (() => {
+              const selected = selectedRowOf(state)
+              const rec = selected ? state.resultsById[selected.id] : undefined
+              return rec?.title === '本机 Kioku 部署提示' ? rec : undefined
+            })()
+      if (masterNotice) {
+        await openReportModal(masterNotice.title, masterNotice.lines)
+      }
       if (readyToConnect) {
         setToast('ok', '本机 Kioku 已就绪，可按 [a] 批量接入客户端')
       } else {
@@ -2304,34 +2666,64 @@ export async function runTui({
       }
     })
 
-  const moveSelection = (delta: number) => {
+  const clampListScroll = () => {
     const { visible, uninstalledCount } = visiblePlatformRows(state)
-    if (!visible.length) return
-    const idx = visible.findIndex((row) => row.id === state.selectedId)
-    const cur = idx >= 0 ? idx : 0
-    const next = (cur + delta + visible.length) % visible.length
-    state.selectedId = visible[next].id
-    state.detailScroll = 0
-
     const bodyRows = Math.max(4, viewport.rows - 4)
     const listHeight =
       viewport.cols >= 84
         ? bodyRows
         : Math.min(Math.max(4, Math.floor(bodyRows * 0.45)), Math.max(4, visible.length + 3))
     const itemSlots = Math.max(1, listHeight - 2 - (uninstalledCount > 0 ? 1 : 0))
-    if (next < state.listScroll) state.listScroll = next
-    else if (next >= state.listScroll + itemSlots) state.listScroll = next - itemSlots + 1
+    const maxScroll = Math.max(0, visible.length - itemSlots)
+    const idx = visible.findIndex((row) => row.id === state.selectedId)
+    state.listScroll = Math.max(0, Math.min(state.listScroll, maxScroll))
+    if (idx >= 0) {
+      if (idx < state.listScroll) state.listScroll = idx
+      else if (idx >= state.listScroll + itemSlots) {
+        state.listScroll = Math.min(maxScroll, idx - itemSlots + 1)
+      }
+    }
+  }
+
+  const moveSelection = (delta: number) => {
+    const { visible } = visiblePlatformRows(state)
+    if (!visible.length) return
+    const idx = visible.findIndex((row) => row.id === state.selectedId)
+    const cur = idx >= 0 ? idx : 0
+    const next = (cur + delta + visible.length) % visible.length
+    state.selectedId = visible[next].id
+    state.detailScroll = 0
+    clampListScroll()
     paint()
   }
 
   const handleGlobalKey = (str: string, key: LineInputKey, done: (code: number) => void) => {
-    if ((key.ctrl && (key.name === 'c' || key.name === 'd')) || str === 'q' || str === 'Q') {
+    if (key.ctrl && (key.name === 'c' || key.name === 'd')) {
+      done(0)
+      return
+    }
+    if (str === 'q' || str === 'Q') {
+      if (busy) {
+        setToast('warn', '正在执行操作，请等待完成（按 Ctrl-C 可强制退出）')
+        return
+      }
       done(0)
       return
     }
     if (key.name === 'escape') {
       if (state.toast) {
         state.toast = null
+        paint()
+        return
+      }
+      const row = selectedRowOf(state)
+      if (row && state.resultsById[row.id]) {
+        delete state.resultsById[row.id]
+        state.detailScroll = 0
+        paint()
+      } else if (state.globalLog) {
+        state.globalLog = null
+        state.detailScroll = 0
         paint()
       }
       return
@@ -2349,11 +2741,13 @@ export async function runTui({
     if (key.name === 'tab') {
       state.showUninstalled = !state.showUninstalled
       syncSelected()
+      clampListScroll()
       paint()
       return
     }
     if (str === '[' || key.name === 'pageup') {
-      state.detailScroll = Math.max(0, state.detailScroll - 4)
+      const cap = detailMaxScroll(state, viewport.cols, viewport.rows, theme)
+      state.detailScroll = Math.max(0, Math.min(state.detailScroll, cap) - 4)
       paint()
       return
     }
@@ -2412,10 +2806,18 @@ export async function runTui({
       return
     }
     if (str === 'o') {
-      if (!state.url) setToast('warn', '请先按 [s] 设置服务器地址')
+      if (!state.url) setToast('warn', '请先按 [s] 设置服务地址')
       else {
+        const row = selectedRowOf(state)
         const target =
-          state.server?.mismatch === 'legacy' ? upgradePageOf(state.url) : shownUrl(state.url)
+          state.server?.mismatch === 'legacy'
+            ? upgradePageOf(state.url)
+            : row?.connection === 'ok' &&
+                !row.otherServer &&
+                row.who?.primaryCircle?.id &&
+                row.who?.client?.id
+              ? `${shownUrl(state.url)}/circles/${encodeURIComponent(row.who.primaryCircle.id)}/clients/${encodeURIComponent(row.who.client.id)}`
+              : shownUrl(state.url)
         deps.open(target)
         setToast('ok', `已在浏览器打开 ${target}`)
       }
@@ -2423,7 +2825,7 @@ export async function runTui({
     }
     if (str === 'y') {
       const row = selectedRowOf(state)
-      const cmds = row ? PLATFORMS[row.id].install.commands : []
+      const cmds = manualInstallCommands(row)
       const text = cmds.length ? cmds.join(' && ') : state.url
       if (!text) {
         setToast('info', '当前没有可复制的命令或地址')

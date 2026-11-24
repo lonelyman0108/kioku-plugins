@@ -4,10 +4,11 @@
 // 服务地址与访问密钥来自 kioku setup codex 写下的文件（Codex 的插件没有自己的配置项）。
 // 失败的原因写到标准错误，不带访问密钥：格式不对的访问密钥不发出去，fetch 的报错只取类别，也不跟着跳转走
 
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -65,7 +66,15 @@ async function savePending(env, input, prompt, project) {
   if (!file) return
   await mkdir(pendingDir(env), { recursive: true, mode: 0o700 })
   const data = Object.keys(project ?? {}).length ? { prompt, project } : { prompt }
-  await writeFile(file, JSON.stringify(data), { mode: 0o600 })
+  const temp = `${file}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temp, JSON.stringify(data), { mode: 0o600, flag: 'wx' })
+    await chmod(temp, 0o600)
+    await rename(temp, file)
+  } catch (err) {
+    await rm(temp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 // 取走这一轮记下的输入；没有记下（提交时钩子没跑、或者已经取过）时为 null
@@ -101,9 +110,10 @@ async function sweepPending(env) {
   }
 }
 
-// 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
+// 配置写错或待迁移时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
 function noticeOf(err) {
-  if (err.kind === 'legacy') return `Kioku 长期记忆不可用：${err.message}。`
+  if (err instanceof LegacyDatabase || err.kind === 'legacy')
+    return `Kioku 长期记忆不可用：${err.message}。`
   return `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
 }
 
@@ -128,9 +138,9 @@ async function main(event) {
     throw err instanceof KiokuFailure ? new Misconfigured(err.message, 'profile') : err
   }
   if (!profile) {
-    // 只在会话开始时提示一次，让模型告诉用户插件还没配置好
+    // 只在会话开始时提示一次，让模型告诉用户插件尚未配置
     if (event === 'session.start') {
-      writeContext(event, `Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`)
+      writeContext(event, `Kioku 插件尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`)
     }
     return
   }
@@ -175,7 +185,12 @@ async function main(event) {
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  if (event === 'session.start' && err instanceof Misconfigured) writeContext(event, noticeOf(err))
+  if (
+    event === 'session.start' &&
+    (err instanceof Misconfigured || err instanceof LegacyDatabase)
+  ) {
+    writeContext(event, noticeOf(err))
+  }
   // 标准错误不进上下文；插件自己写的原因原样给出，别的只给类别
   process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
 })

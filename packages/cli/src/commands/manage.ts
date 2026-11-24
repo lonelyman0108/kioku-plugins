@@ -4,13 +4,14 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { assertServerSupported, probeServer, upgradePageOf } from '../api.ts'
+import { assertServerSupported, SUPPORTED_API, upgradePageOf } from '../api.ts'
 import { ensureNoConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
 import {
   KiokuFailure,
   UsageError,
   capture,
+  failureText,
   listTools,
   plain,
   serverUrlProblem,
@@ -31,12 +32,12 @@ import {
   defaultLocalDir,
   expandDir,
   hasCompose,
-  healthy,
   latestRelease,
   LOCAL_PORT,
   LOCAL_URL,
   portBusy,
   prepareDir,
+  probeLocalHealth,
   setupCodeIn,
   setupDone,
   waitUntil,
@@ -137,9 +138,9 @@ export async function connectCommand(
 
   if (!ids.length) {
     if (!interactive) {
-      throw new UsageError(`请指定要接入的平台（${platformNames()}），或在终端里运行以交互选择`)
+      throw new UsageError(`要指定要接入的客户端（${platformNames()}），或在终端里运行以交互选择`)
     }
-    const ui = await loadPrompts()
+    const ui = await loadPrompts({ input: stdin, output: out, env })
     if (!ui) throw new KiokuFailure('交互式向导不可用')
     if (!url) {
       const entered = await ui.text({
@@ -215,6 +216,7 @@ export async function connectCommand(
 
   const connected = allResults.filter((r) => r.status === 'connected').map((r) => r.id)
   const manualIds: string[] = []
+  let postFailed = false
 
   if (options.install && connected.length) {
     out.write('\n插件与连通性验证：\n')
@@ -222,9 +224,11 @@ export async function connectCommand(
       const installRes = await installFn(id, { env, cwd })
       out.write(`  [${PLATFORMS[id].name}] ${installRes.message}\n`)
       if (installRes.status === 'manual') manualIds.push(id)
+      else if (installRes.status === 'failed') postFailed = true
       const config = await PLATFORMS[id].readConfig?.(env).catch(() => null)
       if (config) {
         const handshake = await verifyConnectionHandshake(id, config, { env })
+        if (!handshake.ok) postFailed = true
         for (const line of formatHandshakeLines(handshake)) {
           out.write(`  ${line}\n`)
         }
@@ -239,7 +243,7 @@ export async function connectCommand(
     if (steps) out.write(`\n${steps}\n`)
   }
 
-  return allResults.some((r) => r.status === 'failed') ? 1 : 0
+  return allResults.some((r) => r.status === 'failed') || postFailed ? 1 : 0
 }
 
 export const DISCONNECT_USAGE = `用法：kioku disconnect <平台> [--dry-run] [-y|--yes]
@@ -286,7 +290,10 @@ export async function disconnectCommand(
   }: { env?: Env; out?: Writer; cwd?: string; stdin?: Reader } = {},
 ): Promise<number> {
   const { platform, dryRun, yes } = parseDisconnectArgs(argv)
-  if (!dryRun && !yes && stdin.isTTY) {
+  if (!dryRun && !yes) {
+    if (!stdin.isTTY) {
+      throw new KiokuFailure('不在终端里运行时要带 --yes 才断开；先用 --dry-run 预览')
+    }
     const ok = await confirm(`确认断开 ${PLATFORMS[platform].name} 与 Kioku 的连接？[y/N] `, {
       stdin,
       out,
@@ -366,12 +373,20 @@ export async function upgradeCommand(
     }
     const cfg = await PLATFORMS[id].readConfig?.(env).catch(() => null)
     if (cfg) {
-      const tools = await listTools(cfg).catch(() => null)
-      if (Array.isArray(tools) && tools.length) {
-        if (id === 'openclaw') {
-          await writeToolCache('openclaw', { url: cfg.url, tools }, env).catch(() => {})
+      try {
+        const tools = await listTools(cfg)
+        if (Array.isArray(tools) && tools.length) {
+          if (id === 'openclaw') {
+            await writeToolCache('openclaw', { url: cfg.url, tools }, env).catch(() => {})
+            out.write(`  ✓ 已刷新 MCP 工具清单（${tools.length} 个工具）\n`)
+          } else {
+            out.write(`  ✓ MCP 握手正常（${tools.length} 个工具）\n`)
+          }
+        } else {
+          out.write('  ! 未获取到任何 MCP 工具\n')
         }
-        out.write(`  ✓ 已刷新 MCP 工具清单（${tools.length} 个工具）\n`)
+      } catch (err) {
+        out.write(`  ! 无法获取 MCP 工具清单（${failureText(err)}）\n`)
       }
     }
   }
@@ -412,7 +427,7 @@ export async function openCommand(
   const problem = serverUrlProblem(resolved)
   if (problem) throw new KiokuFailure(problem)
   const shown = shownUrl(resolved)
-  out.write(`正在浏览器打开 ${osc8Link(shown, shown, { stream: out })}\n`)
+  out.write(`正在浏览器打开 ${osc8Link(shown, shown, { stream: out, env })}\n`)
   open(shown)
   return 0
 }
@@ -461,19 +476,24 @@ export async function localCommand(
 ): Promise<number> {
   const { action, dir: rawDir } = parseLocalArgs(argv)
   const dir = expandDir(rawDir ?? defaultLocalDir(env), env)
-  const theme = createTheme({ stream: out })
+  const theme = createTheme({ stream: out, env })
 
   if (action === 'status') {
     const state = await composeState(dir, env)
-    const probe = state === 'running' ? await probeServer(LOCAL_URL) : null
-    const isUp = probe?.state === 'ok'
+    const probe = state === 'running' ? await probeLocalHealth(LOCAL_URL) : null
+    const olderGen = Boolean(probe && probe.generation !== null && probe.generation < SUPPORTED_API)
+    const isUp = probe?.state === 'ok' && !olderGen
     const inited = isUp ? await setupDone(LOCAL_URL) : false
     const healthLine =
       probe?.state === 'legacy'
         ? `待迁移旧数据（打开 ${upgradePageOf(LOCAL_URL)}）`
-        : isUp
-          ? `${LOCAL_URL}（就绪）`
-          : '未就绪'
+        : olderGen
+          ? `旧版服务端（${plain(probe?.version) || '版本未知'}），需要先升级服务端镜像`
+          : probe?.state === 'unavailable'
+            ? '数据库暂时无法连接'
+            : isUp
+              ? `${LOCAL_URL}（就绪）`
+              : '未就绪'
     const box = renderBox({
       title: '本机 Kioku 服务',
       theme,
@@ -496,7 +516,7 @@ export async function localCommand(
     if (!(await hasCompose(env))) throw new KiokuFailure('没有找到 docker compose')
     const composePath = join(dir, 'compose.yaml')
     if (!(await stat(composePath).catch(() => null))) {
-      throw new KiokuFailure(`${dir} 里没有 compose.yaml`)
+      throw new KiokuFailure(`${plain(dir)} 里没有 compose.yaml`)
     }
     const res = await capture(
       'docker',
@@ -505,7 +525,7 @@ export async function localCommand(
       { timeout: 120_000 },
     )
     if (!res.ok) throw new KiokuFailure('docker compose down 没有成功')
-    out.write(`✓ 已停止 ${dir} 中的 Kioku\n`)
+    out.write(`✓ 已停止 ${plain(dir)} 中的 Kioku\n`)
     return 0
   }
 
@@ -513,7 +533,7 @@ export async function localCommand(
     if (!(await hasCompose(env))) throw new KiokuFailure('没有找到 docker compose')
     const composePath = join(dir, 'compose.yaml')
     if (!(await stat(composePath).catch(() => null))) {
-      throw new KiokuFailure(`${dir} 里没有 compose.yaml`)
+      throw new KiokuFailure(`${plain(dir)} 里没有 compose.yaml`)
     }
     const res = await capture(
       'docker',
@@ -522,15 +542,21 @@ export async function localCommand(
       { timeout: 30_000 },
     )
     if (!res.ok) throw new KiokuFailure('读取 logs 失败')
-    out.write(res.stdout || res.output)
+    out.write(res.output || res.stdout)
     return 0
   }
 
   // up
-  if (await healthy(LOCAL_URL)) {
+  const initialProbe = await probeLocalHealth(LOCAL_URL)
+  if (initialProbe.state === 'ok') {
     await rememberServerUrl(LOCAL_URL, env).catch(() => {})
     out.write(`✓ 本机 ${LOCAL_PORT} 端口上已经有 Kioku 在运行：${LOCAL_URL}\n`)
     return 0
+  }
+  if (initialProbe.state === 'legacy') {
+    throw new KiokuFailure(
+      `本机 Kioku 正在等待旧数据迁移：打开 ${upgradePageOf(LOCAL_URL)} 完成升级`,
+    )
   }
   if (!(await hasCompose(env))) {
     throw new KiokuFailure('没有找到 docker compose：先装好 Docker（含 compose 插件）再来')
@@ -540,29 +566,47 @@ export async function localCommand(
   if (existing === 'none') {
     if (await portBusy(LOCAL_PORT)) {
       throw new KiokuFailure(
-        `端口 ${LOCAL_PORT} 被别的程序占着：先停掉它，或者改 compose.yaml 里的端口后启动`,
+        `端口 ${LOCAL_PORT} 被别的程序占用：先停掉它，或者改 compose.yaml 里的端口后启动`,
       )
     }
     const release = await latestRelease()
     const prepared = await prepareDir(dir, release)
     code = prepared.env.setupCode
-    out.write(`✓ 已准备目录 ${dir}（版本 ${release.imageTag}）\n`)
+    out.write(`✓ 已准备目录 ${plain(dir)}（版本 ${release.imageTag}）\n`)
   } else {
     code = await setupCodeIn(dir)
   }
 
   out.write('正在运行 docker compose up -d…\n')
   await composeUp(dir, env)
-  const up = await waitUntil(() => healthy(LOCAL_URL), { timeoutMs: 180_000 })
+  let legacyDetected = false
+  const up = await waitUntil(
+    async () => {
+      const probe = await probeLocalHealth(LOCAL_URL)
+      if (probe.state === 'legacy') {
+        legacyDetected = true
+        return true
+      }
+      return probe.state === 'ok'
+    },
+    { timeoutMs: 180_000 },
+  )
+  if (legacyDetected) {
+    throw new KiokuFailure(
+      `本机 Kioku 正在等待旧数据迁移：打开 ${upgradePageOf(LOCAL_URL)} 完成升级`,
+    )
+  }
   if (!up) {
-    throw new KiokuFailure(`Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${dir} 看原因`)
+    throw new KiokuFailure(
+      `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${plain(dir)} 查看原因`,
+    )
   }
   out.write(`✓ Kioku 已就绪：${LOCAL_URL}\n`)
   await rememberServerUrl(LOCAL_URL, env).catch(() => {})
   if (!(await setupDone(LOCAL_URL))) {
     const codeLines = code
       ? [`初始化码：${code}`, `在浏览器中打开 ${LOCAL_URL} 完成初始化`]
-      : [`请查看初始化码日志：kioku local logs --dir ${dir}`]
+      : [`查看初始化码日志：kioku local logs --dir ${plain(dir)}`]
     out.write(`${renderBox({ title: '待完成初始化', theme, sections: [{ lines: codeLines }] })}\n`)
   }
   return 0

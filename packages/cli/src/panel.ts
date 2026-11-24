@@ -1,5 +1,5 @@
 // 向导的面板：扫描服务器与本机各平台的现状，排成几行文字，再按缺什么列出可做的动作。
-// 只读：不写文件、不签发访问密钥。查不了的项写「无法判断」，不猜
+// 只读：不写文件、不签发访问密钥。无法判断的项写「无法判断」，不猜
 
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -134,7 +134,7 @@ export async function serverHealth(url: string): Promise<ServerHealthState> {
     const setup = await getJson(url, '/v1/setup/status')
     needsSetup = setup.status === 200 && setup.data?.needsSetup === true
   } catch {
-    // 查不到按已初始化算
+    // 无法获取初始化状态时按已初始化处理
   }
   return { reachable: true, version, generation, problem: null, needsSetup }
 }
@@ -359,7 +359,7 @@ export async function verifyPlatformRemote(
 
 // 一个平台的现状。connection：
 // - ok：访问密钥可用；none：没配过；invalid：服务端说访问密钥无效或已吊销（legacyKey 为真时是升级前签发的）
-// - unknown：连不上、响应不对，查不了；broken：配置文件读不懂
+// - unknown：连不上、响应不对，无法判断；broken：配置文件读不懂
 // - manual：未写入 profile，但 Claude Code 在 /plugin 里已启用插件
 export async function scanPlatform(
   id: string,
@@ -393,7 +393,7 @@ const PLUGIN_NAMES = new Map<boolean | null, string>([
 ])
 const MEMORY_NAMES: Record<string, string> = { off: '已停用', on: '未停用', none: '无' }
 
-// 访问密钥属于哪个主场记忆圈：服务端给了名称就用名称，否则用 slug 或 id 前 8 位
+// 访问密钥属于哪个主圈：服务端给了名称就用名称，否则用 slug 或 id 前 8 位
 function circleText(who: WhoamiResponse): string | null {
   if (who.primaryCircle.name) return plain(who.primaryCircle.name)
   if (who.primaryCircle.slug) return plain(who.primaryCircle.slug)
@@ -434,18 +434,29 @@ export function platformDetails(row: PlatformRow): {
   const head = connectionText(row)
   const facts: string[] = []
   if (row.connection === 'ok' && row.who) {
-    const client = row.who.client
-    facts.push(`接入实例 ${plain(client.name)}（${plain(client.slug)}）`)
+    const { primaryCircle, linkedCircles, client, persona } = row.who
+    facts.push(`客户端 ${plain(client.name)}（${plain(client.slug)}）`)
     const circle = circleText(row.who)
-    if (circle) facts.push(`记忆圈 ${circle}`)
-    const linkedCount = Array.isArray(row.who.linkedCircles) ? row.who.linkedCircles.length : 0
-    if (linkedCount > 0) {
-      facts.push(`关联 ${linkedCount} 个客场圈`)
+    const primaryKind = primaryCircle.kind === 'shared' ? '独立圈' : '个人圈'
+    if (circle) facts.push(`主圈 ${circle}（${primaryKind}）`)
+    if (Array.isArray(linkedCircles) && linkedCircles.length > 0) {
+      const linkedText = linkedCircles
+        .map(
+          (c) =>
+            `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
+        )
+        .join('、')
+      facts.push(`关联圈 ${linkedText}`)
+    }
+    if (persona) {
+      facts.push(`独立人格 ${plain(persona.name)}（${plain(persona.slug)}）`)
     }
     if (typeof row.who.accountName === 'string' && row.who.accountName) {
       facts.push(`账号 ${plain(row.who.accountName)}`)
     }
-    if (client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) facts.push('接入实例的运行时不对')
+    if (client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily) {
+      facts.push('客户端运行时类型不匹配')
+    }
   }
   if (row.otherServer && row.url) facts.push(shownUrl(row.url))
   if (row.reason) facts.push(row.reason)
@@ -474,8 +485,14 @@ export function platformDetails(row: PlatformRow): {
 function platformLines(row: PlatformRow): string[] {
   const { head, facts, details } = platformDetails(row)
   const first = [`${row.name}：${head}`, ...facts].join(' · ')
-  // 没装、也没配过且没有冲突的平台只写一行
-  if (!row.present && row.connection === 'none' && !row.conflicts?.length) return [first]
+  // 未安装、未配过且没有冲突的客户端只写一行
+  if (
+    effectivePresence(row) !== 'installed' &&
+    row.connection === 'none' &&
+    !row.conflicts?.length
+  ) {
+    return [first]
+  }
   return [first, `  ${details.join(' · ')}`]
 }
 
@@ -512,7 +529,7 @@ export function renderPanel(
   for (const row of state.platforms) {
     if (
       collapseUninstalled &&
-      !row.present &&
+      effectivePresence(row) !== 'installed' &&
       row.connection === 'none' &&
       !row.conflicts?.length
     ) {
@@ -543,13 +560,12 @@ export function migrationCandidates(state: PanelState): PlatformRow[] {
   )
 }
 
-// 要接入的候选：有自己的配置、还没接到这台服务器的（失效的与仅 /plugin 手动配置的另算）
+// 要接入的候选：有自己的配置、尚未接到这台服务器的（含仅 /plugin 手动配置的 Claude Code；失效的另算）
 export function connectCandidates(state: PanelState): PlatformRow[] {
   return state.platforms.filter(
     (row) =>
       PLATFORMS[row.id].setup &&
       row.connection !== 'invalid' &&
-      row.connection !== 'manual' &&
       !(row.connection === 'ok' && !row.otherServer),
   )
 }
@@ -575,7 +591,7 @@ export function actionsFor(state: PanelState): PanelAction[] {
     })
   }
   if (!server || !server.reachable) {
-    actions.push({ value: 'local', label: '本机起一个 Kioku', hint: '用 Docker' })
+    actions.push({ value: 'local', label: '在本机启动 Kioku', hint: '用 Docker' })
   }
   if (!server) actions.push({ value: 'server', label: '填写服务器地址' })
   if (server?.needsSetup) {
@@ -591,14 +607,14 @@ export function actionsFor(state: PanelState): PanelAction[] {
       })
     }
     const candidates = connectCandidates(state)
-    const present = candidates.filter((row) => row.present)
+    const present = candidates.filter((row) => effectivePresence(row) === 'installed')
     if (present.length) {
       actions.push({
         value: 'connect',
         label: `接入 ${names(present)}（${present.length} 个未接入）`,
       })
     } else if (candidates.length) {
-      actions.push({ value: 'connect', label: '接入其他平台', hint: '本机没发现的' })
+      actions.push({ value: 'connect', label: '接入其他客户端', hint: '本机未检测到' })
     }
     const invalid = state.platforms.filter((row) => row.connection === 'invalid' && !row.legacyKey)
     if (invalid.length) {
@@ -639,7 +655,7 @@ export function actionsFor(state: PanelState): PanelAction[] {
     })
   }
   if (state.platforms.some(canDisable)) {
-    actions.push({ value: 'disable', label: '停用某个平台', hint: '恢复自带记忆、清掉配置' })
+    actions.push({ value: 'disable', label: '停用某个客户端', hint: '恢复自带记忆、清掉配置' })
   }
   actions.push({ value: 'doctor', label: '检查（doctor）' })
   if (server) actions.push({ value: 'server', label: '更换服务器地址' })

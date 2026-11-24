@@ -1,6 +1,7 @@
-// kioku 命令向 Kioku 发的核对请求：服务端的接口代际（健康检查），以及访问密钥对应的接入实例（whoami）
+// kioku 命令向 Kioku 发的核对请求：服务端的接口代际（健康检查），以及访问密钥对应的客户端（whoami）
 
 import {
+  DATABASE_UNAVAILABLE_CODE,
   KeyRejected,
   KiokuFailure,
   errorCodeOf,
@@ -69,8 +70,17 @@ export async function probeServer(url: string): Promise<ServerProbe> {
   const generation = typeof api === 'number' && Number.isInteger(api) && api > 0 ? api : 1
   if (status === 200 && data?.status === 'ok') return { generation, state: 'ok', version }
   if (status === 503 && data) {
-    const legacy = data.database === 'legacy' || errorCodeOf(data) === LEGACY_DATABASE_CODE
-    return { generation, state: legacy ? 'legacy' : 'unavailable', version }
+    const code = errorCodeOf(data)
+    const isKiokuUnavailable =
+      data.status === 'unavailable' ||
+      data.database === 'legacy' ||
+      data.database === 'unavailable' ||
+      code === LEGACY_DATABASE_CODE ||
+      code === DATABASE_UNAVAILABLE_CODE
+    if (isKiokuUnavailable) {
+      const legacy = data.database === 'legacy' || code === LEGACY_DATABASE_CODE
+      return { generation, state: legacy ? 'legacy' : 'unavailable', version }
+    }
   }
   return {
     generation: null,
@@ -121,10 +131,12 @@ export async function assertServerSupported(url: string): Promise<ServerProbe> {
 async function explained(url: string, fallback: KiokuFailure): Promise<KiokuFailure> {
   const probe = await probeServer(url)
   const problem = generationProblem(probe, url)
-  return problem ? new ServerMismatch(problem, probe) : fallback
+  if (problem) return new ServerMismatch(problem, probe)
+  if (probe.state === 'unavailable') return new ServerMismatch(UNAVAILABLE_TEXT, probe)
+  return fallback
 }
 
-// 这个访问密钥对应的接入实例与权限；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出。
+// 这个访问密钥对应的客户端与权限；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出。
 // 访问密钥被拒时抛 KeyRejected（legacy 为真时是升级前签发的）；响应不对时先看服务端的代际
 export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse> {
   let res: Response
@@ -145,15 +157,22 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
   }
   const rejected = res.ok ? null : rejectionOf(res.status, data, url)
   if (rejected) throw rejected
+  if (res.status === 503 && errorCodeOf(data) === DATABASE_UNAVAILABLE_CODE) {
+    throw await explained(url, new KiokuFailure(UNAVAILABLE_TEXT))
+  }
   if (!res.ok) throw await explained(url, new KiokuFailure(`Kioku 返回 HTTP ${res.status}`))
   const record = data as Partial<WhoamiResponse> | null
+  const primaryKind = record?.primaryCircle?.kind
   if (
     typeof record?.client?.runtimeFamily !== 'string' ||
     typeof record?.client?.slug !== 'string' ||
     typeof record?.client?.name !== 'string' ||
+    (record.client.id !== undefined && typeof record.client.id !== 'string') ||
+    (record.client.circleId !== undefined && typeof record.client.circleId !== 'string') ||
     typeof record?.primaryCircle?.id !== 'string' ||
     typeof record?.primaryCircle?.slug !== 'string' ||
     typeof record?.primaryCircle?.name !== 'string' ||
+    (primaryKind !== undefined && primaryKind !== 'personal' && primaryKind !== 'shared') ||
     (record.linkedCircles !== undefined && !Array.isArray(record.linkedCircles)) ||
     !record.scopes ||
     typeof record.scopes !== 'object' ||
@@ -163,9 +182,26 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
   ) {
     throw await explained(url, new KiokuFailure('Kioku 的响应格式不对'))
   }
+  const isObj = (v: unknown): v is Record<string, string[]> =>
+    Boolean(v && typeof v === 'object' && !Array.isArray(v))
   return {
     ...(record as WhoamiResponse),
+    primaryCircle: {
+      ...record.primaryCircle,
+      kind: primaryKind ?? 'personal',
+    },
     linkedCircles: Array.isArray(record.linkedCircles) ? record.linkedCircles : [],
+    persona:
+      record.persona &&
+      typeof record.persona === 'object' &&
+      typeof record.persona.id === 'string' &&
+      typeof record.persona.slug === 'string' &&
+      typeof record.persona.name === 'string'
+        ? record.persona
+        : null,
+    contextFacets: isObj(record.contextFacets) ? record.contextFacets : undefined,
+    resolvedFacets: isObj(record.resolvedFacets) ? record.resolvedFacets : undefined,
+    vocabulary: Array.isArray(record.vocabulary) ? record.vocabulary : undefined,
   }
 }
 

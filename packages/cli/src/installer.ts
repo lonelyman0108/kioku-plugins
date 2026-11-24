@@ -6,12 +6,22 @@ import { join } from 'node:path'
 
 import { agyHome, bundledAgyDir } from './agy.ts'
 import { whoami } from './api.ts'
-import { capture, failureText, hasCommand, listTools, plain, writeToolCache } from './core.ts'
+import {
+  capture,
+  failureText,
+  hasCommand,
+  listTools,
+  plain,
+  profileDir,
+  writeToolCache,
+} from './core.ts'
+import { hasInlineSecret, readSettings, safeWrite, serialize } from './files.ts'
 import { bundledGeminiDir } from './gemini.ts'
+import { OPENCODE_PLUGIN, opencodeHome } from './opencode.ts'
 import { resolvePlatformCommand } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
-import { kindLabel, sensitivityBadge } from './ui/theme.ts'
+import { kindLabel, sensitivityBadge, sortEntryKinds } from './ui/theme.ts'
 
 export const CLI_VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -42,33 +52,39 @@ async function readManagedMarker(
   }
 }
 
-async function copyBundledAgy({
-  env,
+async function copyManagedBundle({
+  srcDir,
+  targetDir,
+  label,
+  id,
   upgrade = false,
+  keepManual = false,
 }: {
-  env: Env
+  srcDir: string
+  targetDir: string
+  label: string
+  id: string
   upgrade?: boolean
+  keepManual?: boolean
 }): Promise<PluginInstallResult> {
-  const targetDir = join(agyHome(env), 'plugins', 'kioku')
   const st = await lstat(targetDir).catch(() => null)
   const marker = st?.isDirectory() ? await readManagedMarker(targetDir) : null
 
-  if (st && !marker) {
+  if (st && !marker && keepManual) {
     return {
-      id: 'agy',
+      id,
       status: 'already',
-      message: `Antigravity 插件目录已存在（手动管理：${plain(targetDir)}）`,
+      message: `${label}目录已存在（手动管理：${plain(targetDir)}）`,
     }
   }
   if (marker && !upgrade) {
     return {
-      id: 'agy',
+      id,
       status: 'already',
-      message: `Antigravity 插件已安装（版本 ${plain(marker.version ?? CLI_VERSION)}）`,
+      message: `${label}已安装（版本 ${plain(marker.version ?? CLI_VERSION)}）`,
     }
   }
 
-  const srcDir = bundledAgyDir()
   await rm(targetDir, { recursive: true, force: true })
   await mkdir(targetDir, { recursive: true })
   await cp(srcDir, targetDir, {
@@ -80,10 +96,39 @@ async function copyBundledAgy({
     `${JSON.stringify({ name: 'kioku', managedBy: '@kioku-memory/cli', version: CLI_VERSION, updatedAt: new Date().toISOString() }, null, 2)}\n`,
   )
   return {
-    id: 'agy',
+    id,
     status: marker ? 'upgraded' : 'installed',
-    message: `${marker ? '已更新' : '已安装'} Antigravity 插件到 ${plain(targetDir)}`,
+    message: `${marker ? '已更新' : '已安装'}${label}到 ${plain(targetDir)}`,
   }
+}
+
+async function copyBundledAgy({
+  env,
+  upgrade = false,
+}: {
+  env: Env
+  upgrade?: boolean
+}): Promise<PluginInstallResult> {
+  return copyManagedBundle({
+    srcDir: bundledAgyDir(),
+    targetDir: join(agyHome(env), 'plugins', 'kioku'),
+    label: ' Antigravity 插件',
+    id: 'agy',
+    upgrade,
+    keepManual: true,
+  })
+}
+
+export async function persistentGeminiDir(env: Env): Promise<string> {
+  const targetDir = join(profileDir(env), 'plugins', 'gemini')
+  await copyManagedBundle({
+    srcDir: bundledGeminiDir(),
+    targetDir,
+    label: ' Gemini CLI 扩展',
+    id: 'gemini',
+    upgrade: true,
+  })
+  return targetDir
 }
 
 export async function removeManagedAgyPlugin({ env }: { env: Env }): Promise<boolean> {
@@ -128,6 +173,37 @@ export async function installPlugin(
   }
 
   if (id === 'opencode') {
+    if (upgrade) {
+      let upgradedFiles = 0
+      for (const file of [join(opencodeHome(env), 'opencode.json'), join(cwd, 'opencode.json')]) {
+        const loaded = await readSettings(file).catch(() => null)
+        if (!loaded || loaded.text === null || !Array.isArray(loaded.settings.plugin)) continue
+        let changed = false
+        const replaced = loaded.settings.plugin.map((entry) => {
+          if (typeof entry === 'string' && /^@kioku-memory\/plugin-opencode@/.test(entry.trim())) {
+            changed = true
+            return OPENCODE_PLUGIN
+          }
+          return entry
+        })
+        if (!changed) continue
+        const deduped = [...new Set(replaced)]
+        await safeWrite(
+          file,
+          serialize({ ...loaded.settings, plugin: deduped }, loaded.text),
+          loaded.text,
+          { backup: !hasInlineSecret(loaded.text) },
+        )
+        upgradedFiles++
+      }
+      if (upgradedFiles > 0) {
+        return {
+          id,
+          status: 'upgraded',
+          message: `已更新 ${upgradedFiles} 处 OpenCode 插件配置为 ${OPENCODE_PLUGIN}`,
+        }
+      }
+    }
     return {
       id,
       status: currentStatus.plugin ? 'already' : 'manual',
@@ -172,7 +248,10 @@ export async function installPlugin(
   if (id === 'codex') {
     const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
     const steps = upgrade
-      ? [['plugin', 'add', 'kioku@kioku']]
+      ? [
+          ['plugin', 'marketplace', 'update'],
+          ['plugin', 'add', 'kioku@kioku'],
+        ]
       : [
           ['plugin', 'marketplace', 'add', 'lonelyman0108/kioku-plugins'],
           ['plugin', 'add', 'kioku@kioku'],
@@ -182,14 +261,14 @@ export async function installPlugin(
       return {
         id,
         status: upgrade ? 'upgraded' : 'installed',
-        message: `${upgrade ? '已更新' : '已安装'} Codex 插件（请打开 Codex 在 /hooks 中信任钩子）`,
+        message: `${upgrade ? '已更新' : '已安装'} Codex 插件（打开 Codex 在 /hooks 中信任钩子）`,
         after: platform.install.after,
       }
     }
     return {
       id,
       status: 'manual',
-      message: res.found ? '未能自动安装 Codex 插件，请手动运行' : '未找到 codex 命令，请手动运行',
+      message: res.found ? '未能自动安装 Codex 插件，手动运行' : '未找到 codex 命令，手动运行',
       commands: platform.install.commands,
       after: platform.install.after,
     }
@@ -197,16 +276,16 @@ export async function installPlugin(
 
   if (id === 'gemini') {
     const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
-    const bundled = bundledGeminiDir()
-    const res = await runCliSteps(bin, [['extensions', 'link', bundled]], env)
+    const targetDir = await persistentGeminiDir(env)
+    const res = await runCliSteps(bin, [['extensions', 'link', targetDir]], env)
     if (res.ok) {
       return {
         id,
         status: upgrade ? 'upgraded' : 'installed',
-        message: `${upgrade ? '已重新链接' : '已链接'} Gemini CLI 扩展（${plain(bundled)}）`,
+        message: `${upgrade ? '已重新链接' : '已链接'} Gemini CLI 扩展（${plain(targetDir)}）`,
       }
     }
-    const quotedBundled = /\s/.test(bundled) ? `"${bundled}"` : bundled
+    const quotedTarget = /\s/.test(targetDir) ? `"${targetDir}"` : targetDir
     const after =
       process.platform === 'win32'
         ? `${platform.install.after}（Windows 下创建目录链接需开启系统「开发者模式」或改用目录复制）`
@@ -215,9 +294,9 @@ export async function installPlugin(
       id,
       status: 'manual',
       message: res.found
-        ? '未能自动链接 Gemini CLI 扩展，请手动运行'
-        : '未找到 gemini 命令，请手动运行',
-      commands: [`gemini extensions link ${quotedBundled}`],
+        ? '未能自动链接 Gemini CLI 扩展，手动运行'
+        : '未找到 gemini 命令，手动运行',
+      commands: [`gemini extensions link ${quotedTarget}`],
       after,
     }
   }
@@ -256,15 +335,13 @@ export async function installPlugin(
       return {
         id,
         status: upgrade ? 'upgraded' : 'installed',
-        message: `${upgrade ? '已更新' : '已安装'} Hermes 记忆 provider`,
+        message: `${upgrade ? '已更新' : '已安装'} Hermes 记忆提供方`,
       }
     }
     return {
       id,
       status: 'manual',
-      message: res.found
-        ? '未能自动安装 Hermes 插件，请手动运行'
-        : '未找到 hermes 命令，请手动运行',
+      message: res.found ? '未能自动安装 Hermes 插件，手动运行' : '未找到 hermes 命令，手动运行',
       commands: platform.install.commands,
       after: platform.install.after,
     }
@@ -272,17 +349,23 @@ export async function installPlugin(
 
   if (id === 'openclaw') {
     const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
-    const installRes = await runCliSteps(
-      bin,
-      [['plugins', 'install', 'npm:@kioku-memory/openclaw']],
-      env,
-      120_000,
-    )
+    const installRes = upgrade
+      ? await (async () => {
+          const updated = await runCliSteps(bin, [['plugins', 'update', 'kioku']], env, 120_000)
+          if (updated.ok) return updated
+          return runCliSteps(
+            bin,
+            [['plugins', 'install', 'npm:@kioku-memory/openclaw']],
+            env,
+            120_000,
+          )
+        })()
+      : await runCliSteps(bin, [['plugins', 'install', 'npm:@kioku-memory/openclaw']], env, 120_000)
     if (installRes.ok) {
       const restartRes = await capture(bin, ['gateway', 'restart'], env, { timeout: 30_000 })
       const restartNote = restartRes.ok
         ? '并重启网关'
-        : '（若网关正在运行请手动执行 openclaw gateway restart）'
+        : '（若网关正在运行，手动执行 openclaw gateway restart）'
       return {
         id,
         status: upgrade ? 'upgraded' : 'installed',
@@ -293,8 +376,8 @@ export async function installPlugin(
       id,
       status: 'manual',
       message: installRes.found
-        ? '未能自动安装 OpenClaw 插件，请手动运行'
-        : '未找到 openclaw 命令，请手动运行',
+        ? '未能自动安装 OpenClaw 插件，手动运行'
+        : '未找到 openclaw 命令，手动运行',
       commands: platform.install.commands,
       after: platform.install.after,
     }
@@ -353,12 +436,18 @@ export function formatHandshakeLines(report: HandshakeReport): string[] {
       : plain(who.primaryCircle.id).slice(0, 8)
   const linkedCount = Array.isArray(who.linkedCircles) ? who.linkedCircles.length : 0
   const linkedNote = linkedCount > 0 ? `（含 ${linkedCount} 个关联圈）` : ''
-  const readScopes = (who.scopes.readKinds ?? []).map(kindLabel).join('、') || '无'
-  const writeScopes = (who.scopes.writeKinds ?? []).map(kindLabel).join('、') || '无'
+  const readScopes =
+    sortEntryKinds(who.scopes.readKinds ?? [])
+      .map(kindLabel)
+      .join('、') || '无'
+  const writeScopes =
+    sortEntryKinds(who.scopes.writeKinds ?? [])
+      .map(kindLabel)
+      .join('、') || '无'
   const maxSens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal')
   const mcpNote = typeof toolCount === 'number' ? ` · MCP 工具 ${toolCount} 个` : ''
   return [
-    `✓ 握手成功：接入实例 ${plain(who.client.name)}（${plain(who.client.slug)}） · 记忆圈 ${circle}${linkedNote}${mcpNote}`,
-    `  读物种：${readScopes} · 写物种：${writeScopes} · 上限：${maxSens}`,
+    `✓ 握手成功：客户端 ${plain(who.client.name)}（${plain(who.client.slug)}） · 主圈 ${circle}${linkedNote}${mcpNote}`,
+    `  读形态：${readScopes} · 写形态：${writeScopes} · 上限：${maxSens}`,
   ]
 }

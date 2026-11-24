@@ -470,4 +470,42 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     }
     expect(agyReport.targets[0]!.checks.some((c) => c.category === 'outdated_plugin')).toBe(true)
   })
+
+  it('migrateCommand 对手动维护目录返回失败退出码 1，且移除旧插件来源失败时跳过重装', async () => {
+    await writeProfile('agy', { url: base, key: OLD_KEY }, env)
+    mkdirSync(join(dir, '.gemini', 'config', 'plugins', 'kioku', 'lib'), { recursive: true })
+    writeFileSync(
+      join(dir, '.gemini', 'config', 'plugins', 'kioku', 'lib', 'lifecycle.mjs'),
+      'export const TIMEOUTS = {}\n',
+    )
+
+    await writeProfile('claude-code', { url: base, key: OLD_KEY }, env)
+    mkdirSync(join(dir, 'claude', 'plugins'), { recursive: true })
+    writeFileSync(
+      join(dir, 'claude', 'plugins', 'known_marketplaces.json'),
+      JSON.stringify({ kioku: { source: { repo: 'lonelyman0108/kioku' } } }),
+    )
+
+    let outText = ''
+    let reinstalledClaude = false
+    const code = await migrateCommand(
+      ['agy', 'claude-code', '--server-url', base, '-y', '--no-browser'],
+      {
+        env: { ...env, PATH: '' },
+        cwd: dir,
+        out: { write: (s) => ((outText += s), true) },
+        open: () => {},
+        sleep: async () => {},
+        now: () => 0,
+        installFn: async (id) => {
+          if (id === 'claude-code') reinstalledClaude = true
+          return { id, status: 'upgraded', message: 'ok' }
+        },
+      },
+    )
+    expect(code).toBe(1)
+    expect(outText).toContain('需手动替换')
+    expect(reinstalledClaude).toBe(false)
+    expect(outText).toContain('跳过插件重装')
+  })
 })

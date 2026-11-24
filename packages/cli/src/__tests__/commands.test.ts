@@ -13,7 +13,7 @@ import {
   upgradeCommand,
 } from '../commands/manage.ts'
 import { statusCommand } from '../commands/status.ts'
-import { readProfile, writeProfile } from '../core.ts'
+import { readProfile, readToolCacheSync, writeProfile } from '../core.ts'
 import { doctor } from '../doctor.ts'
 import { main } from '../index.ts'
 import { installPlugin } from '../installer.ts'
@@ -206,7 +206,32 @@ describe('新管理子命令集', () => {
     })
     expect(upgradeCode).toBe(0)
     expect(upgradeOut).toContain('已更新 Antigravity 插件')
-    expect(upgradeOut).toContain('已刷新 MCP 工具清单（1 个工具）')
+    expect(upgradeOut).toContain('MCP 握手正常（1 个工具）')
+
+    await writeProfile('openclaw', { url: base, key: KEY }, env)
+    let clawOut = ''
+    const clawUpgrade = await upgradeCommand(['openclaw'], {
+      env,
+      cwd: dir,
+      installFn: async () => ({
+        id: 'openclaw',
+        status: 'upgraded',
+        message: '已更新 OpenClaw 插件',
+      }),
+      out: { write: (c) => (clawOut += c) },
+    })
+    expect(clawUpgrade).toBe(0)
+    expect(clawOut).toContain('已刷新 MCP 工具清单（1 个工具）')
+    expect(readToolCacheSync('openclaw', env)?.tools).toHaveLength(1)
+
+    await expect(
+      disconnectCommand(['agy'], {
+        env,
+        cwd: dir,
+        stdin: { isTTY: false } as never,
+        out: { write: () => true },
+      }),
+    ).rejects.toThrow('--yes')
 
     let discOut = ''
     const discCode = await disconnectCommand(['agy', '--yes'], {

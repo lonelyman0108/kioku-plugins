@@ -25,7 +25,7 @@ import type {
 
 const PLUGIN = 'kioku'
 const SOURCE = 'npm:@kioku-memory/openclaw'
-// 允许插件读对话：第三方插件默认拿不到每轮的输入与回复，召回与会话摘要都要它
+// 允许插件读对话：第三方插件默认无法获取每轮的输入与回复，召回与会话摘要都要它
 const ACCESS = `plugins.entries.${PLUGIN}.hooks.allowConversationAccess`
 const SLOT = 'plugins.slots.memory'
 // OpenClaw 自带的记忆插件，还原时选回它
@@ -250,7 +250,7 @@ export async function inspectOpenclaw(
   }
   const state = await pluginState(env)
   if (state === null) {
-    note('没有找到 openclaw 命令，查不了它的配置：用 openclaw plugins inspect kioku 看')
+    note('没有找到 openclaw 命令，无法查看它的配置：用 openclaw plugins inspect kioku 看')
     return
   }
   if (state === undefined) {

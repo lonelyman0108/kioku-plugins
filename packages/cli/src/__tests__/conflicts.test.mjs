@@ -204,7 +204,7 @@ describe('跨平台冲突检测与清理', () => {
     await removeConflicts(items, { env, cwd: dir })
 
     const calls = readFileSync(callsFile, 'utf8')
-    expect(calls).toContain('plugins uninstall lore@lore')
+    expect(calls).toContain('plugin uninstall lore@lore')
     expect(calls).toContain('mcp remove lore')
     expect(calls).toContain('mcp remove mem')
     expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toEqual({
@@ -442,6 +442,21 @@ fs.rmSync(${JSON.stringify(compatState)}, { force: true })`,
     expect(items).toHaveLength(1)
     await removeConflicts(items, { env, cwd: dir })
     expect(readFileSync(patchFile, 'utf8')).toBe('- insert:\n    - id: user-plugin\n')
+
+    // 仅有注释与托管块且末尾无换行时，剥离后保留注释并用换行隔开空数组
+    writeFileSync(
+      patchFile,
+      [
+        '# user comment',
+        '# >>> lore (managed) >>>',
+        '- insert:',
+        '    - id: lore-lifecycle',
+        '# <<< lore (managed) <<<',
+      ].join('\n'),
+    )
+    const commentItems = await scanConflicts('dsh', { env, cwd: dir })
+    await removeConflicts(commentItems, { env, cwd: dir })
+    expect(readFileSync(patchFile, 'utf8')).toBe('# user comment\n[]\n')
   })
 
   it('hermes：清理 lore_memory 软链、.env 里的 LORE_* 与 provider 配置', async () => {

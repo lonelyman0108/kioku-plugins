@@ -2,6 +2,7 @@
 // 也方便 TypeScript 严格检查与 tsdown 单包打包。
 
 export {
+  DATABASE_UNAVAILABLE_CODE,
   INVALID_KEY_TEXT,
   KeyRejected,
   KiokuFailure,

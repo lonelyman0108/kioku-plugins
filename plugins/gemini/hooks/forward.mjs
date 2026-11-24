@@ -6,7 +6,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -117,7 +117,7 @@ export async function forwardGeminiEvent(event, rawStdin, env = process.env) {
   }
   if (!profile) {
     if (event === 'session.start') {
-      return `Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`
+      return `Kioku 插件尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}。`
     }
     return null
   }
@@ -139,7 +139,8 @@ export async function forwardGeminiEvent(event, rawStdin, env = process.env) {
   if (event === 'turn.end') {
     if (input.stop_hook_active === true) return null
     const direct = typeof input.prompt === 'string' ? input.prompt.trim() : ''
-    const pending = direct ? null : await takePending(env, sessionId)
+    // 总是消费并清理本轮暂存，避免已传入直传 prompt 时暂存文件残留并保留项目上下文
+    const pending = await takePending(env, sessionId)
     const user = direct || pending?.user
     const reply =
       typeof input.prompt_response === 'string'
@@ -178,9 +179,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (text && HOOK_EVENTS[event]) writeContext(event, text)
     })
     .catch((err) => {
-      if (event === 'session.start' && err instanceof Misconfigured) {
+      if (
+        event === 'session.start' &&
+        (err instanceof Misconfigured || err instanceof LegacyDatabase)
+      ) {
         const text =
-          err.kind === 'legacy'
+          err instanceof LegacyDatabase || err.kind === 'legacy'
             ? `Kioku 长期记忆不可用：${err.message}。`
             : `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
         writeContext(event, text)

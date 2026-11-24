@@ -79,7 +79,27 @@ describe('Gemini CLI Kioku 钩子', () => {
       env,
     )
     expect(end).toBeNull()
-    expect(events.map((e) => e.event)).toEqual(['session.start', 'prompt.submit', 'turn.end'])
+
+    // 即使 AfterAgent 已带回 input.prompt，仍应取走并清理暂存状态
+    await forwardGeminiEvent(
+      'prompt.submit',
+      JSON.stringify({ session_id: 'g2', prompt: '第二轮' }),
+      env,
+    )
+    await forwardGeminiEvent(
+      'turn.end',
+      JSON.stringify({ session_id: 'g2', prompt: '第二轮', prompt_response: '收到' }),
+      env,
+    )
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(join(dir, 'gemini-state', 'turns', 'turn.g2.json'))).toBe(false)
+    expect(events.map((e) => e.event)).toEqual([
+      'session.start',
+      'prompt.submit',
+      'turn.end',
+      'prompt.submit',
+      'turn.end',
+    ])
     expect(events[0]).toMatchObject({ event: 'session.start', deviceKey: expect.any(String) })
     expect(events[1]).toMatchObject({ event: 'prompt.submit', deviceKey: expect.any(String) })
     expect(events[2]).toMatchObject({

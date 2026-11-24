@@ -36,7 +36,7 @@ ${Object.keys(PLATFORMS)
   --remove-conflicts    接入前先卸载各平台上已有的冲突记忆工具（Lore 及常见记忆 MCP）
 
 各平台照 kioku setup 写下地址与访问密钥、停用自带的长期记忆。
-插件不替你装：最后列出要运行的命令，装好之后运行 kioku doctor <平台> 检查。
+插件需另行安装：最后列出要运行的命令，装好之后运行 kioku doctor <平台> 检查。
 `
 
 export function parseInstallArgs(argv: string[]): {

@@ -21,11 +21,14 @@ from .bridge import KiokuBridge, Turn, command_args
 
 
 def turn_of(event: AstrMessageEvent) -> Turn:
+    raw_sender = event.get_sender_id()
+    sender_id = str(raw_sender).strip() if raw_sender is not None else ""
+    group_raw = (event.get_group_id() or "").strip()
     return Turn(
         platform=event.get_platform_name(),
         session_id=event.unified_msg_origin,
-        group_id=event.get_group_id() or None,
-        sender_id=str(event.get_sender_id()),
+        group_id=group_raw or None,
+        sender_id=sender_id,
         sender_name=event.get_sender_name() or None,
         text=event.message_str or "",
     )
@@ -67,7 +70,7 @@ class KiokuPlugin(Star):
 
     @filter.command("bind")
     async def bind(self, event: AstrMessageEvent):
-        """绑定另一个平台的账号：私聊里发 /bind 拿绑定码，到另一个平台私聊我发 /bind <码>，看清之后发 /bind <码> 确认。"""
+        """绑定另一个平台的账号：私聊里发 /bind 获取绑定码，到另一个平台私聊我发 /bind <码>，看清之后发 /bind <码> 确认。"""
         # 码里可能带空格（例如分成两段抄），命令后面的整段文字都交给转接去认，不按 AstrBot 的参数拆分
         args = command_args(event.message_str or "")
         yield event.plain_result(await self.bridge.bind(turn_of(event), args))

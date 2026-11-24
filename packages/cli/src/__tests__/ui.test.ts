@@ -18,11 +18,15 @@ import {
 } from '../ui/prompts.ts'
 import { createScreen } from '../ui/screen.ts'
 import {
+  bandForKind,
   capabilityLabel,
   createTheme,
+  ENTRY_KIND_ORDER,
   kindLabel,
   renderBox,
   sensitivityBadge,
+  sortEntryKinds,
+  STRATA_BANDS,
   supportsColor,
   supportsTrueColor,
 } from '../ui/theme.ts'
@@ -88,18 +92,21 @@ describe('ui/theme', () => {
     const plainTheme = createTheme({ color: false })
     expect(plainTheme.error('失败')).toBe('失败')
     expect(plainTheme.brandStamp('記 憶')).toBe('[記 憶]')
-    expect(plainTheme.kindChip('entry')).toBe('[正式词条]')
+    expect(plainTheme.kindChip('entry')).toBe('[正式记忆]')
     expect(plainTheme.keycap('Enter', '接入')).toBe('[Enter] 接入')
 
     const tcTheme = createTheme({ color: true, env: { COLORTERM: 'truecolor' } })
     expect(tcTheme.trueColor).toBe(true)
     expect(tcTheme.warn('注意')).toContain('\x1b[38;2;216;181;107m')
     expect(tcTheme.warn('注意')).not.toBe('\x1b[2m注意\x1b[0m')
-    expect(displayWidth(tcTheme.kindChip('entry'))).toBe(displayWidth('■ 正式词条'))
+    expect(displayWidth(tcTheme.kindChip('entry'))).toBe(displayWidth('■ 正式记忆'))
 
     const theme256 = createTheme({ color: true, env: { TERM: 'xterm-256color' } })
     expect(theme256.trueColor).toBe(false)
     expect(theme256.warn('注意')).toContain('\x1b[38;5;179m')
+    expect(theme256.kind('persona')).toContain('\x1b[38;5;108m')
+    expect(theme256.kind('shared-away')).toContain('\x1b[38;5;144m')
+    expect(theme256.kind('primary')).toContain('\x1b[38;5;109m')
 
     // 内嵌状态色彩重置后，表面背景应自动恢复且不改变视觉宽度
     const inner = `  ${tcTheme.ok('●')} 正常  ${tcTheme.muted('说明')}  `
@@ -109,8 +116,20 @@ describe('ui/theme', () => {
     expect(row.endsWith('\x1b[0m')).toBe(true)
   })
 
-  it('提供规范的物种名、敏感级纹理与细线方框排版', () => {
-    expect(kindLabel('entry')).toBe('正式词条')
+  it('提供规范的形态名、地层排序、敏感级纹理与细线方框排版（含标题超宽截断）', () => {
+    expect(ENTRY_KIND_ORDER).toEqual(['episode', 'fact', 'entry'])
+    expect(STRATA_BANDS).toEqual([
+      'episode',
+      'fact',
+      'personal',
+      'shared-away',
+      'persona',
+      'primary',
+    ])
+    expect(sortEntryKinds(['entry', 'episode', 'fact'])).toEqual(['episode', 'fact', 'entry'])
+    expect(bandForKind('entry', 'personal')).toBe('personal')
+    expect(bandForKind('entry', 'shared')).toBe('primary')
+    expect(kindLabel('entry')).toBe('正式记忆')
     expect(kindLabel('fact')).toBe('联系人事实')
     expect(kindLabel('episode')).toBe('会话摘要')
     expect(sensitivityBadge('public')).toBe('[ ] 公开')
@@ -118,6 +137,9 @@ describe('ui/theme', () => {
     expect(sensitivityBadge('private')).toBe('[╱] 私密')
     expect(sensitivityBadge('secret')).toBe('[■] 机密')
     expect(capabilityLabel('use')).toBe('取用')
+
+    const tc = createTheme({ color: true, env: { COLORTERM: 'truecolor' } })
+    expect(sensitivityBadge('secret', tc)).toBe('\x1b[1m[■] 机密\x1b[0m')
 
     const box = renderBox({
       title: '面板',
@@ -129,6 +151,15 @@ describe('ui/theme', () => {
     expect(lines.at(-1)).toMatch(/^└─+┘$/)
     for (const line of lines) {
       expect(displayWidth(line)).toBe(36)
+    }
+
+    const narrow = renderBox({
+      title: '超长服务端地址 https://kioku.example.com/some/very/long/path',
+      width: 30,
+      sections: [{ lines: ['内容'] }],
+    })
+    for (const line of narrow.split('\n')) {
+      expect(displayWidth(line)).toBe(30)
     }
   })
 })
@@ -236,6 +267,29 @@ describe('ui/clipboard & deviceAuthBox', () => {
     expect(copied).toEqual(['ABCD-1234', 'https://kioku.example.com/authorize'])
     expect(cancelled).toBe(true)
     expect(outText).toContain('A B C D - 1 2 3 4')
+
+    // stop() 之后延迟完成的异步复制回调不得再次渲染残影框
+    outText = ''
+    let finishCopy!: (val: { ok: boolean; method: 'native' | 'osc52' | 'none' }) => void
+    const delayed = await startDeviceAuthWait({
+      userCode: 'WXYZ-5678',
+      verificationUrl: 'https://kioku.example.com/authorize',
+      expiresIn: 600,
+      out,
+      stdin: ttyIn as unknown as NodeJS.ReadStream,
+      open: () => {},
+      browser: false,
+      interactive: true,
+      copy: () =>
+        new Promise((resolve) => {
+          finishCopy = resolve
+        }),
+    })
+    delayed.stop()
+    const afterStopLen = outText.length
+    finishCopy({ ok: true, method: 'native' })
+    await Promise.resolve()
+    expect(outText.length).toBe(afterStopLen)
   })
 })
 
@@ -301,6 +355,18 @@ describe('ui/lineInput & prompts', () => {
       expect(outText).not.toContain('\b \b')
       expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中\r\x1b[5C')
       expect(outText).toContain('\r\x1b[K\x1b[90m│\x1b[0m  中字\r\x1b[7C')
+
+      // Ctrl+P / Ctrl+N 等控制键不得误触发 select 取消
+      const sel = prompts.select({
+        message: '选一个',
+        options: [
+          { value: 'a', label: '甲' },
+          { value: 'b', label: '乙' },
+        ],
+      })
+      ttyIn.emit('keypress', '\x10', { name: 'p', ctrl: true })
+      ttyIn.emit('keypress', '\r', { name: 'return' })
+      await expect(sel).resolves.toBe('a')
     } finally {
       vi.unstubAllEnvs()
     }

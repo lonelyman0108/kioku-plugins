@@ -1,5 +1,5 @@
 // 终端显示宽度计算与排版工具：剥离或保留 ANSI 转义序列、按字素簇准确计算 CJK 全角与表情符号列宽，
-// 提供按视觉列宽补齐、保留样式截断、自动换行与任意列区间精确切片，确保 Strata 框线与弹出层严丝合缝。
+// 提供按视觉列宽补齐、保留样式截断、自动换行与任意列区间精确截取，确保 Strata 框线与弹出层严丝合缝。
 
 /* eslint-disable no-control-regex */
 const ANSI_PATTERN =
@@ -57,7 +57,7 @@ function isWideCode(code: number): boolean {
   )
 }
 
-const PICTOGRAPHIC = /\p{Extended_Pictographic}/u
+const PICTOGRAPHIC = /\p{Emoji_Presentation}/u
 const REGIONAL_INDICATOR = /[\u{1F1E6}-\u{1F1FF}]/u
 const VARIATION_WIDE = /\uFE0F/
 
@@ -116,8 +116,19 @@ interface StyleState {
 function updateStyle(style: StyleState, seq: string): void {
   const sgr = SGR_PATTERN.exec(seq)
   if (sgr) {
-    if (sgr[1] === '' || sgr[1] === '0') style.sgr = []
-    else style.sgr.push(seq)
+    const raw = sgr[1]
+    if (raw === '' || raw === '0') {
+      style.sgr = []
+      return
+    }
+    const parts = raw.split(';')
+    if (parts[0] === '0') {
+      style.sgr = []
+      const rest = parts.slice(1).filter(Boolean)
+      if (rest.length) style.sgr.push(`\x1b[${rest.join(';')}m`)
+      return
+    }
+    style.sgr.push(seq)
     return
   }
   const osc8 = OSC8_PATTERN.exec(seq)

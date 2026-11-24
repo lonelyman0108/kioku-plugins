@@ -3,6 +3,7 @@
 import { readFile, utimes } from 'node:fs/promises'
 
 import { errorKind, keyFormatError, KiokuFailure } from './http.mjs'
+import { serverUrlProblem } from './profile.mjs'
 
 const NOT_CONFIGURED =
   '缺少 Kioku 的地址或访问密钥：在 Claude Code 里启用 kioku 插件、填好配置后新开会话，或者设置 KIOKU_SERVER_URL 与 KIOKU_API_KEY'
@@ -35,15 +36,8 @@ export async function loadConfig(env) {
       `无法读取访问密钥文件 ${file}（${fileProblem}）：新开会话，或者设置 KIOKU_API_KEY`,
     )
   }
-  let protocol
-  try {
-    protocol = new URL(url).protocol
-  } catch {
-    throw new KiokuFailure('KIOKU_SERVER_URL 不是有效的地址')
-  }
-  if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new KiokuFailure('KIOKU_SERVER_URL 要以 http:// 或 https:// 开头')
-  }
+  const urlProblem = serverUrlProblem(url)
+  if (urlProblem) throw new KiokuFailure(urlProblem.replace(/^服务地址/, 'KIOKU_SERVER_URL '))
   const problem = keyFormatError(key)
   if (problem) throw new KiokuFailure(problem)
   return { url, key }

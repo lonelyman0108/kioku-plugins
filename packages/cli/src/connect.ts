@@ -28,8 +28,8 @@ export interface ConnectResult {
 
 // 访问密钥已经签发、却没有写下来：说清楚，别让它悄悄留着。kioku login 也用它
 export function orphanHint(client?: ConnectClient | null): string {
-  const name = client?.name ? `（接入实例 ${plain(client.name)}）` : ''
-  return `访问密钥已经签发、但没有写下：到管理界面的接入实例页吊销它${name}，解决上面的问题后重新运行`
+  const name = client?.name ? `（客户端 ${plain(client.name)}）` : ''
+  return `访问密钥已经签发、但没有写下：到管理界面的「客户端」页吊销它${name}，解决上面的问题后重新运行`
 }
 
 // 用给定的地址与访问密钥配好一个平台。setup 的输出写到 out；hints 为假时不打印「接下来装上」，
@@ -154,7 +154,7 @@ export async function connectPlatforms(
     }
   }
   if (legacy) {
-    // 旧的服务端：还没有结果的平台逐个申请，每个确认一次；一个不成不影响下一个
+    // 旧的服务端：尚未有结果的平台逐个申请，每个确认一次；一个不成不影响下一个
     for (const id of ready.filter((item) => !results.has(item))) {
       out.write(`\n${PLATFORMS[id].name}：浏览器授权\n`)
       let key: string
@@ -186,7 +186,7 @@ export function resultsText(results: ConnectResult[]): string {
     const group = results.filter((item) => item.status === status)
     if (!group.length) continue
     const names = group.map((item) => {
-      const detail = item.reason ?? (item.client?.name ? `接入实例 ${plain(item.client.name)}` : '')
+      const detail = item.reason ?? (item.client?.name ? `客户端 ${plain(item.client.name)}` : '')
       return detail ? `${PLATFORMS[item.id].name}（${detail}）` : PLATFORMS[item.id].name
     })
     lines.push(`${STATUS_NAMES[status]}：${names.join('、')}`)

@@ -11,27 +11,36 @@ import {
   failureText,
   fetchFailure,
   isRedirect,
+  jsonOrNull,
+  KeyRejected,
   keyFormatError,
   KiokuFailure,
   redirectError,
+  rejectionOf,
 } from '../lib/http.mjs'
 import { readProfile, serverUrlProblem } from '../lib/profile.mjs'
 import { plain } from '../lib/text.mjs'
 
 const DEFAULT_TIMEOUT_MS = 30_000
+const LOGIN_HINT =
+  '运行 kioku login claude-code（没有 kioku 命令时用 npx @kioku-memory/cli login claude-code）'
 
 async function resolveMcpConfig(env) {
   let url = (env.CLAUDE_PLUGIN_OPTION_SERVER_URL ?? '').trim().replace(/\/+$/, '')
   let key = (env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
-  if (!url || !key) {
+  if (!url && !key) {
     const profile = await readProfile('claude-code', env)
-    if (!url && profile) url = profile.url
-    if (!key && profile) key = profile.key
+    if (profile) {
+      url = profile.url
+      key = profile.key
+    }
+  } else if (!url || !key) {
+    throw new KiokuFailure(
+      `Kioku 只在 /plugin 里填写了服务地址或访问密钥中的一项，须成对填写或同时留空（也可${LOGIN_HINT}）`,
+    )
   }
   if (!url || !key) {
-    throw new KiokuFailure(
-      'Kioku 还没有配置服务地址和访问密钥：运行 kioku login claude-code 或在 /plugin 里填写',
-    )
+    throw new KiokuFailure(`Kioku 尚未配置服务地址和访问密钥：${LOGIN_HINT}或在 /plugin 里填写`)
   }
   const problem = serverUrlProblem(url) ?? keyFormatError(key)
   if (problem) throw new KiokuFailure(problem)
@@ -118,8 +127,12 @@ async function forwardMessage(msg, { env, fetchImpl, out, errOut, timeoutMs }) {
     return
   }
 
-  if (res.status === 401) {
-    const reason = '访问密钥无效或已吊销：运行 kioku login claude-code 重新授权'
+  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text), config.url)
+  if (rejected) {
+    const reason =
+      rejected instanceof KeyRejected && !rejected.legacy
+        ? `${rejected.message}：${LOGIN_HINT}重新授权`
+        : rejected.message
     errOut.write(`Kioku MCP 未生效：${reason}\n`)
     if (hasId) writeJsonRpc(out, errorPayload(msg.id, reason, config.key))
     return

@@ -13,7 +13,6 @@ import {
   KeyRejected,
   keyFormatError,
   KiokuFailure,
-  LegacyDatabase,
   redirectError,
   rejectionOf,
 } from './http.mjs'
@@ -163,7 +162,7 @@ export async function postEvent(base, key, body, timeout, signal) {
     if (rejected instanceof KeyRejected && rejected.legacy) {
       throw new Misconfigured(rejected.message, 'legacy')
     }
-    if (rejected instanceof LegacyDatabase) throw rejected
+    if (rejected) throw rejected
   }
   if (!res.ok) throw new KiokuFailure(`HTTP ${res.status}`)
   return res

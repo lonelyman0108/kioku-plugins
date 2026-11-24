@@ -163,7 +163,7 @@ class KiokuClient:
                     ) from None
                 if exc.code == 503 and code == "legacy_database":
                     raise KiokuFailure(
-                        f"服务端已升级、尚未迁移旧数据：打开 {self.url}/legacy-upgrade 按引导迁移，完成后运行 kioku migrate 重新接入"
+                        f"服务端已升级、尚未迁移旧数据：打开 {self.url}/legacy-upgrade 按引导迁移，完成后运行 npx @kioku-memory/cli migrate 重新接入"
                     ) from None
             raise KiokuFailure(f"Kioku 返回 HTTP {exc.code}") from None
         except KiokuFailure:
@@ -252,13 +252,17 @@ def project_of(cwd: str | None) -> dict[str, str]:
     if name:
         project["dirName"] = clip(name, MAX_NAME)
     try:
-        remote = subprocess.run(
-            ["git", "-C", cwd, "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            timeout=1.5,
-            check=False,
-        ).stdout.strip()
+        remote = (
+            subprocess.run(
+                ["git", "-C", cwd, "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            .stdout.strip()
+            .rstrip("/")
+        )
         match = re.search(r"([^/:]+?)(?:\.git)?$", remote)
         if match and match.group(1):
             project["repoName"] = clip(match.group(1), MAX_NAME)
@@ -339,7 +343,11 @@ class KiokuSession:
 
     def start(self, session_id: str, **kwargs: Any) -> None:
         self._started = True
-        self.session_id = (session_id or "")[:MAX_SESSION_ID]
+        self.active = False
+        self._boot = ""
+        self.inactive_reason = ""
+        self._project = {}
+        self.session_id = clip(session_id or "", MAX_SESSION_ID)
         self.primary = (kwargs.get("agent_context") or "primary") == "primary"
         platform = kwargs.get("platform")
         # 只认本机的入口，认不出的一律不启用。只看有没有网关的标识不够：
@@ -467,7 +475,7 @@ class KiokuSession:
     # -- 结束 ---------------------------------------------------------------
 
     def switch(self, session_id: str) -> None:
-        self.session_id = (session_id or "")[:MAX_SESSION_ID]
+        self.session_id = clip(session_id or "", MAX_SESSION_ID)
 
     def flush(self, timeout: float = TIMEOUTS["turn.end"] + 1.0) -> None:
         """等还没发完的上报：进程要退出时调，否则最后几轮就丢了。它们排着队发，所以一条一条等。"""

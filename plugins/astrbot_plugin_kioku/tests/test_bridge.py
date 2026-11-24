@@ -1,4 +1,4 @@
-"""转接逻辑：上报的会话上下文、发出的生命周期事件、启动上下文的缓存，以及 Kioku 不可用时静默降级。"""
+"""转接逻辑：上报的会话上下文、发出的生命周期事件、启动加载的缓存，以及 Kioku 不可用时静默降级。"""
 
 import asyncio
 import json
@@ -176,3 +176,84 @@ def test_unconfigured_bridge_sends_nothing():
     bridge = KiokuBridge("", "")
     assert not bridge.enabled
     assert asyncio.run(bridge.recall(GROUP)) is None
+
+
+def test_status_errors_redirects_config_hygiene_and_id_clipping(caplog):
+    # legacy_key 给出 AstrBot 专属指引；503 legacy_database 与 database_unavailable 以及 3xx 都打清楚日志且不泄露密钥
+    caplog.set_level("WARNING")
+    responses = [
+        httpx.Response(401, json={"error": "legacy", "code": "legacy_key"}),
+        httpx.Response(503, json={"error": "legacy db", "code": "legacy_database"}),
+        httpx.Response(503, json={"error": "db down", "code": "database_unavailable"}),
+        httpx.Response(302, headers={"location": "https://other.example.com/v1/lifecycle/event"}),
+        httpx.Response(
+            200,
+            json={
+                "hostOutput": {"mode": "stdout_json", "value": {"hookSpecificOutput": {}}},
+                "shortIds": [],
+            },
+        ),
+    ]
+    bridge, _ = bridge_with(lambda _r: responses.pop(0))
+    for _ in range(4):
+        assert asyncio.run(bridge.recall(GROUP)) is None
+    assert asyncio.run(bridge.recall(GROUP)) is None
+    assert "「客户端」页" in caplog.text
+    assert "cli migrate" not in caplog.text
+    assert "/legacy-upgrade" in caplog.text
+    assert "database_unavailable" in caplog.text
+    assert "HTTP 302" in caplog.text
+    assert "runtime" in caplog.text or "astrbot" in caplog.text
+    assert "kioku_test" not in caplog.text
+
+    # 空白包裹的 URL/Key 自动 strip，且关闭 trust_env 与重定向跟随；含内部空白的 Key 直接禁用
+    padded = KiokuBridge(" https://kioku.example.com/ ", " kioku_padded ")
+    assert padded.enabled
+    client = padded._client.get_async_httpx_client()
+    assert client.trust_env is False
+    assert client.follow_redirects is False
+
+    bad_key = KiokuBridge("https://kioku.example.com", "bad key\n")
+    assert not bad_key.enabled
+    assert "bad key" not in caplog.text
+
+    # sender_id / group_id 按 UTF-16 200 码元截断；空 session_id / 空 sender_id 不上报
+    emoji_bridge, sent = bridge_with(answer("<recall>…</recall>"))
+    long_id_turn = Turn(
+        platform="aiocqhttp",
+        session_id="aiocqhttp:GroupMessage:1",
+        group_id="😀" * 150,
+        sender_id="😀" * 150,
+        sender_name="名",
+        text="你好",
+    )
+    asyncio.run(emoji_bridge.recall(long_id_turn))
+    assert len(sent[0]["context"]["sender"]["id"].encode("utf-16-le")) == MAX_SESSION_ID * 2
+    assert len(sent[0]["context"]["group"]["id"].encode("utf-16-le")) == MAX_SESSION_ID * 2
+
+    asyncio.run(
+        emoji_bridge.turn_end(
+            Turn(
+                platform="aiocqhttp",
+                session_id="   ",
+                group_id=None,
+                sender_id="1001",
+                sender_name=None,
+                text="你好",
+            ),
+            "嗯",
+        )
+    )
+    asyncio.run(
+        emoji_bridge.recall(
+            Turn(
+                platform="aiocqhttp",
+                session_id="s1",
+                group_id=None,
+                sender_id="  ",
+                sender_name=None,
+                text="你好",
+            )
+        )
+    )
+    assert len(sent) == 1

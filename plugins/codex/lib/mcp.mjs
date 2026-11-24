@@ -19,14 +19,28 @@ import { plain } from './text.mjs'
 export const TOOLS_TIMEOUT = 8000
 export const TOOL_CALL_TIMEOUT = 30_000
 
-// 回答可能是一段事件流：取最后一条 data
+// 回答可能是一段事件流：合并同一事件里的多行 data，取最后一条非空载荷
 function payloadOf(text, contentType) {
   if (!contentType.includes('text/event-stream')) return text
-  const data = text
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-  return data.at(-1) ?? ''
+  const events = []
+  let current = []
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (rawLine === '') {
+      if (current.length) {
+        events.push(current.join('\n'))
+        current = []
+      }
+      continue
+    }
+    if (rawLine.startsWith('data:')) current.push(rawLine.slice(5).trimStart())
+  }
+  if (current.length) events.push(current.join('\n'))
+  return (
+    events
+      .map((chunk) => chunk.trim())
+      .filter((chunk) => chunk && chunk !== '[DONE]')
+      .at(-1) ?? ''
+  )
 }
 
 // 一次 JSON-RPC 调用，返回 result。连不上、超时、取消、跳转、访问密钥无效、响应不对、服务端报错都以 KiokuFailure 抛出
@@ -124,19 +138,25 @@ export function readToolCacheSync(platform, env) {
     const data = JSON.parse(readFileSync(toolCacheFile(platform, env), 'utf8'))
     if (typeof data?.url !== 'string') return null
     const at = Number.isFinite(data.at) && data.at > 0 ? data.at : 0
-    return { url: data.url, at, tools: toolsOf(data) }
+    const keyHash = typeof data.keyHash === 'string' && data.keyHash ? data.keyHash : undefined
+    return { url: data.url, ...(keyHash ? { keyHash } : {}), at, tools: toolsOf(data) }
   } catch {
     return null
   }
 }
 
 // 写不进去不算失败：下次再取
-export async function writeToolCache(platform, { url, tools, at = Date.now() }, env) {
+export async function writeToolCache(
+  platform,
+  { url, keyHash = undefined, tools, at = Date.now() },
+  env,
+) {
   const file = toolCacheFile(platform, env)
   const temp = `${file}.${randomUUID()}.tmp`
   try {
     await mkdir(profileDir(env), { recursive: true, mode: 0o700 })
-    await writeFile(temp, `${JSON.stringify({ url, at, tools })}\n`, { mode: 0o600, flag: 'wx' })
+    const body = { url, ...(keyHash ? { keyHash } : {}), at, tools }
+    await writeFile(temp, `${JSON.stringify(body)}\n`, { mode: 0o600, flag: 'wx' })
     await chmod(temp, 0o600)
     await rename(temp, file)
     return true

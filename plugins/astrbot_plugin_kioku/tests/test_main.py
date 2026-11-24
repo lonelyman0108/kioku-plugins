@@ -124,3 +124,13 @@ def test_unconfigured_plugin_does_nothing():
     req = asyncio.run(one_turn(plugin, event))
     assert req.system_prompt == "你是豆包。"
     assert req.extra_user_content_parts == []
+
+
+def test_none_or_blank_sender_id_is_not_stringified_and_skipped():
+    sent: list[dict] = []
+    plugin = plugin_with(sent)
+    event = AstrMessageEvent(platform="webchat", session="s", sender_id=None, text="你好")
+    req = asyncio.run(one_turn(plugin, event))
+    assert req.system_prompt == "你是豆包。"
+    assert req.extra_user_content_parts == []
+    assert sent == []

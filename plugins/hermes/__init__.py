@@ -1,4 +1,4 @@
-"""Kioku 的 Hermes 记忆 provider：把 Hermes 的回调接到 kioku_bridge。
+"""Kioku 的 Hermes 记忆提供方：把 Hermes 的回调接到 kioku_bridge。
 
 服务地址与访问密钥来自 ``hermes memory setup``（或 ``kioku setup hermes``）写进这个 profile 的 ``.env``
 的 KIOKU_SERVER_URL 与 KIOKU_API_KEY。
@@ -72,7 +72,7 @@ class KiokuMemoryProvider(MemoryProvider):
             },
             {
                 "key": "api_key",
-                "description": "访问密钥：在 Kioku 管理界面为运行时是 hermes 的接入实例签发",
+                "description": "访问密钥：在 Kioku 管理界面「客户端」页为运行时是 hermes 的客户端签发",
                 "secret": True,
                 "required": True,
                 "env_var": "KIOKU_API_KEY",

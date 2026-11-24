@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { KiokuFailure, profileFile, readProfile, removeProfile, writeProfile } from './core.ts'
-import { type JsonSettings, readSettings, writeSettings } from './files.ts'
+import { hasInlineSecret, type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
 import { resolveTarget } from './target.ts'
 import type { Env, InspectCallbacks, PlatformStatus, SetupIo, SetupOptions } from './types.ts'
 
@@ -67,7 +67,9 @@ export async function setupOpenCode(options: SetupOptions, io: SetupIo): Promise
     if (pluginInstalled(settings)) {
       const next = ensurePlugin(settings, false)
       out.write(`${file}：从 plugin 中移除 ${OPENCODE_PLUGIN}\n`)
-      if (!options.dryRun) await writeSettings(file, next, text)
+      if (!options.dryRun) {
+        await safeWrite(file, serialize(next, text), text, { backup: !hasInlineSecret(text) })
+      }
     } else if (text !== null) {
       out.write(`${file} 里没有登记 Kioku 插件，不用改\n`)
     }
@@ -100,7 +102,9 @@ export async function setupOpenCode(options: SetupOptions, io: SetupIo): Promise
 
   if (!sameProfile) await writeProfile('opencode', { url, key }, env)
   if (needPlugin) {
-    const backedUp = await writeSettings(file, ensurePlugin(settings, true), text)
+    const backedUp = await safeWrite(file, serialize(ensurePlugin(settings, true), text), text, {
+      backup: !hasInlineSecret(text),
+    })
     if (backedUp) out.write(`原配置已备份到 ${file}.kioku-backup\n`)
   }
   out.write('OpenCode 已配好，重启 OpenCode 后生效。\n')

@@ -384,6 +384,14 @@ describe('pi 扩展', () => {
     expect(notices[0][1]).toContain('https://kioku.example.com')
     expect(notices[0][1]).toContain('kioku setup pi')
     expect(notices[0][1] + logs.join('\n')).not.toContain(KEY)
+
+    // 遇到配置误配或旧密钥后，后续输入与回合结束不再重复发请求（无退避死循环）
+    requests = []
+    clock += 120_000
+    expect(await emit('before_agent_start', user('第二问'))).toBeUndefined()
+    await emit('agent_end', { messages: [{ role: 'user', content: '第二问' }, assistant('答')] })
+    await emit('agent_settled', {})
+    expect(requests).toHaveLength(0)
   })
 
   it('MCP 服务注册不上时照常召回与上报，会话开始时提示', async () => {

@@ -25,7 +25,7 @@ const WHO = (family: string) => ({
     id: 'client-id',
     circleId: '11111111-2222-3333-4444-555555555555',
     slug: family,
-    name: `${family} 接入实例`,
+    name: `${family} 客户端`,
     runtimeFamily: family,
   },
   persona: null,
@@ -748,6 +748,238 @@ describe('runTui 交互工作台状态流', () => {
       url: 'https://kioku.example.com',
       ids: ['claude-code', 'codex'],
     })
+
+    ttyIn.emit('keypress', 'q', { name: 'q' })
+    await expect(done).resolves.toBe(0)
+  })
+
+  it('服务与权限完整渲染主圈/关联圈/独立人格/默认语境/排序形态与场域白名单；narrow/help 分页不截断', () => {
+    const theme = createTheme({ color: false })
+    const rich = makeState({
+      platforms: [
+        {
+          id: 'claude-code',
+          name: 'Claude Code',
+          present: true,
+          presence: 'installed',
+          connection: 'ok',
+          plugin: true,
+          memory: 'off',
+          who: {
+            primaryCircle: {
+              id: 'c1',
+              slug: 'work',
+              name: '研发团队',
+              kind: 'shared',
+            },
+            linkedCircles: [
+              { id: 'c2', slug: 'personal', name: '私人库', kind: 'personal', mode: 'read' },
+              { id: 'c3', slug: 'ops', name: '运维组', kind: 'shared', mode: 'read_write' },
+            ],
+            accountName: '工程师',
+            client: {
+              id: 'client-9',
+              circleId: 'c1',
+              slug: 'claude',
+              name: 'Claude 开发机',
+              runtimeFamily: 'claudecode',
+            },
+            persona: { id: 'p1', slug: 'reviewer', name: '代码审查员' },
+            contextFacets: { project: ['kioku'], env: ['dev'] },
+            resolvedFacets: { project: ['kioku'], env: ['dev'], org: ['core'] },
+            scopes: {
+              readKinds: ['entry', 'episode', 'fact'],
+              writeKinds: ['entry', 'fact'],
+              maxSensitivity: 'secret',
+              credentials: 'manage',
+              allowedRealms: [],
+              admin: true,
+            },
+          },
+        },
+      ],
+    })
+    const frame = stripAnsi(renderTuiFrame(rich, 96, 30, theme).join('\n'))
+    expect(frame).toContain('研发团队（独立圈）')
+    expect(frame).toContain('私人库（只读）')
+    expect(frame).toContain('运维组（读写）')
+    expect(frame).toContain('代码审查员（reviewer）')
+    expect(frame).toContain('org=core')
+    expect(frame).toContain('场域白名单 空（受限）')
+    expect(frame).toContain('管理权限')
+
+    const helpLines = Array.from({ length: 24 }, (_, idx) => `说明第 ${idx + 1} 行`)
+    const scrolledHelp = stripAnsi(
+      renderTuiFrame(
+        makeState({
+          modal: { kind: 'help', title: '操作说明与分工边界', lines: helpLines, scroll: 5 },
+        }),
+        68,
+        18,
+        theme,
+      ).join('\n'),
+    )
+    expect(scrolledHelp).toContain('翻页')
+    expect(scrolledHelp).toContain('说明第 6 行')
+  })
+
+  it('legacyKey Enter 触发旧版迁移（无双层框）；otherServer 拦截导入；Esc 清详情；[o] 深链；[D] 打开弹窗报告', async () => {
+    const { ttyIn, out, writes } = createFakeTty(104, 28)
+    const opened: string[] = []
+    const planImportMock = vi.fn()
+    const migrateCmdMock = vi.fn(async (_args, io) => {
+      io?.out?.write('┌───┐\n│box│\n└───┘\n✓ pi 已迁移完成\n')
+      return 0
+    })
+    const doctorMock = vi.fn(async (_args, io) => {
+      io?.out?.write('全量诊断第一行\n全量诊断第二行\n')
+      return 0
+    })
+
+    const deps: Partial<TuiDeps> = {
+      defaultServerUrl: async () => 'https://kioku.example.com',
+      serverHealth: async () => ({
+        reachable: true,
+        version: '0.6.0',
+        problem: null,
+        needsSetup: false,
+      }),
+      scanLocalPlatform: async (id) => {
+        if (id === 'pi') {
+          return {
+            row: {
+              id,
+              name: 'pi',
+              present: true,
+              presence: 'installed',
+              connection: 'invalid',
+              legacyKey: true,
+              plugin: true,
+              memory: 'none',
+            },
+            config: null,
+          }
+        }
+        if (id === 'claude-code') {
+          return {
+            row: {
+              id,
+              name: 'Claude Code',
+              present: true,
+              presence: 'installed',
+              connection: 'ok',
+              who: WHO('claudecode'),
+              plugin: true,
+              memory: 'off',
+              local: 3,
+            },
+            config: null,
+          }
+        }
+        if (id === 'hermes') {
+          return {
+            row: {
+              id,
+              name: 'Hermes',
+              present: true,
+              presence: 'installed',
+              connection: 'ok',
+              otherServer: true,
+              url: 'https://other.example.com',
+              who: WHO('hermes'),
+              plugin: true,
+              memory: 'off',
+              local: 2,
+            },
+            config: null,
+          }
+        }
+        return {
+          row: {
+            id,
+            name: id,
+            present: false,
+            presence: 'absent',
+            connection: 'none',
+            plugin: null,
+            memory: null,
+          },
+          config: null,
+        }
+      },
+      planMigration: async () => ({
+        url: 'https://kioku.example.com',
+        probe: { state: 'ok', version: '0.6.0', generation: 2 },
+        items: [
+          {
+            id: 'pi',
+            name: 'pi',
+            reasons: ['旧密钥失效'],
+            removeLegacySource: false,
+            clearCache: true,
+            pluginAction: 'upgrade',
+            reauth: true,
+            findings: { legacySource: null, outdatedPlugin: null, staleToolCache: false },
+          },
+        ],
+      }),
+      migrateCommand: migrateCmdMock,
+      planImport: planImportMock,
+      doctor: doctorMock,
+      open: (u) => opened.push(u),
+    }
+
+    const done = runTui({ env: {}, cwd: '/tmp', stdin: ttyIn, out, deps })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('Claude Code'))
+
+    // 选中 Claude Code 按 o 打开精确客户端深链
+    ttyIn.emit('keypress', 'o', { name: 'o' })
+    await vi.waitFor(() =>
+      expect(opened[0]).toBe(
+        'https://kioku.example.com/circles/11111111-2222-3333-4444-555555555555/clients/client-id',
+      ),
+    )
+
+    // 移动到 pi（legacyKey），再向下到 Hermes（otherServer）按 i 应被拦截
+    ttyIn.emit('keypress', 'j', { name: 'down' })
+    ttyIn.emit('keypress', 'j', { name: 'down' })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('另一服务器'))
+    ttyIn.emit('keypress', 'i', { name: 'i' })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('当前接到另一台服务器'))
+    expect(planImportMock).not.toHaveBeenCalled()
+
+    // 移动回 pi（legacyKey）底栏显示旧版迁移，按 Enter 进迁移计划弹窗且无嵌套框
+    ttyIn.emit('keypress', 'k', { name: 'up' })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('旧版迁移'))
+    ttyIn.emit('keypress', '\r', { name: 'return' })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('旧版客户端迁移计划'))
+    const modalText = stripAnsi(writes.at(-1) ?? '')
+    expect(modalText).toContain('旧密钥失效')
+    expect(modalText).not.toContain('┌───')
+
+    ttyIn.emit('keypress', 'y', { name: 'y' })
+    await vi.waitFor(() => expect(migrateCmdMock).toHaveBeenCalledOnce())
+    await vi.waitFor(() => {
+      const last = stripAnsi(writes.at(-1) ?? '')
+      expect(stripAnsi(writes.join(''))).toContain('pi 已迁移完成')
+      expect(last).not.toContain('正在迁移旧版客户端')
+    })
+
+    // 按 Esc 清除通知 toast 再清除结果回到操作指引
+    const beforeEsc = writes.length
+    ttyIn.emit('keypress', '', { name: 'escape' })
+    ttyIn.emit('keypress', '', { name: 'escape' })
+    await vi.waitFor(() =>
+      expect(stripAnsi(writes.slice(beforeEsc).join(''))).toContain('操作指引'),
+    )
+
+    // 按 D 打开全量诊断弹窗并用 Esc 关闭，等异步收尾后按 q 退出
+    ttyIn.emit('keypress', 'D', { name: 'D' })
+    await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('全量诊断第二行'))
+    const beforeCloseReport = writes.length
+    ttyIn.emit('keypress', '', { name: 'escape' })
+    await vi.waitFor(() => expect(writes.length).toBeGreaterThan(beforeCloseReport))
+    await flush()
 
     ttyIn.emit('keypress', 'q', { name: 'q' })
     await expect(done).resolves.toBe(0)

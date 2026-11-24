@@ -7,7 +7,7 @@
 
 import { open } from 'node:fs/promises'
 
-import { failureText, KiokuFailure } from '../lib/http.mjs'
+import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
 import { readProfile, serverUrlProblem } from '../lib/profile.mjs'
 import {
   assertKeyFormat,
@@ -100,21 +100,42 @@ function userText(entry) {
   return text || null
 }
 
-// 配置写错时，会话开始给模型一段提示，让它告诉用户去改；不带访问密钥
+// 配置写错或待迁移时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
+const LOGIN_HINT =
+  '运行 kioku login claude-code（没有 kioku 命令时用 npx @kioku-memory/cli login claude-code）'
+
 function noticeOf(err) {
-  if (err.kind === 'legacy') return `Kioku 长期记忆不可用：${err.message}。`
-  return err.kind === 'key'
-    ? 'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 重新填写访问密钥。'
-    : `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，运行 kioku login claude-code 或在 /plugin 里为 kioku 修改。`
+  if (err instanceof LegacyDatabase || err.kind === 'legacy') {
+    return `Kioku 长期记忆不可用：${err.message}。`
+  }
+  if (err.kind === 'key') {
+    return `Kioku 插件的访问密钥格式不对，长期记忆不可用：${LOGIN_HINT}或在 /plugin 里为 kioku 重新填写访问密钥。`
+  }
+  if (err.kind === 'partial' || err.kind === 'profile') {
+    return `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${LOGIN_HINT}或在 /plugin 里修改。`
+  }
+  return `Kioku 插件的服务地址无法使用，长期记忆不可用：${err.message}，${LOGIN_HINT}或在 /plugin 里为 kioku 修改。`
 }
 
 async function resolveConfig(env) {
   let base = normalizeBase(env.CLAUDE_PLUGIN_OPTION_SERVER_URL)
   let key = (env.CLAUDE_PLUGIN_OPTION_API_KEY ?? '').trim()
-  if (!base || !key) {
-    const profile = await readProfile('claude-code', env)
-    if (!base && profile) base = profile.url
-    if (!key && profile) key = profile.key
+  if (!base && !key) {
+    let profile
+    try {
+      profile = await readProfile('claude-code', env)
+    } catch (err) {
+      throw err instanceof KiokuFailure ? new Misconfigured(err.message, 'profile') : err
+    }
+    if (profile) {
+      base = profile.url
+      key = profile.key
+    }
+  } else if (!base || !key) {
+    throw new Misconfigured(
+      '只在 /plugin 里填写了服务地址或访问密钥中的一项，两项须同时填写或留空',
+      'partial',
+    )
   }
   return { base, key }
 }
@@ -122,20 +143,20 @@ async function resolveConfig(env) {
 async function main(event) {
   const timeout = TIMEOUTS[event]
   if (!timeout) throw new KiokuFailure(`未知事件 ${event}`)
-  const { base, key } = await resolveConfig(process.env)
   let input = {}
   try {
     input = JSON.parse((await readStdin()) || '{}')
   } catch {
     // 输入不是 JSON 时按空输入处理：会话开始照常注入，提交的提示语为空则不召回
   }
+  const { base, key } = await resolveConfig(process.env)
 
   if (!base || !key) {
-    // 只在会话开始时提示一次，让模型告诉用户插件还没配置好
+    // 只在会话开始时提示一次，让模型告诉用户插件尚未配置
     if (event === 'session.start') {
       writeContext(
         event,
-        'Kioku 插件还没有配置服务地址和访问密钥，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 填写配置。',
+        `Kioku 插件尚未配置服务地址和访问密钥，长期记忆不可用：${LOGIN_HINT}或在 /plugin 里为 kioku 填写配置。`,
       )
     }
     return
@@ -180,7 +201,12 @@ async function main(event) {
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  if (event === 'session.start' && err instanceof Misconfigured) writeContext(event, noticeOf(err))
+  if (
+    event === 'session.start' &&
+    (err instanceof Misconfigured || err instanceof LegacyDatabase)
+  ) {
+    writeContext(event, noticeOf(err))
+  }
   // 标准错误只出现在 Claude Code 的调试输出里，不进上下文；插件自己写的原因原样给出，别的只给类别
   process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
 })

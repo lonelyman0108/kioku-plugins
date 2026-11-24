@@ -2,13 +2,15 @@
 // 只在迁移与诊断时调用：不主动修改与 Kioku 无关的插件或配置
 
 import { readFileSync } from 'node:fs'
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, readdir, readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { agyHome } from './agy.ts'
 import { claudeHome } from './claudeCode.ts'
 import { codexHome } from './codex.ts'
 import { capture, hasCommand, plain, removeToolCache, toolCacheFile } from './core.ts'
+import { dshHome } from './dsh.ts'
 import { readSettings, writeSettings } from './files.ts'
 import { geminiHome } from './gemini.ts'
 import { hermesHome } from './hermes.ts'
@@ -112,14 +114,74 @@ function isLegacyOpencodeEntry(entry: unknown): entry is string {
   return /^@kioku-memory\/plugin-opencode@0\.[0-5](?:\.|$|-)/.test(entry.trim())
 }
 
-async function detectOpencodeLegacy(env: Env, cwd: string): Promise<string | null> {
+async function hasLegacyLifecycle(dir: string): Promise<boolean> {
+  const lifecycle = await readTextOrNull(join(dir, 'lib', 'lifecycle.mjs'))
+  return lifecycle !== null && !lifecycle.includes('deviceKeyOf')
+}
+
+async function detectOpencodeLegacy(
+  env: Env,
+  cwd: string,
+): Promise<{ legacySource: string | null; outdatedPlugin: string | null }> {
+  let legacySource: string | null = null
+  let hasUnpinned = false
   for (const file of [join(opencodeHome(env), 'opencode.json'), join(cwd, 'opencode.json')]) {
     const { settings } = await readSettings(file).catch(() => ({ settings: undefined }))
     const list = Array.isArray(settings?.plugin) ? settings.plugin : []
     const found = list.find(isLegacyOpencodeEntry)
-    if (found) return `旧插件来源 ${plain(found)}`
+    if (found && !legacySource) legacySource = `旧插件来源 ${plain(found)}`
+    if (list.some((entry) => typeof entry === 'string' && entry.trim() === OPENCODE_PLUGIN)) {
+      hasUnpinned = true
+    }
   }
-  return null
+  let outdatedPlugin: string | null = null
+  if (hasUnpinned) {
+    const cacheRoot = join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'opencode')
+    for (const root of [opencodeHome(env), cwd, cacheRoot]) {
+      const pkgDir = join(root, 'node_modules', '@kioku-memory', 'plugin-opencode')
+      const pkgJson = (await readJsonOrNull(join(pkgDir, 'package.json'))) as {
+        version?: unknown
+      } | null
+      if (
+        (typeof pkgJson?.version === 'string' && compareSemver(pkgJson.version, '0.6.0') < 0) ||
+        (await hasLegacyLifecycle(pkgDir))
+      ) {
+        outdatedPlugin = '旧版本 OpenCode 插件'
+        break
+      }
+    }
+  }
+  return { legacySource, outdatedPlugin }
+}
+
+async function detectDshLegacy(
+  env: Env,
+): Promise<{ legacySource: string | null; outdatedPlugin: string | null }> {
+  let legacySource: string | null = null
+  let outdatedPlugin: string | null = null
+  const profilesRoot = join(dshHome(env), 'profiles')
+  const names = await readdir(profilesRoot).catch(() => [] as string[])
+  for (const name of names.sort()) {
+    const profileDir = join(profilesRoot, name)
+    const pkg = (await readJsonOrNull(join(profileDir, 'package.json'))) as {
+      dependencies?: Record<string, unknown>
+    } | null
+    const deps = pkg?.dependencies ?? {}
+    for (const [depName, depSpec] of Object.entries(deps)) {
+      if (
+        (depName.includes('kioku') || pointsToOldKiokuRepo(depSpec)) &&
+        pointsToOldKiokuRepo(depSpec)
+      ) {
+        legacySource = `旧 DeepSeek Harness 插件来源 ${plain(depSpec)}`
+        break
+      }
+    }
+    const pluginDir = join(profileDir, 'node_modules', 'kioku-plugins', 'plugins', 'dsh')
+    if (await hasLegacyLifecycle(pluginDir)) {
+      outdatedPlugin = '重构前的 DeepSeek Harness 插件'
+    }
+  }
+  return { legacySource, outdatedPlugin }
 }
 
 async function detectPiLegacy(
@@ -192,12 +254,30 @@ export async function detectLegacyPlugin(
       legacyMarketplaces = found
       legacySource = '旧插件市场来源 lonelyman0108/kioku'
     }
+    const installed = await readJsonOrNull(
+      join(codexHome(env), 'plugins', 'installed_plugins.json'),
+    )
+    for (const installPath of collectInstallPaths(installed)) {
+      if (await hasLegacyLifecycle(installPath)) {
+        outdatedPlugin = '重构前的 Codex 插件'
+        break
+      }
+    }
   } else if (id === 'opencode') {
-    legacySource = await detectOpencodeLegacy(env, cwd)
+    const opencodeFound = await detectOpencodeLegacy(env, cwd)
+    legacySource = opencodeFound.legacySource
+    outdatedPlugin = opencodeFound.outdatedPlugin
   } else if (id === 'pi') {
     const piFound = await detectPiLegacy(env, cwd)
     legacySource = piFound.source
     if (piFound.packages.length) legacyPiPackages = piFound.packages
+    if (await hasLegacyLifecycle(join(piHome(env), 'extensions', 'kioku'))) {
+      outdatedPlugin = '重构前的 pi 插件'
+    }
+  } else if (id === 'dsh') {
+    const dshFound = await detectDshLegacy(env)
+    legacySource = dshFound.legacySource
+    outdatedPlugin = dshFound.outdatedPlugin
   } else if (id === 'agy') {
     const targetDir = join(agyHome(env), 'plugins', 'kioku')
     const st = await lstat(targetDir).catch(() => null)
@@ -232,6 +312,17 @@ export async function detectLegacyPlugin(
     )
     if (bridge !== null && !bridge.includes('deviceKey')) {
       outdatedPlugin = '重构前的 Hermes 记忆插件'
+    }
+  } else if (id === 'openclaw') {
+    const clawExt = join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'extensions', 'kioku')
+    const pkgJson = (await readJsonOrNull(join(clawExt, 'package.json'))) as {
+      version?: unknown
+    } | null
+    if (
+      (await hasLegacyLifecycle(clawExt)) ||
+      (typeof pkgJson?.version === 'string' && compareSemver(pkgJson.version, '0.6.0') < 0)
+    ) {
+      outdatedPlugin = '旧版本 OpenClaw 插件'
     }
   }
 
@@ -286,9 +377,11 @@ export async function removeLegacySource(
       }
       if (allOk) {
         removed = true
-        notes.push(`已移除 Claude Code 旧插件市场来源（${marketplaces.join('、')}）`)
+        notes.push(
+          `已移除 Claude Code 旧插件市场来源（${marketplaces.map((m) => plain(m)).join('、')}）`,
+        )
       } else {
-        manualCommands.push(...marketplaces.map((m) => `/plugin marketplace remove ${m}`))
+        manualCommands.push(...marketplaces.map((m) => `/plugin marketplace remove ${plain(m)}`))
         notes.push('未能自动移除 Claude Code 旧插件市场来源，请在会话内手动移除')
       }
     } else {
@@ -310,9 +403,11 @@ export async function removeLegacySource(
       }
       if (allOk) {
         removed = true
-        notes.push(`已移除 Codex 旧插件市场来源（${marketplaces.join('、')}）`)
+        notes.push(`已移除 Codex 旧插件市场来源（${marketplaces.map((m) => plain(m)).join('、')}）`)
       } else {
-        manualCommands.push(...marketplaces.map((m) => `codex plugin marketplace remove ${m}`))
+        manualCommands.push(
+          ...marketplaces.map((m) => `codex plugin marketplace remove ${plain(m)}`),
+        )
         notes.push('未能自动移除 Codex 旧插件市场来源，请手动执行移除命令')
       }
     } else {
@@ -344,11 +439,11 @@ export async function removeLegacySource(
         removed = true
         notes.push('已移除 pi 旧版扩展来源')
       } else {
-        manualCommands.push(...findings.legacyPiPackages.map((pkg) => `pi remove ${pkg}`))
+        manualCommands.push(...findings.legacyPiPackages.map((pkg) => `pi remove ${plain(pkg)}`))
         notes.push('未能自动移除 pi 旧版扩展，请手动执行')
       }
     } else {
-      manualCommands.push(...findings.legacyPiPackages.map((pkg) => `pi remove ${pkg}`))
+      manualCommands.push(...findings.legacyPiPackages.map((pkg) => `pi remove ${plain(pkg)}`))
       notes.push('未找到 pi 命令，请手动移除旧版扩展')
     }
   }

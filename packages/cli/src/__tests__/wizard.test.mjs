@@ -45,7 +45,7 @@ const client = (family) => ({
   id: 'a',
   circleId: '0f1e2d3c-0000-4000-8000-000000000000',
   slug: family,
-  name: `${family} 接入实例`,
+  name: `${family} 客户端`,
   runtimeFamily: family,
 })
 const who = (family, circleName = '') => ({
@@ -267,7 +267,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect(text).toContain('✓ 已确认，签发了 2 个访问密钥')
     expect(text).not.toContain('key-pi')
     expect(resultsText(results)).toBe(
-      '已接入：pi（接入实例 pi 接入实例）、DeepSeek Harness（接入实例 dsh 接入实例）',
+      '已接入：pi（客户端 pi 客户端）、DeepSeek Harness（客户端 dsh 客户端）',
     )
   })
 
@@ -281,7 +281,7 @@ describe('几个平台一起的浏览器授权', () => {
           keys: [
             { runtimeFamily: 'pi', status: 'issued', key: 'key-pi', client: client('pi') },
             { runtimeFamily: 'dsh', status: 'skipped' },
-            { runtimeFamily: 'codex', status: 'denied', reason: '接入实例\n不可用' },
+            { runtimeFamily: 'codex', status: 'denied', reason: '客户端\n不可用' },
             // 没申请的不收
             { runtimeFamily: 'hermes', status: 'issued', key: 'key-hermes' },
           ],
@@ -292,7 +292,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect(results).toEqual([
       { id: 'pi', status: 'connected', client: client('pi') },
       { id: 'dsh', status: 'skipped', reason: '确认页上没有勾选' },
-      { id: 'codex', status: 'denied', reason: '接入实例 不可用' },
+      { id: 'codex', status: 'denied', reason: '客户端 不可用' },
       { id: 'openclaw', status: 'skipped', reason: '确认页上没有勾选' },
     ])
     expect(await readProfile('dsh', env)).toBeNull()
@@ -413,7 +413,7 @@ describe('几个平台一起的浏览器授权', () => {
     expect(results[0].status).toBe('failed')
     expect(results[0].reason).toMatch(/没有找到 Hermes 的目录/)
     expect(results[1].status).toBe('failed')
-    expect(results[1].reason).toMatch(/吊销它（接入实例 pi 接入实例）/)
+    expect(results[1].reason).toMatch(/吊销它（客户端 pi 客户端）/)
     const asked = requests.filter((r) => r.url === '/v1/device/authorize')
     expect(asked[0].body.platforms).toEqual([{ runtimeFamily: 'pi' }])
   })
@@ -432,6 +432,11 @@ describe('几个平台一起的浏览器授权', () => {
 
 describe('面板', () => {
   beforeEach(async () => {
+    const binDir = join(dir, 'bin')
+    mkdirSync(binDir, { recursive: true })
+    fakeCommand(binDir, 'claude', '')
+    fakeCommand(binDir, 'codex', '')
+    env.PATH = `${binDir}${delimiter}${resolve(process.execPath, '..')}`
     const { writeProfile } = await import('../core.ts')
     await writeProfile('pi', { url: base, key: 'key-pi' }, env)
     await writeProfile('dsh', { url: base, key: 'key-revoked' }, env)
@@ -473,7 +478,7 @@ describe('面板', () => {
 
     const text = renderPanel(state)
     expect(text).toContain(`服务器：${base}（可连接 · 版本 0.1.0）`)
-    expect(text).toContain('pi：已接入 · 接入实例 pi 接入实例（pi） · 记忆圈 0f1e2d3c')
+    expect(text).toContain('pi：已接入 · 客户端 pi 客户端（pi） · 主圈 0f1e2d3c（个人圈）')
     expect(text).toContain('DeepSeek Harness：已失效 · 访问密钥无效或已吊销')
     expect(text).toMatch(/Codex：无法判断 · http:\/\/127\.0\.0\.1:9 · 无法连接 Kioku/)
     expect(text).toContain('插件 未安装 · 自带记忆 无法判断 · 本地记忆 2 条')
@@ -488,7 +493,7 @@ describe('面板', () => {
       '接入 Claude Code、Codex（2 个未接入）',
       '重新授权 DeepSeek Harness（访问密钥已失效）',
       '迁移 Hermes 的本地记忆（2 条）',
-      '停用某个平台',
+      '停用某个客户端',
       '检查（doctor）',
       '更换服务器地址',
       '刷新',
@@ -532,18 +537,47 @@ describe('面板', () => {
     expect(values).not.toContain('claude-connect')
   })
 
-  it('服务端给了账号名与记忆圈名时显示名字', () => {
+  it('服务端给了账号名、关联圈与独立人格时一并展示；仅残余配置不纳入已安装列表', () => {
     const row = {
       id: 'pi',
       name: 'pi',
       present: true,
+      presence: 'installed',
       connection: 'ok',
-      who: { ...who('pi', '个人'), accountName: '小林' },
+      who: {
+        ...who('pi', '团队研发'),
+        primaryCircle: {
+          id: '0f1e2d3c-0000-4000-8000-000000000000',
+          slug: 'team',
+          name: '团队研发',
+          kind: 'shared',
+        },
+        linkedCircles: [
+          { id: 'c2', slug: 'personal', name: '私人备忘', kind: 'personal', mode: 'read' },
+        ],
+        persona: { id: 'p1', slug: 'coder', name: '架构助手' },
+        accountName: '小林',
+      },
       plugin: true,
       memory: 'none',
     }
-    const text = renderPanel({ server: null, platforms: [row] })
-    expect(text).toContain('pi：已接入 · 接入实例 pi 接入实例（pi） · 记忆圈 个人 · 账号 小林')
+    const residual = {
+      id: 'gemini',
+      name: 'Gemini CLI',
+      present: true,
+      presence: 'config-only',
+      connection: 'none',
+      plugin: null,
+      memory: null,
+    }
+    const text = renderPanel(
+      { server: null, platforms: [row, residual] },
+      { collapseUninstalled: true },
+    )
+    expect(text).toContain(
+      'pi：已接入 · 客户端 pi 客户端（pi） · 主圈 团队研发（独立圈） · 关联圈 私人备忘（只读） · 独立人格 架构助手（coder） · 账号 小林',
+    )
+    expect(text).toContain('未检测到客户端（1 个）：Gemini CLI')
   })
 
   it('比对失败时未迁移写「无法判断」，迁移照常提供', () => {
@@ -773,6 +807,7 @@ function fakeUi(replies) {
       info: (text) => shown.push({ kind: 'info', text }),
       warn: (text) => shown.push({ kind: 'warn', text }),
       error: (text) => shown.push({ kind: 'error', text }),
+      success: (text) => shown.push({ kind: 'info', text }),
     },
     spinner: () => ({ start() {}, stop() {}, message() {} }),
     isCancel: (value) => value === CANCEL,
@@ -972,7 +1007,9 @@ describe('向导', () => {
         local: fake,
       },
     })
-    expect(ui.shown.find((item) => item.kind === 'error').text).toMatch(/端口 18920 被别的程序占着/)
+    expect(ui.shown.find((item) => item.kind === 'error').text).toMatch(
+      /端口 18920 已被其他进程占用/,
+    )
     expect(fake.prepareDir).not.toHaveBeenCalled()
     expect(fake.composeUp).not.toHaveBeenCalled()
   })
@@ -1110,6 +1147,95 @@ describe('向导', () => {
     const steps = ui.shown.find((item) => item.title === '装插件').text
     expect(steps).toContain('/plugin install kioku --marketplace lonelyman0108/kioku-plugins')
     expect(steps).toContain('claude-code.json')
+  })
+
+  it('legacyKey 走 migrate 而不进 reauth；停用 agy 清理托管插件目录；migrate 预览用 ui.note 纯文本', async () => {
+    const removeManagedAgyPlugin = vi.fn(async () => true)
+    const connectFn = vi.fn(async () => [])
+    const agyRow = {
+      id: 'agy',
+      name: 'Antigravity',
+      present: true,
+      presence: 'installed',
+      connection: 'ok',
+      plugin: true,
+      memory: 'none',
+    }
+    const piLegacy = {
+      id: 'pi',
+      name: 'pi',
+      present: true,
+      presence: 'installed',
+      connection: 'invalid',
+      legacyKey: true,
+      plugin: true,
+      memory: 'none',
+    }
+    const codexInvalid = {
+      id: 'codex',
+      name: 'Codex',
+      present: true,
+      presence: 'installed',
+      connection: 'invalid',
+      plugin: true,
+      memory: 'off',
+    }
+    const baseState = {
+      server: { url: base, reachable: true, problem: null },
+      platforms: [agyRow, piLegacy, codexInvalid],
+    }
+
+    const ui1 = fakeUi(['reauth', ['codex'], false, 'exit'])
+    await wizard({
+      ui: ui1,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => base,
+        scan: async () => baseState,
+        connectPlatforms: connectFn,
+      },
+    })
+    const reauthSelect = ui1.shown.find((item) => item.kind === 'multiselect')
+    expect(reauthSelect.options.map((o) => o.value)).toEqual(['codex'])
+
+    const ui2 = fakeUi(['disable', 'agy', true, 'migrate', false, 'exit'])
+    await wizard({
+      ui: ui2,
+      env,
+      cwd: dir,
+      out: bufferOut(),
+      deps: {
+        defaultServerUrl: async () => base,
+        scan: async () => baseState,
+        setup: async (_args, io) => {
+          io?.out?.write('移除配对\n')
+          return 0
+        },
+        removeManagedAgyPlugin,
+        planMigration: async () => ({
+          url: base,
+          probe: { state: 'ok', version: '0.6.0', generation: 2 },
+          items: [
+            {
+              id: 'pi',
+              name: 'pi',
+              reasons: ['旧密钥'],
+              removeLegacySource: false,
+              clearCache: true,
+              pluginAction: 'upgrade',
+              reauth: true,
+              findings: { legacySource: null, outdatedPlugin: null, staleToolCache: false },
+            },
+          ],
+        }),
+      },
+    })
+    expect(removeManagedAgyPlugin).toHaveBeenCalledOnce()
+    const migNote = ui2.shown.find((item) => item.title === '旧版迁移计划')
+    expect(migNote.text).toContain('pi：旧密钥')
+    expect(migNote.text).not.toContain('┌')
   })
 
   it('输出接在竖线下面', () => {

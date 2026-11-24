@@ -34,7 +34,7 @@ gh api repos/{owner}/{repo}/rulesets -X POST --input - <<'JSON'
 JSON
 ```
 
-还没有 CI 时先去掉 `required_status_checks` 一条，第一次 PR 跑出检查后再加。私有仓库的规则集需要 GitHub Pro 才生效；不生效时 `scripts/pr.sh` 会检测到没有必需检查，不预约自动合并。
+尚未配置 CI 时先去掉 `required_status_checks` 一条，第一次 PR 跑出检查后再加。私有仓库的规则集需要 GitHub Pro 才生效；不生效时 `scripts/pr.sh` 会检测到没有必需检查，不预约自动合并。
 
 受保护标签：规则集 `release-tags`，匹配 `refs/tags/v*`，禁止创建、更新、删除和强推，仓库管理员可以绕过，也就是只有维护者能打版本 tag：
 

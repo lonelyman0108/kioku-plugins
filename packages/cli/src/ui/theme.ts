@@ -1,6 +1,7 @@
 // Strata 终端视觉规范：细线直角框、归属色彩与文字标签并重、敏感级纯字符纹理、砖红作为唯一告警/错误强调色。
 // 遵循 NO_COLOR / FORCE_COLOR / TERM=dumb 与 TTY 检测。
 
+import { plain } from '../core.ts'
 import type { Env } from '../types.ts'
 import { displayWidth, padEndWidth, truncateWidth } from './width.ts'
 
@@ -43,25 +44,46 @@ export interface StrataTheme {
   keycap: (key: string, label: string) => string
 }
 
+export const ENTRY_KIND_ORDER = ['episode', 'fact', 'entry'] as const
+export const STRATA_BANDS = [
+  'episode',
+  'fact',
+  'personal',
+  'shared-away',
+  'persona',
+  'primary',
+] as const
+
+const ENTRY_KIND_RANK = new Map<string, number>(ENTRY_KIND_ORDER.map((k, i) => [k, i]))
+
+export function sortEntryKinds(kinds: readonly string[]): string[] {
+  return [...kinds].sort((a, b) => (ENTRY_KIND_RANK.get(a) ?? 99) - (ENTRY_KIND_RANK.get(b) ?? 99))
+}
+
+export function bandForKind(kind: string, circleKind?: 'personal' | 'shared'): string {
+  if (kind === 'entry') return circleKind === 'personal' ? 'personal' : 'primary'
+  return kind
+}
+
 const KIND_LABELS: Record<string, string> = {
-  entry: '正式词条',
+  entry: '正式记忆',
   fact: '联系人事实',
   episode: '会话摘要',
-  personal: '个人圈',
-  'shared-away': '共享客场圈',
+  personal: '个人圈记忆',
+  'shared-away': '关联圈记忆',
   persona: '独立人格',
-  primary: '主场圈',
+  primary: '主圈记忆',
 }
 
 // 低饱和度地层 ANSI 颜色（均配合归属文字标签显示，不单独依赖颜色传递信息）
 const KIND_CODES_256: Record<string, string> = {
-  episode: '\x1b[38;5;103m',
-  fact: '\x1b[38;5;138m',
+  episode: '\x1b[38;5;189m',
+  fact: '\x1b[38;5;146m',
   personal: '\x1b[38;5;180m',
-  'shared-away': '\x1b[38;5;108m',
-  persona: '\x1b[38;5;144m',
-  primary: '\x1b[38;5;246m',
-  entry: '\x1b[38;5;246m',
+  'shared-away': '\x1b[38;5;144m',
+  persona: '\x1b[38;5;108m',
+  primary: '\x1b[38;5;109m',
+  entry: '\x1b[38;5;109m',
 }
 
 const KIND_CODES_TRUE: Record<string, string> = {
@@ -116,7 +138,7 @@ export function createTheme({
   const kindMap = tc ? KIND_CODES_TRUE : KIND_CODES_256
 
   const kind = (kindName: string, text?: string) => {
-    const label = text ?? KIND_LABELS[kindName] ?? kindName
+    const label = text ?? KIND_LABELS[kindName] ?? plain(kindName)
     const code = kindMap[kindName]
     return enabled && code ? `${code}${label}\x1b[0m` : label
   }
@@ -135,14 +157,15 @@ export function createTheme({
     muted: wrap('\x1b[2m'),
     rule: wrap('\x1b[90m'),
     hairline: wrap(pick('\x1b[38;2;61;70;75m', '\x1b[38;5;239m')),
-    accent: wrap(pick('\x1b[1m\x1b[38;2;216;196;143m', '\x1b[1m\x1b[38;5;180m')),
+    // 焦点与状态提示使用加粗墨色，保持砖红为唯一的彩色强调色
+    accent: wrap('\x1b[1m'),
     ok: wrap(pick('\x1b[38;2;143;194;161m', '\x1b[38;5;108m')),
     warn: wrap(pick('\x1b[38;2;216;181;107m', '\x1b[38;5;179m')),
     // 砖红只给错误与危险确认
     error: wrap(pick('\x1b[38;2;232;139;110m', '\x1b[38;5;167m')),
     kind,
     kindChip(kindName: string, text?: string) {
-      const label = text ?? KIND_LABELS[kindName] ?? kindName
+      const label = text ?? KIND_LABELS[kindName] ?? plain(kindName)
       return enabled ? kind(kindName, `■ ${label}`) : `[${label}]`
     },
     barSurface: enabled
@@ -180,17 +203,18 @@ export function createTheme({
 }
 
 export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind
+  return KIND_LABELS[kind] ?? plain(kind)
 }
 
 export function sensitivityBadge(sensitivity: string, theme?: StrataTheme): string {
   const item = SENSITIVITY_BADGES[sensitivity]
-  const text = item ? `${item.mark} ${item.label}` : `[?] ${sensitivity}`
-  return theme ? theme.muted(text) : text
+  const text = item ? `${item.mark} ${item.label}` : `[?] ${plain(sensitivity)}`
+  if (!theme) return text
+  return sensitivity === 'secret' ? theme.bold(text) : theme.muted(text)
 }
 
 export function capabilityLabel(cap: string | undefined): string {
-  return CAPABILITY_NAMES[cap ?? 'none'] ?? (cap || '不可用')
+  return CAPABILITY_NAMES[cap ?? 'none'] ?? (cap ? plain(cap) : '不可用')
 }
 
 export interface BoxSection {
@@ -220,8 +244,9 @@ export function renderBox({
   const border = (s: string) => theme.rule(s)
 
   const out: string[] = []
+  const maxTitleWidth = Math.max(4, inner - 4)
   if (title) {
-    const label = ` ${title} `
+    const label = ` ${truncateWidth(title, maxTitleWidth)} `
     const rest = Math.max(1, inner - displayWidth(label) - 1)
     out.push(`${border('┌─')}${theme.bold(label)}${border(`${'─'.repeat(rest)}┐`)}`)
   } else {
@@ -231,7 +256,7 @@ export function renderBox({
   sections.forEach((sec, idx) => {
     if (idx > 0) {
       if (sec.title) {
-        const label = ` ${sec.title} `
+        const label = ` ${truncateWidth(sec.title, maxTitleWidth)} `
         const rest = Math.max(1, inner - displayWidth(label) - 1)
         out.push(`${border('├─')}${theme.muted(label)}${border(`${'─'.repeat(rest)}┤`)}`)
       } else {

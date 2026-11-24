@@ -4,6 +4,8 @@
 // 任何失败都不挡这一轮、不往对话里写错误，只在日志里说一次。
 // 服务地址与访问密钥来自 kioku setup openclaw 写下的文件，不放进 OpenClaw 的配置
 
+import { createHash } from 'node:crypto'
+
 import { failureText, KiokuFailure } from './lib/http.mjs'
 import {
   clip,
@@ -14,6 +16,7 @@ import {
   MAX_SESSION_ID,
   Misconfigured,
   postEvent,
+  projectOfAsync,
   TIMEOUTS,
 } from './lib/lifecycle.mjs'
 import { callTool, listTools, readToolCacheSync, writeToolCache } from './lib/mcp.mjs'
@@ -122,10 +125,12 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   let problem = null
   let loading = null
   let retryAt = 0
+  const keyHashOf = (key) => createHash('sha256').update(key).digest('hex').slice(0, 12)
   // 工具清单：先用本机留的那一份，取到新的再换
   const cached = readToolCacheSync(PLATFORM, env)
   let tools = cached?.tools ?? []
   let toolsUrl = cached?.url ?? null
+  let toolsKeyHash = cached?.keyHash ?? null
   // 清单是什么时候取的。本机那份还新的话不重新取：openclaw 的每个命令都会装载一次插件
   let toolsAt = cached && cached.at <= now() ? cached.at : 0
   let refreshing = null
@@ -136,8 +141,10 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   let quietUntil = 0
   // 会话的启动加载：会话 id → { text, at }
   const boots = new Map()
-  // 进行中的运行：运行 id → { sessionId, prompt, start }
+  // 进行中的运行：运行 id → { sessionId, prompt, start, project }
   const runs = new Map()
+  // 项目的目录名与仓库名，按目录记着
+  const projects = new Map()
   // 正在跑用户从本机入口发起的一轮的会话：会话键 → 运行 id。工具只在这样的运行里调得动
   const approved = new Map()
   // 在后台跑、谁也不等的事：工具工厂里读配置，取工具清单并写回本机
@@ -170,7 +177,12 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
   function configNotice() {
     return problem
       ? `Kioku 的配置无法使用，长期记忆不可用：${problem}。${SETUP_HINT}`
-      : `Kioku 还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
+      : `Kioku 尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
+  }
+
+  function projectFor(cwd) {
+    if (!projects.has(cwd)) projects.set(cwd, projectOfAsync(cwd))
+    return projects.get(cwd)
   }
 
   async function load() {
@@ -190,9 +202,17 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       boots.clear()
       told.clear()
     }
-    // 本机留的清单是别的地址的、或者现在没有配置：不用它
-    if (!profile || toolsUrl !== profile.url) {
+    // 本机留的清单是别的地址或旧访问密钥的、或者现在没有配置：不用它
+    const currentHash = profile ? keyHashOf(profile.key) : null
+    if (
+      !profile ||
+      toolsUrl !== profile.url ||
+      (toolsKeyHash && toolsKeyHash !== currentHash) ||
+      (before && before.key !== profile.key)
+    ) {
       tools = []
+      toolsUrl = null
+      toolsKeyHash = null
       toolsAt = 0
     }
     retryAt = now() + PROFILE_RETRY
@@ -212,10 +232,12 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       .then(async (list) => {
         // 一个工具都没有的回答不当真：手上那份接着用，隔一阵再取
         if (!list.length) throw new KiokuFailure('Kioku 的响应格式不对')
+        const keyHash = keyHashOf(target.key)
         tools = list
         toolsUrl = target.url
+        toolsKeyHash = keyHash
         toolsAt = now()
-        await writeToolCache(PLATFORM, { url: target.url, tools: list, at: toolsAt }, env)
+        await writeToolCache(PLATFORM, { url: target.url, keyHash, tools: list, at: toolsAt }, env)
       })
       .catch((err) => {
         // 隔一阵再试，不每一轮都试
@@ -269,6 +291,11 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       return undefined
     }
     refreshTools()
+    const cwd =
+      (typeof ctx?.workspaceDir === 'string' && ctx.workspaceDir) ||
+      (typeof ctx?.cwd === 'string' && ctx.cwd) ||
+      process.cwd()
+    const project = await projectFor(cwd)
     const prompt = typeof event?.prompt === 'string' ? event.prompt.trim() : ''
     const sessionId =
       typeof ctx.sessionId === 'string' && ctx.sessionId
@@ -276,14 +303,17 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
         : undefined
     if (sessionId && typeof ctx.runId === 'string' && ctx.runId) {
       const start = Array.isArray(event?.messages) ? event.messages.length : undefined
-      remember(runs, ctx.runId, { sessionId, prompt, start })
+      remember(runs, ctx.runId, { sessionId, prompt, start, project })
     }
     const known = sessionId ? boots.get(sessionId) : undefined
     // 刚失败过：这次不等，手上有启动加载就照旧给
     if (now() < quietUntil) return known?.text ? { prependSystemContext: known.text } : undefined
 
     const wantBoot = !known || now() - known.at >= BOOT_TTL
-    const session = sessionId ? { sessionId } : {}
+    const session = {
+      ...(sessionId ? { sessionId } : {}),
+      ...(Object.keys(project).length ? { project } : {}),
+    }
     // 两个请求一起发：都在这一轮开始之前等着
     const [boot, recall] = await Promise.all([
       wantBoot ? forward('session.start', session) : undefined,
@@ -318,6 +348,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
     if (!reply || !user) return
     await forward('turn.end', {
       sessionId: run.sessionId,
+      ...(Object.keys(run.project ?? {}).length ? { project: run.project } : {}),
       user: clip(user, MAX_PROMPT),
       reply: clip(reply, MAX_REPLY),
     })
@@ -330,16 +361,19 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       description,
       parameters: inputSchema,
       async execute(_callId, params, signal) {
-        const say = (text) => ({ content: [{ type: 'text', text }] })
+        const say = (text, isError = false) => ({
+          content: [{ type: 'text', text }],
+          ...(isError ? { isError: true } : {}),
+        })
         // 这个会话现在跑的不是用户从本机入口发起的一轮（心跳这类）：不调
         if (!approved.has(sessionKey)) return say('这次运行里不能用 Kioku 的工具')
         await ready()
         if (!profile || problem) return say(configNotice())
         try {
           const { text, isError } = await callTool(profile, name, params, signal)
-          return say(text || (isError ? 'Kioku 的这次调用没有成功' : '（没有内容）'))
+          return say(text || (isError ? 'Kioku 的这次调用失败' : '（没有内容）'), isError)
         } catch (err) {
-          return say(`Kioku 的这次调用没有成功：${failureText(err)}`)
+          return say(`Kioku 的这次调用失败：${failureText(err)}`, true)
         }
       },
     }

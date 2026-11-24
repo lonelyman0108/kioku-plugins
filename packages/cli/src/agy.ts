@@ -1,16 +1,23 @@
 // Antigravity (agy) 这个平台的 kioku setup 与 kioku doctor。
-// agy 没有自带的长期记忆要停用，setup 做两件事：
-// 1. 把服务地址与访问密钥写进本机文件（只给本人读写，插件的 hooks.json 钩子读它）；
-// 2. 在 ~/.gemini/config/mcp_config.json 里写入 mcpServers.kioku（Streamable HTTP）
+// agy 没有自带的长期记忆要停用：
+// 把服务地址与访问密钥写进本机文件（只给本人读写，插件的 hooks.json 钩子读它）；
+// 并在 ~/.gemini/config/mcp_config.json 里写入 mcpServers.kioku（Streamable HTTP）
 
 import { existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { KiokuFailure, profileFile, readProfile, removeProfile, writeProfile } from './core.ts'
-import { type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
+import {
+  KiokuFailure,
+  profileDir,
+  profileFile,
+  readProfile,
+  removeProfile,
+  writeProfile,
+} from './core.ts'
+import { hasInlineSecret, type JsonSettings, readSettings, safeWrite, serialize } from './files.ts'
 import { resolveTarget } from './target.ts'
 import type { Env, InspectCallbacks, PlatformStatus, SetupIo, SetupOptions } from './types.ts'
 
@@ -122,13 +129,23 @@ export async function setupAgy(options: SetupOptions, io: SetupIo): Promise<numb
       out.write(`${file}：去掉 mcpServers.kioku\n`)
       if (!options.dryRun) {
         // 原文件里带着访问密钥时不留备份
-        await safeWrite(file, serialize(next, text), text, { backup: !hasStoredKey(settings) })
+        await safeWrite(file, serialize(next, text), text, {
+          backup: !hasStoredKey(settings) && !hasInlineSecret(text),
+        })
       }
     }
 
     if (options.dryRun) out.write(`${profile}：删掉\n没有写入（--dry-run）\n`)
-    else if (await removeProfile('agy', env)) out.write(`已删掉 ${profile}\n`)
-    else out.write(`${profile} 本来就没有\n`)
+    else {
+      if (await removeProfile('agy', env)) out.write(`已删掉 ${profile}\n`)
+      else out.write(`${profile} 本来就没有\n`)
+      await rm(join(profileDir(env), 'agy-state'), { recursive: true, force: true }).catch(() => {})
+      if (await pluginInstalled(env, cwd)) {
+        out.write(
+          `若需卸载插件目录：移除 ${join(agyHome(env), 'plugins', 'kioku')}（或运行 kioku disconnect agy）\n`,
+        )
+      }
+    }
     return 0
   }
 
@@ -158,18 +175,19 @@ export async function setupAgy(options: SetupOptions, io: SetupIo): Promise<numb
   if (!sameProfile) await writeProfile('agy', { url, key }, env)
   if (!sameFile) {
     const backedUp = await safeWrite(file, serialize(next, text), text, {
-      backup: !hasStoredKey(settings),
+      backup: !hasStoredKey(settings) && !hasInlineSecret(text),
     })
     if (backedUp) out.write(`原配置已备份到 ${file}.kioku-backup\n`)
   }
   out.write('Antigravity 已配好，新开会话生效。\n')
   if (!(await pluginInstalled(env, cwd)) && io.hints !== false) {
     const src = bundledAgyDir()
-    const dst = join(agyHome(env), 'plugins', 'kioku')
+    const pluginsDir = join(agyHome(env), 'plugins')
+    const dst = join(pluginsDir, 'kioku')
     const cmd =
       process.platform === 'win32'
-        ? `New-Item -ItemType Directory -Force "${join(agyHome(env), 'plugins')}" | Out-Null; Copy-Item -Recurse -Force "${src}" "${dst}"`
-        : `cp -r "${src}" "${dst}"`
+        ? `New-Item -ItemType Directory -Force "${pluginsDir}" | Out-Null; Copy-Item -Recurse -Force "${src}" "${dst}"`
+        : `mkdir -p "${pluginsDir}" && cp -r "${src}" "${dst}"`
     out.write(`接下来安装插件以启用生命周期钩子：${cmd}\n`)
   }
   return 0

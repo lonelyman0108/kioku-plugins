@@ -198,7 +198,7 @@ describe('Claude Code 钩子转发', () => {
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
           additionalContext:
-            'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code 或在 /plugin 里为 kioku 重新填写访问密钥。',
+            'Kioku 插件的访问密钥格式不对，长期记忆不可用：运行 kioku login claude-code（没有 kioku 命令时用 npx @kioku-memory/cli login claude-code）或在 /plugin 里为 kioku 重新填写访问密钥。',
         },
       })
       const prompt = await run('prompt.submit', { prompt: '你好' }, { key })
@@ -233,7 +233,7 @@ describe('Claude Code 钩子转发', () => {
     const start = await run('session.start', {})
     expect(start.stderr).toBe(`Kioku session.start 未生效：${sentence}\n`)
     expect(JSON.parse(start.stdout).hookSpecificOutput.additionalContext).toBe(
-      `Kioku 插件的服务地址无法使用，长期记忆不可用：${sentence}，运行 kioku login claude-code 或在 /plugin 里为 kioku 修改。`,
+      `Kioku 插件的服务地址无法使用，长期记忆不可用：${sentence}，运行 kioku login claude-code（没有 kioku 命令时用 npx @kioku-memory/cli login claude-code）或在 /plugin 里为 kioku 修改。`,
     )
     expect(prompt.stderr + start.stdout).not.toContain('token')
 
@@ -290,6 +290,20 @@ describe('Claude Code 钩子转发', () => {
         { configDir: cfgDir, url: base, key: 'kioku_option_key' },
       )
       expect(requests[1].headers.authorization).toBe('Bearer kioku_option_key')
+
+      // /plugin 只填了新地址而未填密钥时，禁止混用本机配置里的旧密钥
+      const halfStart = await run('session.start', {}, { configDir: cfgDir, url: base, key: '' })
+      expect(requests).toHaveLength(2)
+      expect(JSON.parse(halfStart.stdout).hookSpecificOutput.additionalContext).toContain(
+        '只在 /plugin 里填写了服务地址或访问密钥中的一项',
+      )
+
+      // 服务端待迁移（503 legacy_database）在会话开始给出引导提示
+      reply = () => ({ status: 503, body: { error: '待迁移', code: 'legacy_database' } })
+      const legacyDbStart = await run('session.start', {}, { url: base, key: 'kioku_test_key' })
+      expect(JSON.parse(legacyDbStart.stdout).hookSpecificOutput.additionalContext).toContain(
+        '/legacy-upgrade',
+      )
     } finally {
       rmSync(cfgDir, { recursive: true, force: true })
     }

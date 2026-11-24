@@ -120,7 +120,7 @@ export function createKioku({
   function configNotice() {
     return problem
       ? `Kioku 的配置无法使用，长期记忆不可用：${problem}。${SETUP_HINT}`
-      : `Kioku 还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
+      : `Kioku 尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
   }
 
   async function load() {

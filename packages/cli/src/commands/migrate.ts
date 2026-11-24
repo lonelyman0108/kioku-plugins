@@ -6,6 +6,7 @@ import { connectPlatforms } from '../connect.ts'
 import {
   KiokuFailure,
   UsageError,
+  failureText,
   listTools,
   plain,
   serverUrlProblem,
@@ -103,9 +104,10 @@ export async function planMigration(
     platforms = [],
     env = process.env,
     cwd = process.cwd(),
-  }: { platforms?: string[]; env?: Env; cwd?: string } = {},
+    probe: givenProbe,
+  }: { platforms?: string[]; env?: Env; cwd?: string; probe?: ServerProbe } = {},
 ): Promise<MigrationPlan> {
-  const probe = await probeServer(url)
+  const probe = givenProbe ?? (await probeServer(url))
   const explicit = platforms.length > 0
   const ids = explicit ? platforms : Object.keys(PLATFORMS)
   const items: MigrationPlanItem[] = []
@@ -182,12 +184,13 @@ function actionLabels(item: MigrationPlanItem): string[] {
 export function renderMigrationPlan(
   plan: MigrationPlan,
   out: { isTTY?: boolean; columns?: number } = {},
+  env: Env = process.env,
 ): string {
-  const theme = createTheme({ stream: out })
+  const theme = createTheme({ stream: out, env })
   const sections = [
     {
       lines: [
-        `待处理 ${plan.items.length} 个平台：${plan.items.map((item) => item.name).join('、')}`,
+        `待处理 ${plan.items.length} 个客户端：${plan.items.map((item) => item.name).join('、')}`,
       ],
     },
     ...plan.items.map((item) => ({
@@ -261,13 +264,13 @@ export async function migrateCommand(
   }
 
   await rememberServerUrl(rawUrl, env).catch(() => {})
-  const plan = await planMigration(rawUrl, { platforms: options.platforms, env, cwd })
+  const plan = await planMigration(rawUrl, { platforms: options.platforms, env, cwd, probe })
   if (!plan.items.length) {
     out.write('本机已接入客户端均已是最新，无需迁移\n')
     return 0
   }
 
-  out.write(`${renderMigrationPlan(plan, out)}\n`)
+  out.write(`${renderMigrationPlan(plan, out, env)}\n`)
   if (options.dryRun) {
     out.write('没有写入（--dry-run）\n')
     return 0
@@ -290,11 +293,15 @@ export async function migrateCommand(
 
   out.write('\n清理旧来源与更新插件：\n')
   for (const item of plan.items) {
+    let sourceFailed = false
     if (item.removeLegacySource) {
       const removed = await removeLegacySource(item.id, item.findings, { env, cwd })
       for (const note of removed.notes) out.write(`  [${item.name}] ${note}\n`)
       for (const cmd of removed.manualCommands) out.write(`    ${cmd}\n`)
-      if (!removed.removed && removed.manualCommands.length) failed = true
+      if (!removed.removed) {
+        failed = true
+        sourceFailed = true
+      }
     }
 
     if (item.clearCache) {
@@ -304,9 +311,12 @@ export async function migrateCommand(
     }
 
     if (item.pluginAction) {
-      if (item.id === 'agy' && item.findings.manualInstallDir) {
+      if (sourceFailed) {
+        out.write(`  [${item.name}] 旧插件来源尚未移除，跳过插件重装以免冲突\n`)
+      } else if (item.id === 'agy' && item.findings.manualInstallDir) {
+        failed = true
         out.write(
-          `  [${item.name}] 插件目录为手动维护（${plain(item.findings.manualInstallDir)}），请替换为新版 kioku-plugins/plugins/agy\n`,
+          `  [${item.name}] 插件目录为手动维护（${plain(item.findings.manualInstallDir)}），需手动替换为新版 kioku-plugins/plugins/agy\n`,
         )
       } else {
         const res = await installFn(item.id, {
@@ -357,12 +367,18 @@ export async function migrateCommand(
   for (const item of plan.items) {
     const cfg = await PLATFORMS[item.id].readConfig?.(env).catch(() => null)
     if (cfg) {
-      const tools = await listTools(cfg).catch(() => null)
-      if (Array.isArray(tools) && tools.length) {
-        if (item.id === 'openclaw') {
-          await writeToolCache('openclaw', { url: cfg.url, tools }, env).catch(() => {})
+      try {
+        const tools = await listTools(cfg)
+        if (Array.isArray(tools) && tools.length) {
+          if (item.id === 'openclaw') {
+            await writeToolCache('openclaw', { url: cfg.url, tools }, env).catch(() => {})
+            out.write(`  [${item.name}] ✓ 已刷新 MCP 工具清单（${tools.length} 个工具）\n`)
+          } else {
+            out.write(`  [${item.name}] ✓ MCP 握手正常（${tools.length} 个工具）\n`)
+          }
         }
-        out.write(`  [${item.name}] ✓ 已刷新 MCP 工具清单（${tools.length} 个工具）\n`)
+      } catch (err) {
+        out.write(`  [${item.name}] ! 无法获取 MCP 工具清单（${failureText(err)}）\n`)
       }
     }
     out.write(`── ${item.name} ──\n`)

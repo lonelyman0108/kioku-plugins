@@ -37,10 +37,11 @@ function textsIn(content) {
 
 // env、stderr 与 now 可以换掉，给用例用
 export function createKioku(pi, { env = process.env, stderr = () => {}, now = Date.now } = {}) {
-  // 地址与访问密钥，扩展加载时读一次；problem 是配置用不了的原因
+  // 地址与访问密钥，扩展加载时读一次；problem 是配置用不了的原因，lifecycleBlocked 拦住配置错误后的重复请求
   let profile = null
   let problem = null
   let problemIsLegacy = false
+  let lifecycleBlocked = false
   // 已经告诉过用户的问题，同一个不说第二遍
   const told = new Set()
   // 启动加载还没注入：会话开始、压缩之后各注入一次，放在下一次输入的前面
@@ -71,7 +72,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
     if (problemIsLegacy) return `Kioku 长期记忆不可用：${problem}。`
     return problem
       ? `Kioku 的配置无法使用，长期记忆不可用：${problem}。${SETUP_HINT}`
-      : `Kioku 还没有配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
+      : `Kioku 尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
   }
 
   const sessionIdOf = (ctx) => {
@@ -99,9 +100,10 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
       // 用户自己取消的不算失败
       if (signal?.aborted) return undefined
       if (err instanceof Misconfigured) {
-        // 服务地址返回跳转：之后的请求也一样，当成配置写错，当场告诉用户
+        // 服务地址返回跳转或访问密钥属旧版：停用本会话后续生命周期请求，避免每轮重复重试
         problem = err.message
         problemIsLegacy = err.kind === 'legacy'
+        lifecycleBlocked = true
         tell(ctx, configNotice())
       } else {
         quietUntil = now() + BACKOFF
@@ -112,10 +114,12 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   }
 
   async function load() {
+    lifecycleBlocked = false
     try {
       profile = await readProfile('pi', env)
     } catch (err) {
       problem = err instanceof KiokuFailure ? err.message : failureText(err)
+      lifecycleBlocked = true
       return
     }
     if (!profile) return
@@ -149,7 +153,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
       turn = null
       return undefined
     }
-    if (!profile) return undefined
+    if (!profile || lifecycleBlocked) return undefined
     const prompt = typeof event.prompt === 'string' ? event.prompt.trim() : ''
     const sessionId = sessionIdOf(ctx)
     const cwd = typeof ctx.cwd === 'string' && ctx.cwd ? ctx.cwd : process.cwd()
@@ -200,7 +204,7 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   pi.on('agent_settled', async (event, ctx) => {
     const done = turn
     turn = null
-    if (!done || !profile || event?.aborted) return
+    if (!done || !profile || lifecycleBlocked || event?.aborted) return
     const reply = done.replies.join('\n').trim()
     // 攒到了用户消息就用它们（含运行中排进来的），没有就用开头的那条输入
     const user = done.users.join('\n').trim() || done.user

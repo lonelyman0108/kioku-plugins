@@ -2,12 +2,13 @@
 // 再等用户在管理界面建好第一个管理员。已有的文件不覆盖；端口被占时只说明，不动别的进程
 
 import { randomBytes } from 'node:crypto'
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { connect, createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { KiokuFailure, capture, errorKind } from './core.ts'
+import { probeServer, type ServerProbe } from './api.ts'
+import { KiokuFailure, capture, errorKind, plain } from './core.ts'
 import type { Env } from './types.ts'
 
 const REPO = 'lonelyman0108/kioku'
@@ -134,7 +135,7 @@ export async function writeEnvFile(
   const file = join(dir, '.env')
   const existing = await readFile(file, 'utf8').catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null
-    throw new KiokuFailure(`无法读取 ${file}（${errorKind(err)}）`)
+    throw new KiokuFailure(`无法读取 ${plain(file)}（${errorKind(err)}）`)
   })
   if (existing !== null) {
     return { written: false, file, setupCode: envValue(existing, 'KIOKU_SETUP_CODE') || null }
@@ -152,10 +153,17 @@ export async function writeEnvFile(
     await chmod(file, 0o600)
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'EEXIST') {
-      return writeEnvFile(dir, template, { random, imageTag })
+      const info = await lstat(file).catch(() => null)
+      if (!info || info.isSymbolicLink() || !info.isFile()) {
+        throw new KiokuFailure(`无法写入 ${plain(file)}（目标已存在且不可读取）`)
+      }
+      const retried = await readFile(file, 'utf8').catch((readErr: unknown) => {
+        throw new KiokuFailure(`无法读取 ${plain(file)}（${errorKind(readErr)}）`)
+      })
+      return { written: false, file, setupCode: envValue(retried, 'KIOKU_SETUP_CODE') || null }
     }
     await rm(file, { force: true }).catch(() => {})
-    throw new KiokuFailure(`无法写入 ${file}（${errorKind(err)}）`)
+    throw new KiokuFailure(`无法写入 ${plain(file)}（${errorKind(err)}）`)
   }
   return { written: true, file, setupCode: secrets.KIOKU_SETUP_CODE }
 }
@@ -187,7 +195,7 @@ export async function download(
     await writeFile(file, text, { flag: 'wx' })
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'EEXIST') return 'kept'
-    throw new KiokuFailure(`无法写入 ${file}（${errorKind(err)}）`)
+    throw new KiokuFailure(`无法写入 ${plain(file)}（${errorKind(err)}）`)
   }
   return 'downloaded'
 }
@@ -218,13 +226,19 @@ export async function prepareDir(
   try {
     await mkdir(dir, { recursive: true })
   } catch (err) {
-    throw new KiokuFailure(`无法创建目录 ${dir}（${errorKind(err)}）`)
+    throw new KiokuFailure(`无法创建目录 ${plain(dir)}（${errorKind(err)}）`)
   }
   const fetchFile = (name: string, file: string) =>
     download(rawUrl(release.ref, name), file, { fetchImpl })
   const compose = await fetchFile('compose.yaml', join(dir, 'compose.yaml'))
   const example = await fetchFile('.env.example', join(dir, '.env.example'))
-  const template = await readFile(join(dir, '.env.example'), 'utf8')
+  const examplePath = join(dir, '.env.example')
+  let template: string
+  try {
+    template = await readFile(examplePath, 'utf8')
+  } catch (err) {
+    throw new KiokuFailure(`无法读取 ${plain(examplePath)}（${errorKind(err)}）`)
+  }
   const env = await writeEnvFile(dir, template, { random, imageTag: release.imageTag })
   return { files: { compose, example }, env }
 }
@@ -236,7 +250,7 @@ export async function setupCodeIn(dir: string): Promise<string | null> {
 }
 
 // 这个目录的 compose 项目里有没有 kioku 服务：'none'（没有 compose.yaml，或者没建过容器）、
-// 'stopped'（建过、没在运行）、'running'。查不了的按 'none' 算
+// 'stopped'（建过、没在运行）、'running'。无法查看的按 'none' 算
 export async function composeState(dir: string, env: Env): Promise<'none' | 'stopped' | 'running'> {
   if (!(await stat(join(dir, 'compose.yaml')).catch(() => null))) return 'none'
   const base = ['compose', '-f', join(dir, 'compose.yaml'), '--project-directory', dir, 'ps']
@@ -256,7 +270,7 @@ export async function hasCompose(env: Env): Promise<boolean> {
   return Boolean(result.found && result.ok)
 }
 
-// 端口有没有被别的程序占着：连得上，或者绑不上。只试绑 127.0.0.1 不够：别的程序听着 [::] 或 0.0.0.0 时
+// 端口有没有被别的程序占用：连得上，或者绑不上。只试绑 127.0.0.1 不够：别的程序听着 [::] 或 0.0.0.0 时
 // 有的系统照样让绑更具体的地址
 export async function portBusy(port: number, host = '127.0.0.1'): Promise<boolean> {
   const answers = await new Promise<boolean>((done) => {
@@ -289,7 +303,7 @@ export async function composeUp(dir: string, env: Env): Promise<void> {
   )
   if (!result.found) throw new KiokuFailure('没有找到 docker 命令')
   if (!result.ok) {
-    const tail = result.output.trim().split(/\r?\n/).slice(-5).join('\n')
+    const tail = plain(result.output.trim().split(/\r?\n/).slice(-5).join('\n'))
     throw new KiokuFailure(`docker compose up 没有成功：\n${tail}`)
   }
 }
@@ -349,17 +363,27 @@ export async function waitUntil(
 // /v1/health 回 200
 export async function healthy(url: string): Promise<boolean> {
   try {
-    const res = await fetch(`${url}/v1/health`, { signal: AbortSignal.timeout(3000) })
+    const res = await fetch(`${url}/v1/health`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    })
     return res.status === 200
   } catch {
     return false
   }
 }
 
+export function probeLocalHealth(url: string): Promise<ServerProbe> {
+  return probeServer(url)
+}
+
 // 第一个管理员建好了没有（/v1/setup/status 的 needsSetup 变成 false）
 export async function setupDone(url: string): Promise<boolean> {
   try {
-    const res = await fetch(`${url}/v1/setup/status`, { signal: AbortSignal.timeout(3000) })
+    const res = await fetch(`${url}/v1/setup/status`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+    })
     const data = (await res.json()) as { needsSetup?: unknown } | null
     return res.status === 200 && data?.needsSetup === false
   } catch {

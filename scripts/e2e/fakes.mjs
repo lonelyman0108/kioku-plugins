@@ -142,7 +142,7 @@ const json = (res, status, body) => {
 }
 
 const text = (value, min, max) =>
-  typeof value === 'string' && value.length >= min && Array.from(value).length <= max
+  typeof value === 'string' && value.length >= min && value.length <= max
 
 // 一个生命周期事件哪里不合契约（contracts 的 SessionStartEvent、PromptSubmitEvent、TurnEndEvent）；合格为 null
 function eventProblem(body) {
@@ -253,6 +253,9 @@ export async function startFakeKioku(
     if (databaseState === 'legacy') {
       return json(res, 503, { error: '数据库等待管理员迁移', code: 'legacy_database' })
     }
+    if (databaseState === 'unavailable') {
+      return json(res, 503, { error: '数据库暂时无法连接', code: 'database_unavailable' })
+    }
     const auth = req.headers.authorization ?? ''
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
     if (!authorized) {
@@ -266,15 +269,20 @@ export async function startFakeKioku(
     }
     if (req.url === '/v1/whoami') {
       return json(res, 200, {
-        primaryCircle: { id: 'c1', slug: 'personal', name: '个人圈', kind: 'personal' },
+        primaryCircle: {
+          id: '11111111-1111-4111-8111-111111111111',
+          slug: 'personal',
+          name: '个人圈',
+          kind: 'personal',
+        },
         linkedCircles: [],
         client: {
-          id: 'app',
-          circleId: 'c1',
+          id: '22222222-2222-4222-8222-222222222222',
+          circleId: '11111111-1111-4111-8111-111111111111',
           slug: runtimeFamily,
           name: `e2e ${runtimeFamily}`,
           runtimeFamily,
-          ownerAccountId: 'a1',
+          ownerAccountId: '33333333-3333-4333-8333-333333333333',
           defaultPersonaId: null,
           config: { personMemoryMode: 'strict', recordPrompt: false },
         },
@@ -312,6 +320,29 @@ export async function startFakeKioku(
         res.writeHead(405, { allow: 'POST' })
         return res.end()
       }
+      const accept = String(req.headers.accept ?? '').toLowerCase()
+      if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+        return json(res, 406, {
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message:
+              'Not Acceptable: Client must accept both application/json and text/event-stream',
+          },
+          id: null,
+        })
+      }
+      const contentType = String(req.headers['content-type'] ?? '').toLowerCase()
+      if (!contentType.includes('application/json')) {
+        return json(res, 415, {
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Unsupported Media Type: Content-Type must be application/json',
+          },
+          id: null,
+        })
+      }
       const reply = (result) => json(res, 200, { jsonrpc: '2.0', id: body.id, result })
       if (body?.id === undefined) {
         // 通知：没有回答
@@ -322,7 +353,8 @@ export async function startFakeKioku(
         return reply({
           protocolVersion: body.params?.protocolVersion ?? '2025-03-26',
           capabilities: { tools: {} },
-          serverInfo: { name: 'kioku-e2e', version: '0.0.0' },
+          serverInfo: { name: 'kioku', version: 'e2e' },
+          instructions: 'Kioku 长期记忆服务',
         })
       }
       if (body.method === 'tools/list') return reply({ tools: TOOLS })
