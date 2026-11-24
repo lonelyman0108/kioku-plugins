@@ -1329,7 +1329,11 @@ export async function runTui({
 
   const refreshAll = async () => {
     const gen = ++scanGen
-    if (!state.url) state.url = await deps.defaultServerUrl(env)
+    if (!state.url) {
+      const found = await deps.defaultServerUrl(env)
+      if (gen !== scanGen) return
+      if (!state.url) state.url = found
+    }
     if (gen !== scanGen) return
 
     const url = state.url
@@ -1955,8 +1959,8 @@ export async function runTui({
       state.pendingById = {}
       state.globalLog = null
       await deps.rememberServerUrl(url, env).catch(() => {})
-      setToast('ok', `已切换到 ${shownUrl(url)}`)
       await refreshAll()
+      setToast('ok', `已切换到 ${shownUrl(url)}`)
     })
 
   const formatPlanLines = (plan: MigrationPlan): string[] => {
@@ -2166,11 +2170,11 @@ export async function runTui({
       lines.push(...formatHandshakeLines(handshake))
     }
     state.resultsById[row.id] = { title: '插件与连通性', lines }
+    await refreshAll()
     setToast(
       res.status === 'failed' ? 'error' : res.status === 'manual' ? 'warn' : 'ok',
       res.message,
     )
-    await refreshAll()
   }
 
   const actionPlugin = () =>
@@ -2431,8 +2435,8 @@ export async function runTui({
         title: '已断开接入',
         lines: runBuf.text().split('\n').filter(Boolean),
       }
-      setToast('ok', `已断开 ${row.name}`)
       await refreshAll()
+      setToast('ok', `已断开 ${row.name}`)
     })
 
   const awaitLocalSetup = async (dir: string, code: string | null): Promise<boolean> => {

@@ -494,6 +494,9 @@ describe('runTui 交互工作台状态流', () => {
     try {
       const env = {
         HOME: tmp,
+        USERPROFILE: tmp,
+        APPDATA: join(tmp, 'AppData'),
+        XDG_CONFIG_HOME: join(tmp, 'xdg'),
         KIOKU_CONFIG_DIR: join(tmp, 'kioku'),
         CODEX_HOME: join(tmp, 'codex'),
       }
@@ -983,5 +986,73 @@ describe('runTui 交互工作台状态流', () => {
 
     ttyIn.emit('keypress', 'q', { name: 'q' })
     await expect(done).resolves.toBe(0)
+  })
+
+  it('慢速 defaultServerUrl 在按 s 切换服务地址后返回 null 时不覆盖新地址且按 q 可立即退出', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'kioku-tui-race-'))
+    try {
+      const env = {
+        HOME: tmp,
+        USERPROFILE: tmp,
+        APPDATA: join(tmp, 'AppData'),
+        XDG_CONFIG_HOME: join(tmp, 'xdg'),
+        KIOKU_CONFIG_DIR: join(tmp, 'kioku'),
+      }
+      let resolveSlowUrl!: (value: string | null) => void
+      let callCount = 0
+      const { ttyIn, out, writes } = createFakeTty(104, 28)
+      const deps: Partial<TuiDeps> = {
+        defaultServerUrl: async () => {
+          callCount++
+          if (callCount === 1) {
+            return await new Promise<string | null>((resolve) => {
+              resolveSlowUrl = resolve
+            })
+          }
+          return null
+        },
+        serverHealth: async () => ({
+          reachable: true,
+          version: '0.6.0',
+          problem: null,
+          needsSetup: false,
+        }),
+        scanLocalPlatform: async (id) => ({
+          row: {
+            id,
+            name: id,
+            present: false,
+            connection: 'none',
+            plugin: null,
+            memory: null,
+          },
+          config: null,
+        }),
+      }
+
+      const done = runTui({ env, cwd: tmp, stdin: ttyIn, out, deps })
+      await vi.waitFor(() => expect(callCount).toBe(1))
+
+      ttyIn.emit('keypress', 's', { name: 's' })
+      await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('设置服务地址'))
+
+      for (const ch of 'https://kioku.example.com') {
+        ttyIn.emit('keypress', ch, { name: ch })
+      }
+      ttyIn.emit('keypress', '\r', { name: 'return' })
+
+      // 首次初始化的慢速 defaultServerUrl 在用户确认新地址后才返回 null，不应覆盖新地址
+      resolveSlowUrl(null)
+
+      await vi.waitFor(() =>
+        expect(stripAnsi(writes.join(''))).toContain('已切换到 https://kioku.example.com'),
+      )
+
+      ttyIn.emit('keypress', 'q', { name: 'q' })
+      await expect(done).resolves.toBe(0)
+      expect(await readCliPreferences(env)).toEqual({ serverUrl: 'https://kioku.example.com' })
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })
