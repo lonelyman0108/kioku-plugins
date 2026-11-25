@@ -21,26 +21,21 @@ import { mode } from '../../../core/lib/__tests__/fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-codex',
+    name: 'Codex',
+    prefix: 'kioku_codex',
+    runtimeFamily: 'codex',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'codex',
     name: 'Codex',
     runtimeFamily: 'codex',
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'internal',
-    credentials: 'none',
   },
 }
 
@@ -110,7 +105,7 @@ describe('kioku setup codex', () => {
     expect(requests.map((r) => [r.url, r.headers.authorization])).toEqual([
       ['/v1/whoami', `Bearer ${KEY}`],
     ])
-    expect(result.text).toContain('✓ 访问密钥可用：客户端 Codex，运行时 codex')
+    expect(result.text).toContain('✓ 访问密钥可用：Codex（kioku_codex），运行时 codex')
     expect(result.text).toContain(`mcp_servers.kioku：（未设置） → ${base}/v1/mcp`)
     expect(result.text).toContain('codex plugin add kioku@kioku')
     expect(result.text).not.toContain(KEY)
@@ -204,10 +199,14 @@ describe('kioku setup codex', () => {
   it('客户端的运行时不是 codex 时提醒，照常写', async () => {
     reply = () => ({
       status: 200,
-      body: { ...WHO, client: { ...WHO.client, runtimeFamily: 'claudecode' } },
+      body: {
+        ...WHO,
+        key: { ...WHO.key, runtimeFamily: 'claudecode' },
+        client: { ...WHO.client, runtimeFamily: 'claudecode' },
+      },
     })
     const result = await run(setup, ['codex', '--server-url', base])
-    expect(result.text).toContain('! 这个客户端的运行时不是 codex')
+    expect(result.text).toContain('! 这个访问密钥的运行时不是 codex')
     expect(readFileSync(toml, 'utf8')).toBe(block(base))
   })
 

@@ -18,27 +18,21 @@ const cliBin = fileURLToPath(new URL('../../bin/kioku', import.meta.url))
 const KEY = 'kioku_cc_test_key'
 
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-cc',
+    name: 'Claude Code',
+    prefix: 'kioku_cc',
+    runtimeFamily: 'claudecode',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'cc',
     name: 'Claude Code',
     runtimeFamily: 'claudecode',
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry', 'fact', 'episode'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'private',
-    admin: false,
-    credentials: 'use',
   },
 }
 

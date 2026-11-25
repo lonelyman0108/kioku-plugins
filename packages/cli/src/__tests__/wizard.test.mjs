@@ -42,23 +42,23 @@ const GRANT = {
   interval: 3,
 }
 const client = (family) => ({
-  id: 'a',
-  circleId: '0f1e2d3c-0000-4000-8000-000000000000',
   slug: family,
   name: `${family} 客户端`,
   runtimeFamily: family,
 })
-const who = (family, circleName = '') => ({
-  primaryCircle: {
-    id: '0f1e2d3c-0000-4000-8000-000000000000',
-    slug: '',
-    name: circleName,
-    kind: 'personal',
+const who = (family, accountName = 'owner') => ({
+  accountName,
+  key: {
+    id: `key-${family}`,
+    name: `${family} 客户端`,
+    prefix: `kioku_${family}`,
+    runtimeFamily: family,
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: client(family),
-  persona: null,
-  scopes: { readKinds: [], writeKinds: [], maxSensitivity: 'internal', credentials: 'none' },
 })
 
 // 假的 Kioku：访问密钥写成 key-<运行时>，whoami 据此回接入实例；key-revoked 回 401
@@ -80,7 +80,7 @@ beforeAll(async () => {
       else if (req.url === '/v1/device/token') {
         reply = answers.length > 1 ? answers.shift() : answers[0]
       } else if (req.url === '/v1/health')
-        reply = { status: 200, body: { status: 'ok', version: '0.1.0', api: 2 } }
+        reply = { status: 200, body: { status: 'ok', version: '0.1.0', api: 3 } }
       else if (req.url === '/v1/setup/status') reply = { status: 200, body: { needsSetup: false } }
       else if (req.url === '/v1/whoami') {
         const key = (req.headers.authorization ?? '').replace(/^Bearer /, '')
@@ -88,8 +88,20 @@ beforeAll(async () => {
           key === 'key-revoked'
             ? { status: 401, body: { error: 'invalid' } }
             : { status: 200, body: who(key.replace(/^key-/, '')) }
-      } else if (req.url.startsWith('/v1/entries')) reply = { status: 404, body: {} }
-      else reply = { status: 404, body: {} }
+      } else if (req.url === '/v1/mcp') {
+        reply = {
+          status: 200,
+          body: {
+            jsonrpc: '2.0',
+            id: body?.id ?? 1,
+            result: {
+              isError: true,
+              content: [{ type: 'text', text: '不存在' }],
+              structuredContent: { status: 404, error: '不存在' },
+            },
+          },
+        }
+      } else reply = { status: 404, body: {} }
       res.writeHead(reply.status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(reply.body ?? {}))
     })
@@ -300,7 +312,7 @@ describe('几个平台一起的浏览器授权', () => {
   })
 
   it('确认了却一个都没签发（例如确认人已停用）：每个平台都是被拒绝，不算接上', async () => {
-    const reason = '确认人已不在记忆圈或已停用'
+    const reason = '账号已停用或无权签发'
     answers = [
       {
         status: 200,
@@ -471,14 +483,14 @@ describe('面板', () => {
     expect(row('hermes')).toMatchObject({ connection: 'ok', local: 2, memory: null, plugin: false })
     // 扫描时不和 Kioku 逐条比对
     expect(row('hermes').pending).toBeUndefined()
-    expect(requests.some((r) => r.url.startsWith('/v1/entries'))).toBe(false)
+    expect(requests.some((r) => r.url === '/v1/mcp')).toBe(false)
     expect(row('claude-code')).toMatchObject({ present: true, connection: 'none', memory: 'on' })
     expect(row('claude-code').local).toBe(1)
     expect(row('openclaw')).toMatchObject({ present: false, connection: 'none', plugin: null })
 
     const text = renderPanel(state)
     expect(text).toContain(`服务器：${base}（可连接 · 版本 0.1.0）`)
-    expect(text).toContain('pi：已接入 · 客户端 pi 客户端（pi） · 主圈 0f1e2d3c（个人圈）')
+    expect(text).toContain('pi：已接入 · 访问密钥 pi 客户端（kioku_pi） · 账号 owner')
     expect(text).toContain('DeepSeek Harness：已失效 · 访问密钥无效或已吊销')
     expect(text).toMatch(/Codex：无法判断 · http:\/\/127\.0\.0\.1:9 · 无法连接 Kioku/)
     expect(text).toContain('插件 未安装 · 自带记忆 无法判断 · 本地记忆 2 条')
@@ -537,7 +549,7 @@ describe('面板', () => {
     expect(values).not.toContain('claude-connect')
   })
 
-  it('服务端给了账号名、关联圈与独立人格时一并展示；仅残余配置不纳入已安装列表', () => {
+  it('服务端给了访问密钥名与账号名时一并展示；仅残余配置不纳入已安装列表', () => {
     const row = {
       id: 'pi',
       name: 'pi',
@@ -545,18 +557,12 @@ describe('面板', () => {
       presence: 'installed',
       connection: 'ok',
       who: {
-        ...who('pi', '团队研发'),
-        primaryCircle: {
-          id: '0f1e2d3c-0000-4000-8000-000000000000',
-          slug: 'team',
-          name: '团队研发',
-          kind: 'shared',
+        ...who('pi', '小林'),
+        key: {
+          ...who('pi', '小林').key,
+          name: 'pi 开发机',
+          prefix: 'kioku_dev',
         },
-        linkedCircles: [
-          { id: 'c2', slug: 'personal', name: '私人备忘', kind: 'personal', mode: 'read' },
-        ],
-        persona: { id: 'p1', slug: 'coder', name: '架构助手' },
-        accountName: '小林',
       },
       plugin: true,
       memory: 'none',
@@ -574,9 +580,7 @@ describe('面板', () => {
       { server: null, platforms: [row, residual] },
       { collapseUninstalled: true },
     )
-    expect(text).toContain(
-      'pi：已接入 · 客户端 pi 客户端（pi） · 主圈 团队研发（独立圈） · 关联圈 私人备忘（只读） · 独立人格 架构助手（coder） · 账号 小林',
-    )
+    expect(text).toContain('pi：已接入 · 访问密钥 pi 开发机（kioku_dev） · 账号 小林')
     expect(text).toContain('未检测到客户端（1 个）：Gemini CLI')
   })
 
@@ -874,7 +878,7 @@ describe('向导', () => {
   })
 
   it('一个平台都没接上时结果里写明', async () => {
-    const reason = '确认人已不在记忆圈或已停用'
+    const reason = '账号已停用或无权签发'
     const ui = fakeUi(['connect', ['pi'], true, 'exit'])
     await wizard({
       ui,
@@ -1149,7 +1153,7 @@ describe('向导', () => {
     expect(steps).toContain('claude-code.json')
   })
 
-  it('legacyKey 走 migrate 而不进 reauth；停用 agy 清理托管插件目录；migrate 预览用 ui.note 纯文本', async () => {
+  it('旧插件走 migrate、失效密钥走 reauth；停用 agy 清理托管插件目录；migrate 预览用 ui.note 纯文本', async () => {
     const removeManagedAgyPlugin = vi.fn(async () => true)
     const connectFn = vi.fn(async () => [])
     const agyRow = {
@@ -1166,8 +1170,12 @@ describe('向导', () => {
       name: 'pi',
       present: true,
       presence: 'installed',
-      connection: 'invalid',
-      legacyKey: true,
+      connection: 'ok',
+      legacyPlugin: {
+        legacySource: null,
+        outdatedPlugin: '重构前的 pi 插件',
+        staleToolCache: true,
+      },
       plugin: true,
       memory: 'none',
     }
@@ -1216,17 +1224,21 @@ describe('向导', () => {
         removeManagedAgyPlugin,
         planMigration: async () => ({
           url: base,
-          probe: { state: 'ok', version: '0.6.0', generation: 2 },
+          probe: { state: 'ok', version: '0.7.0', generation: 3 },
           items: [
             {
               id: 'pi',
               name: 'pi',
-              reasons: ['旧密钥'],
+              reasons: ['重构前的 pi 插件'],
               removeLegacySource: false,
               clearCache: true,
               pluginAction: 'upgrade',
-              reauth: true,
-              findings: { legacySource: null, outdatedPlugin: null, staleToolCache: false },
+              reauth: false,
+              findings: {
+                legacySource: null,
+                outdatedPlugin: '重构前的 pi 插件',
+                staleToolCache: true,
+              },
             },
           ],
         }),
@@ -1234,7 +1246,7 @@ describe('向导', () => {
     })
     expect(removeManagedAgyPlugin).toHaveBeenCalledOnce()
     const migNote = ui2.shown.find((item) => item.title === '旧版迁移计划')
-    expect(migNote.text).toContain('pi：旧密钥')
+    expect(migNote.text).toContain('pi：重构前的 pi 插件')
     expect(migNote.text).not.toContain('┌')
   })
 

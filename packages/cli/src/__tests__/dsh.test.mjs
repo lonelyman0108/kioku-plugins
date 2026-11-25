@@ -19,26 +19,21 @@ import { mode } from '../../../core/lib/__tests__/fakeCommand.mjs'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-dsh',
+    name: 'DeepSeek Harness',
+    prefix: 'kioku_dsh',
+    runtimeFamily: 'dsh',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'dsh',
     name: 'DeepSeek Harness',
     runtimeFamily: 'dsh',
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'internal',
-    credentials: 'none',
   },
 }
 
@@ -129,7 +124,7 @@ describe('kioku doctor dsh', () => {
     await run(setup, ['dsh', '--server-url', base])
     const result = await run(doctor, ['dsh'])
     expect(result.code).toBe(0)
-    expect(result.text).toContain('✓ 访问密钥可用：客户端 DeepSeek Harness（dsh），运行时 dsh')
+    expect(result.text).toContain('✓ 访问密钥可用：DeepSeek Harness（kioku_dsh），运行时 dsh')
     expect(result.text).toContain('✓ 装了 kioku 插件的 profile：web')
     expect(result.text).not.toContain('! ')
   })

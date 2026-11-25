@@ -1,6 +1,6 @@
 # Kioku 的 Claude Code 插件
 
-会话开始时注入 Kioku 的启动加载：独立人格与长期规范、当前客户端可用记忆圈里的正式记忆，以及同一会话最近的会话摘要、近期更新的记忆和与当前项目相关的召回。每轮输入时注入召回候选。每轮回复后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要：摘要归访问密钥所属的成员、私密，只给这个成员不带会话上下文的访问密钥，30 天后清除。另外提供 `kioku_*` MCP 工具读写记忆，以及 [`kioku run`](#kioku-run)：把凭据的值经环境变量交给要跑的命令，值不进对话记录，也不发给模型。
+会话开始时注入 Kioku 的启动加载：当前终端透镜对应的常驻记忆、近期会话摘要、近期更新的记忆和与当前项目相关的召回。每轮输入时注入召回候选。每轮回复后把这一轮的输入与回复交给 Kioku，攒批后写成会话摘要。另外提供 `kioku_*` MCP 工具读写记忆与查询可用凭据标识，以及 [`kioku run`](#kioku-run)：把凭据的值经环境变量交给要跑的命令，值不进对话记录，也不发给模型。
 
 插件只做转发，提示词和输出格式都由服务端决定，服务端更新后不用重装插件。
 
@@ -17,13 +17,13 @@
 启用时填写两项配置，之后可以在 `/plugin` 里修改（**或直接留空，改由终端运行 `kioku connect claude-code` / `kioku login claude-code` 自动写入 `~/.config/kioku/claude-code.json`**）：
 
 - **Kioku 服务地址**：例如 `https://kioku.example.com`，不带 `/v1`，末尾不要斜杠
-- **访问密钥**：在管理界面的「客户端」页为运行时是 claudecode 的客户端签发。`/plugin` 里填的访问密钥存在系统的凭据存储里，不写进 `settings.json`
+- **访问密钥**：在管理界面的「设置 → 连接与终端」为 `claudecode` 签发。`/plugin` 里填的访问密钥存在系统的凭据存储里，不写进 `settings.json`
 
 当 `/plugin` 两项配置留空时，插件的生命周期钩子、`mcp-stdio.mjs` MCP 包装脚本与会话里的 `kioku` 命令会自动回退读取 `~/.config/kioku/claude-code.json`（由 `kioku connect claude-code` / `kioku login claude-code` / `kioku setup claude-code` 写入，权限仅本人可读写）；若 `/plugin` 里明确填写了配置，则优先使用 `/plugin` 中的值。
 
-要让 agent 显式读取机密级记忆，签发访问密钥时把最高敏感级设为机密；召回和启动加载永远不含机密内容。要让 agent 用凭据（`kioku run`、`kioku_credential`），签发时把凭据能力选为「取用」，最高敏感级不低于私密。
+要让 agent 使用托管凭据（`kioku_list_credentials` 查可用标识、`kioku run` 注入环境变量），签发访问密钥时打开「凭据注入权限」，并按需配置允许访问的场域；凭据原值绝不经 MCP 返回。
 
-会话摘要要求实例配好抽取模型，访问密钥能写会话摘要、最高敏感级不低于私密；不满足时每轮的内容不留在服务端。
+会话摘要要求实例配好对话模型，且访问密钥具有写入权限；不满足时每轮的内容不留在服务端。
 
 ## 停用自带的自动记忆
 
@@ -48,14 +48,13 @@ kioku setup claude-code
 插件启用期间，Claude Code 的 Bash 工具里可以直接用 `kioku` 命令（插件的 `bin/` 在 `PATH` 里）。`kioku run` 向 Kioku 取凭据的值，放进环境变量交给要跑的命令；命令行、对话记录与发给模型的内容里只有变量名：
 
 ```bash
-kioku run -e PGPASSWORD=pg-main#password -- psql -h db.example.com -U app
-kioku run -e TOKEN=github#token --purpose '查看 issue' -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com/issues'
+kioku run -e PGPASSWORD=pg-main-password -- psql -h db.example.com -U app
+kioku run -e TOKEN=github-token --purpose '查看 issue' -- sh -c 'curl -H "Authorization: Bearer $TOKEN" https://api.example.com/issues'
 ```
 
-- `-e 变量=<标识>#<字段>` 可以写多个，一次请求取全部值；几个变量用同一个标识与字段时只取一次。任何一个无法获取都不启动命令，Kioku 给的原因打到标准错误，退出码 2。`--purpose` 写这次取用的用途，记进凭据的访问记录，用途里有空格时要加引号。
+- `-e 变量=<标识>[#<字段>]` 可以写多个（直接写凭据 `<标识>`，也兼容 `<标识>#<字段>`），一次请求取全部值；几个变量指向同一项时只取一次。任何一个无法获取都不启动命令，Kioku 给的原因打到标准错误，退出码 2。`--purpose` 写这次取用的用途，用途里有空格时要加引号。
 - 命令不经过 shell 直接执行，标准输入照常交给它，退出码与它相同；命令被信号结束时，`kioku` 等输出写完，也以同一个信号结束，外层的 shell 据此停下（例如循环里按了 Ctrl-C）。SIGSEGV、SIGQUIT 这类会转储的信号除外：`kioku` 不发给自己，退出码为 128 + 信号编号。参数里要用到变量，或者要用管道、重定向时，写成 `sh -c '…'`、整段用单引号：写在外面的 `$变量` 会被 Bash 工具的 shell 提前展开成空值。
 - 信号：有终端时（标准输入、输出或错误是终端），Ctrl-C 发给整个前台进程组，命令和 `kioku` 在同一个组里，已经收到了，`kioku` 不再转发 SIGINT，只等命令处理完；没有终端时（例如 Claude Code 的 Bash 工具），SIGINT 是单独发来的，和 SIGTERM、SIGHUP 一样转给命令。命令已经结束、输出还没写完时收到信号，`kioku` 先把输出写完再以这个信号结束；再收到一次就不等了（例如命令留下的后台进程一直占着输出）。已知的限制：在终端里单独对 `kioku` 发 SIGINT，不会转给命令；发给整个进程组的 SIGTERM、SIGHUP（没有终端时还有 SIGINT），命令会收到两次。
-- 凭据已到期时照常取值、交给命令，标准错误里提示一句「凭据 … 已于 … 到期，值可能已失效」：命令失败时先想到值可能已经换过。
 - 交给命令的环境里去掉了 `KIOKU_API_KEY` 与 `KIOKU_API_KEY_FILE`，免得命令把访问密钥或它的位置顺手打印出来。这不是隔离：访问密钥文件和 agent、命令属于同一个用户，同类本地进程仍可读取。
 - Kioku 返回跳转时不跟着走（访问密钥只发给配置的地址），报错说明要把地址改成跳转之后的地址。
 - 完整用法见 `kioku run --help`。
@@ -68,7 +67,7 @@ kioku run -e TOKEN=github#token --purpose '查看 issue' -- sh -c 'curl -H "Auth
 
 ## 从 Lore 切换
 
-先按 [从 Lore 迁移](https://github.com/lonelyman0108/kioku/blob/main/docs/migrate-from-lore.md) 导入并做对照检查（在管理界面的「客户端 › 测试台」里按这个访问密钥试算，不用真的接上客户端），再停用 Lore 的插件，避免两份启动加载同时注入。
+先在 Kioku 管理界面的「设置 → 账号与数据」中上传 Lore 导出的 JSON 完成两步预览与导入，确认记忆与常驻状态无误后，再停用 Lore 的插件，避免两份启动加载同时注入。
 
 ## 排查
 

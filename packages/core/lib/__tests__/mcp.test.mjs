@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { KiokuFailure } from '../http.mjs'
+import { DatabaseUnavailable, KiokuFailure } from '../http.mjs'
 import {
   callTool,
   listTools,
@@ -47,13 +47,25 @@ const result = (value) => ({ text: JSON.stringify({ jsonrpc: '2.0', id: 1, resul
 const target = () => ({ url: base, key: KEY })
 
 describe('mcpCall', () => {
-  it('发一次 JSON-RPC 调用，带访问密钥，返回 result', async () => {
-    reply = () => result({ ok: true })
-    expect(await mcpCall(target(), 'tools/list', {}, 1000)).toEqual({ ok: true })
+  it('发一次 JSON-RPC 调用，带访问密钥，原样返回 result（含 structuredContent）', async () => {
+    const payload = {
+      content: [{ type: 'text', text: '正文' }],
+      structuredContent: { entry: { shortId: 'm-234567' } },
+      isError: false,
+    }
+    reply = () => result(payload)
+    expect(
+      await mcpCall(target(), 'tools/call', { name: 'kioku_get', arguments: {} }, 1000),
+    ).toEqual(payload)
     expect(requests[0].url).toBe('/v1/mcp')
     expect(requests[0].headers.authorization).toBe(`Bearer ${KEY}`)
     expect(requests[0].headers.accept).toBe('application/json, text/event-stream')
-    expect(requests[0].body).toEqual({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+    expect(requests[0].body).toEqual({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'kioku_get', arguments: {} },
+    })
   })
 
   it('回答是事件流时合并多行 data 并取最后一条', async () => {
@@ -75,6 +87,13 @@ describe('mcpCall', () => {
     }
     reply = () => ({ status: 401, text: '{}' })
     expect(await failure()).toBe('访问密钥无效或已吊销')
+    reply = () => ({
+      status: 503,
+      text: JSON.stringify({ code: 'database_unavailable', error: 'down' }),
+    })
+    const dbErr = await mcpCall(target(), 'tools/list', {}, 1000).catch((e) => e)
+    expect(dbErr).toBeInstanceOf(DatabaseUnavailable)
+    expect(dbErr.message).toContain('数据库暂时无法连接')
     reply = () => ({ status: 503, text: `echo ${KEY}` })
     expect(await failure()).toBe('Kioku 返回 HTTP 503')
     reply = () => ({ text: `<html>${KEY}</html>` })

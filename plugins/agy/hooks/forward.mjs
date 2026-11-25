@@ -17,7 +17,7 @@ import {
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
+import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -249,14 +249,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(JSON.stringify(output ?? {}))
     })
     .catch((err) => {
-      if (
-        event === 'session.start' &&
-        (err instanceof Misconfigured || err instanceof LegacyDatabase)
-      ) {
-        const text =
-          err instanceof LegacyDatabase || err.kind === 'legacy'
-            ? `Kioku 长期记忆不可用：${err.message}。`
-            : `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
+      if (event === 'session.start' && err instanceof Misconfigured) {
+        const text = `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
         process.stdout.write(JSON.stringify(buildInjectResult(text)))
       } else {
         process.stdout.write('{}')

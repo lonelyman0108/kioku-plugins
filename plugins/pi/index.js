@@ -40,7 +40,6 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   // 地址与访问密钥，扩展加载时读一次；problem 是配置用不了的原因，lifecycleBlocked 拦住配置错误后的重复请求
   let profile = null
   let problem = null
-  let problemIsLegacy = false
   let lifecycleBlocked = false
   // 已经告诉过用户的问题，同一个不说第二遍
   const told = new Set()
@@ -69,7 +68,6 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
   }
 
   function configNotice() {
-    if (problemIsLegacy) return `Kioku 长期记忆不可用：${problem}。`
     return problem
       ? `Kioku 的配置无法使用，长期记忆不可用：${problem}。${SETUP_HINT}`
       : `Kioku 尚未配置服务地址和访问密钥，长期记忆不可用：${SETUP_HINT}`
@@ -100,9 +98,8 @@ export function createKioku(pi, { env = process.env, stderr = () => {}, now = Da
       // 用户自己取消的不算失败
       if (signal?.aborted) return undefined
       if (err instanceof Misconfigured) {
-        // 服务地址返回跳转或访问密钥属旧版：停用本会话后续生命周期请求，避免每轮重复重试
+        // 服务地址返回跳转或配置不对：停用本会话后续生命周期请求，避免每轮重复重试
         problem = err.message
-        problemIsLegacy = err.kind === 'legacy'
         lifecycleBlocked = true
         tell(ctx, configNotice())
       } else {

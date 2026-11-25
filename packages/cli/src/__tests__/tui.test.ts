@@ -13,27 +13,21 @@ import { renderTuiFrame, runTui, type TuiDeps, type TuiModal, type TuiState } fr
 import { displayWidth, stripAnsi } from '../ui/width.ts'
 
 const WHO = (family: string) => ({
-  primaryCircle: {
-    id: '11111111-2222-3333-4444-555555555555',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal' as const,
-  },
-  linkedCircles: [],
   accountName: '测试账号',
+  key: {
+    id: `key-${family}`,
+    name: `${family} 访问密钥`,
+    prefix: `kioku_${family}`,
+    runtimeFamily: family,
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
+  },
   client: {
-    id: 'client-id',
-    circleId: '11111111-2222-3333-4444-555555555555',
     slug: family,
     name: `${family} 客户端`,
     runtimeFamily: family,
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry', 'fact', 'episode'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'private',
-    credentials: 'use',
   },
 })
 
@@ -136,6 +130,23 @@ function createFakeTty(cols = 104, rows = 28) {
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+async function quitWhenIdle(ttyIn: EventEmitter, done: Promise<number>): Promise<number> {
+  let settled = false
+  let exitCode = -1
+  void done.then((code) => {
+    settled = true
+    exitCode = code
+  })
+  await vi.waitFor(
+    () => {
+      if (!settled) ttyIn.emit('keypress', 'q', { name: 'q' })
+      expect(settled).toBe(true)
+    },
+    { interval: 20 },
+  )
+  return exitCode
+}
 
 describe('renderTuiFrame 纯渲染布局与弹出层对齐', () => {
   it('在宽屏、窄屏、矮窗及 TrueColor / 256色 / 无色主题下严格保持行数与列宽不变量，并展示正确标题', () => {
@@ -314,7 +325,7 @@ describe('runTui 交互工作台状态流', () => {
 
     const updatedSnapshot = stripAnsi(writes.join(''))
     expect(updatedSnapshot).toContain('已接入')
-    expect(updatedSnapshot).toContain('个人圈')
+    expect(updatedSnapshot).toContain('测试账号')
 
     ttyIn.emit('keypress', 'q', { name: 'q' })
     await expect(done).resolves.toBe(0)
@@ -379,6 +390,7 @@ describe('runTui 交互工作台状态流', () => {
       },
       installPlugin,
       verifyConnectionHandshake,
+      rememberServerUrl: async () => {},
       open: (u) => opened.push(u),
       copy: async (text) => {
         copied.push(text)
@@ -418,10 +430,10 @@ describe('runTui 交互工作台状态流', () => {
     await vi.waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith('codex', { env: emptyEnv, cwd: '/tmp' })
       expect(stripAnsi(writes.join(''))).toContain('已安装 Codex 插件')
+      expect(stripAnsi(writes.at(-1) ?? '')).not.toContain('正在为 Codex 安装插件并验证握手')
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('按 d 收集诊断输出在右侧展示，按 u 预览并断开 Antigravity 托管插件', async () => {
@@ -471,6 +483,7 @@ describe('runTui 交互工作台状态流', () => {
     await vi.waitFor(() => {
       expect(doctorMock).toHaveBeenCalledOnce()
       expect(stripAnsi(writes.join(''))).toContain('Antigravity 配置正常')
+      expect(stripAnsi(writes.at(-1) ?? '')).not.toContain('正在诊断')
     })
 
     ttyIn.emit('keypress', 'u', { name: 'u' })
@@ -485,8 +498,7 @@ describe('runTui 交互工作台状态流', () => {
       expect(removeManagedAgyPlugin).toHaveBeenCalledOnce()
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('按 s 设置服务地址后会持久化到 cli.json 并保留 defaultPlatform，下次启动直接读回', async () => {
@@ -538,8 +550,7 @@ describe('runTui 交互工作台状态流', () => {
         expect(stripAnsi(writes.join(''))).toContain('已切换到 https://kioku.example.com'),
       )
 
-      ttyIn.emit('keypress', 'q', { name: 'q' })
-      await expect(done).resolves.toBe(0)
+      expect(await quitWhenIdle(ttyIn, done)).toBe(0)
 
       expect(await readCliPreferences(env)).toEqual({
         defaultPlatform: 'codex',
@@ -725,6 +736,7 @@ describe('runTui 交互工作台状态流', () => {
         connectedTargets.push(target)
         return []
       },
+      rememberServerUrl: async () => {},
     }
 
     const done = runTui({
@@ -752,11 +764,10 @@ describe('runTui 交互工作台状态流', () => {
       ids: ['claude-code', 'codex'],
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
-  it('服务与权限完整渲染主圈/关联圈/独立人格/默认语境/排序形态与场域白名单；narrow/help 分页不截断', () => {
+  it('服务与权限完整渲染访问密钥、所属账号、读写权限、默认环境与场域范围；narrow/help 分页不截断', () => {
     const theme = createTheme({ color: false })
     const rich = makeState({
       platforms: [
@@ -769,47 +780,34 @@ describe('runTui 交互工作台状态流', () => {
           plugin: true,
           memory: 'off',
           who: {
-            primaryCircle: {
-              id: 'c1',
-              slug: 'work',
-              name: '研发团队',
-              kind: 'shared',
-            },
-            linkedCircles: [
-              { id: 'c2', slug: 'personal', name: '私人库', kind: 'personal', mode: 'read' },
-              { id: 'c3', slug: 'ops', name: '运维组', kind: 'shared', mode: 'read_write' },
-            ],
             accountName: '工程师',
+            key: {
+              id: 'key-9',
+              name: 'Claude 开发机',
+              prefix: 'kioku_cc',
+              runtimeFamily: 'claudecode',
+              envs: ['mac', 'linux'],
+              allowedRealms: [],
+              canWrite: false,
+              canResolveCredentials: true,
+            },
             client: {
-              id: 'client-9',
-              circleId: 'c1',
               slug: 'claude',
               name: 'Claude 开发机',
               runtimeFamily: 'claudecode',
-            },
-            persona: { id: 'p1', slug: 'reviewer', name: '代码审查员' },
-            contextFacets: { project: ['kioku'], env: ['dev'] },
-            resolvedFacets: { project: ['kioku'], env: ['dev'], org: ['core'] },
-            scopes: {
-              readKinds: ['entry', 'episode', 'fact'],
-              writeKinds: ['entry', 'fact'],
-              maxSensitivity: 'secret',
-              credentials: 'manage',
-              allowedRealms: [],
-              admin: true,
             },
           },
         },
       ],
     })
     const frame = stripAnsi(renderTuiFrame(rich, 96, 30, theme).join('\n'))
-    expect(frame).toContain('研发团队（独立圈）')
-    expect(frame).toContain('私人库（只读）')
-    expect(frame).toContain('运维组（读写）')
-    expect(frame).toContain('代码审查员（reviewer）')
-    expect(frame).toContain('org=core')
-    expect(frame).toContain('场域白名单 空（受限）')
-    expect(frame).toContain('管理权限')
+    expect(frame).toContain('Claude 开发机')
+    expect(frame).toContain('kioku_cc')
+    expect(frame).toContain('工程师')
+    expect(frame).toContain('只读')
+    expect(frame).toContain('允许凭据注入')
+    expect(frame).toContain('mac、linux')
+    expect(frame).toContain('无（仅通用）')
 
     const helpLines = Array.from({ length: 24 }, (_, idx) => `说明第 ${idx + 1} 行`)
     const scrolledHelp = stripAnsi(
@@ -826,7 +824,7 @@ describe('runTui 交互工作台状态流', () => {
     expect(scrolledHelp).toContain('说明第 6 行')
   })
 
-  it('legacyKey Enter 触发旧版迁移（无双层框）；otherServer 拦截导入；Esc 清详情；[o] 深链；[D] 打开弹窗报告', async () => {
+  it('[M] 触发旧版迁移（无双层框）；otherServer 拦截导入；Esc 清详情；[o] 深链；[D] 打开弹窗报告', async () => {
     const { ttyIn, out, writes } = createFakeTty(104, 28)
     const opened: string[] = []
     const planImportMock = vi.fn()
@@ -843,7 +841,7 @@ describe('runTui 交互工作台状态流', () => {
       defaultServerUrl: async () => 'https://kioku.example.com',
       serverHealth: async () => ({
         reachable: true,
-        version: '0.6.0',
+        version: '0.7.0',
         problem: null,
         needsSetup: false,
       }),
@@ -856,7 +854,11 @@ describe('runTui 交互工作台状态流', () => {
               present: true,
               presence: 'installed',
               connection: 'invalid',
-              legacyKey: true,
+              legacyPlugin: {
+                legacySource: null,
+                outdatedPlugin: '重构前的 pi 插件',
+                staleToolCache: true,
+              },
               plugin: true,
               memory: 'none',
             },
@@ -912,17 +914,21 @@ describe('runTui 交互工作台状态流', () => {
       },
       planMigration: async () => ({
         url: 'https://kioku.example.com',
-        probe: { state: 'ok', version: '0.6.0', generation: 2 },
+        probe: { state: 'ok', version: '0.7.0', generation: 3 },
         items: [
           {
             id: 'pi',
             name: 'pi',
-            reasons: ['旧密钥失效'],
+            reasons: ['重构前的 pi 插件'],
             removeLegacySource: false,
             clearCache: true,
             pluginAction: 'upgrade',
             reauth: true,
-            findings: { legacySource: null, outdatedPlugin: null, staleToolCache: false },
+            findings: {
+              legacySource: null,
+              outdatedPlugin: '重构前的 pi 插件',
+              staleToolCache: true,
+            },
           },
         ],
       }),
@@ -935,15 +941,11 @@ describe('runTui 交互工作台状态流', () => {
     const done = runTui({ env: {}, cwd: '/tmp', stdin: ttyIn, out, deps })
     await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('Claude Code'))
 
-    // 选中 Claude Code 按 o 打开精确客户端深链
+    // 选中 Claude Code 按 o 打开设置 → 连接与终端页面
     ttyIn.emit('keypress', 'o', { name: 'o' })
-    await vi.waitFor(() =>
-      expect(opened[0]).toBe(
-        'https://kioku.example.com/circles/11111111-2222-3333-4444-555555555555/clients/client-id',
-      ),
-    )
+    await vi.waitFor(() => expect(opened[0]).toBe('https://kioku.example.com/settings/keys'))
 
-    // 移动到 pi（legacyKey），再向下到 Hermes（otherServer）按 i 应被拦截
+    // 移动到 pi，再向下到 Hermes（otherServer）按 i 应被拦截
     ttyIn.emit('keypress', 'j', { name: 'down' })
     ttyIn.emit('keypress', 'j', { name: 'down' })
     await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('另一服务器'))
@@ -951,13 +953,13 @@ describe('runTui 交互工作台状态流', () => {
     await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('当前接到另一台服务器'))
     expect(planImportMock).not.toHaveBeenCalled()
 
-    // 移动回 pi（legacyKey）底栏显示旧版迁移，按 Enter 进迁移计划弹窗且无嵌套框
+    // 移动回 pi，底栏显示旧版迁移，按 M 进迁移计划弹窗且无嵌套框
     ttyIn.emit('keypress', 'k', { name: 'up' })
     await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('旧版迁移'))
-    ttyIn.emit('keypress', '\r', { name: 'return' })
+    ttyIn.emit('keypress', 'M', { name: 'm', shift: true })
     await vi.waitFor(() => expect(stripAnsi(writes.join(''))).toContain('旧版客户端迁移计划'))
     const modalText = stripAnsi(writes.at(-1) ?? '')
-    expect(modalText).toContain('旧密钥失效')
+    expect(modalText).toContain('重构前的 pi 插件')
     expect(modalText).not.toContain('┌───')
 
     ttyIn.emit('keypress', 'y', { name: 'y' })
@@ -982,10 +984,8 @@ describe('runTui 交互工作台状态流', () => {
     const beforeCloseReport = writes.length
     ttyIn.emit('keypress', '', { name: 'escape' })
     await vi.waitFor(() => expect(writes.length).toBeGreaterThan(beforeCloseReport))
-    await flush()
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('慢速 defaultServerUrl 在按 s 切换服务地址后返回 null 时不覆盖新地址且按 q 可立即退出', async () => {
@@ -1048,8 +1048,7 @@ describe('runTui 交互工作台状态流', () => {
         expect(stripAnsi(writes.join(''))).toContain('已切换到 https://kioku.example.com'),
       )
 
-      ttyIn.emit('keypress', 'q', { name: 'q' })
-      await expect(done).resolves.toBe(0)
+      expect(await quitWhenIdle(ttyIn, done)).toBe(0)
       expect(await readCliPreferences(env)).toEqual({ serverUrl: 'https://kioku.example.com' })
     } finally {
       rmSync(tmp, { recursive: true, force: true })

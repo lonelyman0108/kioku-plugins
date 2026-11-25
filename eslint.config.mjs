@@ -6,12 +6,7 @@ import tseslint from 'typescript-eslint'
 
 export default [
   {
-    ignores: [
-      '**/coverage/**',
-      '**/dist/**',
-      'packages/cli/assets/**',
-      'plugins/astrbot_plugin_kioku/**',
-    ],
+    ignores: ['**/coverage/**', '**/dist/**', 'packages/cli/assets/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended.map((config) => ({

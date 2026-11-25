@@ -20,8 +20,8 @@ export interface SourceEntry {
   source: string
   title?: string
   baseTitle?: string
-  legacyUri?: string
-  when?: Record<string, string[]>
+  projects?: string[]
+  runtimes?: string[]
   topics?: string[]
   content?: string
   disclosure?: string
@@ -34,7 +34,7 @@ export interface SourceReadResult {
   entries: SourceEntry[]
 }
 
-// 坐标里的一段：小写字母、数字、_ 与 -。别的字符换成 -；什么都不剩（例如全是中文）时用内容的摘要
+// 标签或标识的一段：小写字母、数字、_ 与 -。别的字符换成 -；什么都不剩（例如全是中文）时用内容的摘要
 export function segment(text: unknown): string {
   const slug = String(text ?? '')
     .toLowerCase()
@@ -175,22 +175,22 @@ export function sections(text: string): Array<{ heading: string | null; text: st
     .filter((part) => part.text)
 }
 
-// 记忆项：{ source, title, legacyUri, when, topics, content, disclosure }，或者 { source, skipped: 原因 }
+// 记忆项：{ source, title, projects, runtimes, topics, content, disclosure }，或者 { source, skipped: 原因 }
 function entry(
   source: string,
   {
     title,
     baseTitle,
-    legacyUri,
-    when,
+    projects,
+    runtimes,
     topics,
     content,
     disclosure,
   }: {
     title: string
     baseTitle?: string
-    legacyUri?: string
-    when?: Record<string, string[]>
+    projects?: string[]
+    runtimes?: string[]
     topics?: string[]
     content: string
     disclosure?: string
@@ -205,8 +205,8 @@ function entry(
     source,
     title: titleOf(title) || titleOf(basename(source)) || '未命名记忆',
     ...(baseTitle ? { baseTitle } : {}),
-    ...(legacyUri ? { legacyUri } : {}),
-    ...(when && Object.keys(when).length ? { when } : {}),
+    ...(projects?.length ? { projects } : {}),
+    ...(runtimes?.length ? { runtimes } : {}),
     ...(topics?.length ? { topics } : {}),
     content: text,
   }
@@ -246,16 +246,16 @@ async function markdownFiles(dir: string): Promise<string[]> {
   return names.filter((name) => name.toLowerCase().endsWith('.md')).sort()
 }
 
-// 坐标里的一段，从末尾取：太长时留后面的（路径越靠后越能区分）
+// 标识里的一段，从末尾取：太长时留后面的（路径越靠后越能区分）
 function tailSegment(text: string): string {
   const slug = segment(text.length > MAX_SEGMENT ? text.slice(-MAX_SEGMENT) : text)
   return slug.replace(/^-+/, '') || segment(text)
 }
 
 // Claude Code 把项目目录的路径编码成目录名（斜杠等换成 -），还原不回去。
-// 去掉开头的主目录与常见的上级目录，剩下的当项目名：坐标里要的是认得出的名字，不是整段路径。
-// 代价是分不清的情况会得到同一个名字（~/code/dev-proxy 与 ~/code/proxy）：这时两个项目里同名的记忆落到同一个坐标，
-// 计划里会列出来，不会悄悄顶掉。主目录对不上时（换了机器、换了用户）项目名会带着整段路径
+// 去掉开头的主目录与常见的上级目录，剩下的当项目名：标签里要的是认得出的名字，不是整段路径。
+// 代价是分不清的情况会得到同一个名字（~/code/dev-proxy 与 ~/code/proxy）：这时两个项目里同名的记忆会按来源摘要消歧，
+// 不会悄悄顶掉。主目录对不上时（换了机器、换了用户）项目名会带着整段路径
 const CONTAINERS =
   /^(documents|desktop|code|projects|project|src|work|workspace|dev|repos|git|github)-/i
 export function claudeProjectName(encoded: string, home = homedir()): string {
@@ -272,15 +272,14 @@ export function claudeProjectName(encoded: string, home = homedir()): string {
 }
 
 // Claude Code 的自动记忆：<配置目录>/projects/<项目>/memory/*.md，一个文件一条，文件头里有名字、说明与类型。
-// MEMORY.md 是索引，不是记忆；带上项目与客户端适用条件以及主题标签，同时保留旧坐标仅作迁移兜底对照
+// MEMORY.md 是索引，不是记忆；带上项目、客户端与主题标签
 async function claudeCode({
   env,
   path,
-  client,
 }: {
   env: Env
   path?: string
-  client: string
+  client?: string
 }): Promise<SourceReadResult> {
   // 先变成绝对路径：相对路径取上一级的名字会取到 . 或 ..
   const root = resolve(
@@ -330,20 +329,8 @@ async function claudeCode({
         continue
       }
       const stem = name.replace(/\.md$/i, '')
-      const id = segment(meta.name || stem)
       const type = meta['metadata.type'] || meta.type || ''
-      const legacyUri =
-        type === 'user'
-          ? `user://about/${project.name}/${id}`
-          : type === 'feedback'
-            ? `app://${client}/feedback/${project.name}/${id}`
-            : type === 'reference'
-              ? `user://reference/${project.name}/${id}`
-              : `user://projects/${project.name}/${id}`
-      const when: Record<string, string[]> =
-        type === 'feedback'
-          ? { project: [project.name], runtime: ['claudecode'] }
-          : { project: [project.name] }
+      const runtimes = type === 'feedback' ? ['claudecode'] : undefined
       const topics = ['claude-code', segment(type || 'project')]
       const baseTitle =
         titleOf(meta.description || meta.name || stem) || titleOf(stem) || '未命名记忆'
@@ -360,8 +347,8 @@ async function claudeCode({
       const built = entry(source, {
         title: itemTitle,
         ...(itemTitle !== baseTitle ? { baseTitle } : {}),
-        legacyUri,
-        when,
+        projects: [project.name],
+        ...(runtimes ? { runtimes } : {}),
         topics,
         content: body,
         disclosure: meta.description,
@@ -375,16 +362,15 @@ async function claudeCode({
   return { root, found: true, entries }
 }
 
-// 一段文字的摘要，做标题或旧坐标的消歧标识：内容不变标识就不变
+// 一段文字的摘要，做标题消歧标识：内容不变标识就不变
 function digest(text: string): string {
   return `m-${createHash('sha256').update(text).digest('hex').slice(0, 10)}`
 }
 
 interface SourceFileSpec {
   file: string
-  prefix: string
   title: string
-  when?: Record<string, string[]>
+  runtimes?: string[]
   topics: string[]
   single?: boolean
 }
@@ -396,7 +382,7 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
   if (!info?.isDirectory()) return { root, found: false, entries: [] }
   const entries: SourceEntry[] = []
   const usedTitles = new Set<string>()
-  for (const { file, prefix, title, when, topics, single } of files) {
+  for (const { file, title, runtimes, topics, single } of files) {
     const source = join(root, file)
     const read = await readable(source)
     if (!read) continue
@@ -405,12 +391,7 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
       continue
     }
     const parts = single ? [{ heading: null, text: read.text.trim() }] : sections(read.text)
-    const usedIds = new Set<string>()
     parts.forEach((part, index) => {
-      let id = part.heading ? segment(part.heading) : digest(part.text)
-      if (usedIds.has(id)) id = digest(part.text)
-      usedIds.add(id)
-
       const headingTitle = part.heading ? titleOf(part.heading) : ''
       const baseTitle = single ? titleOf(title) || title : headingTitle || titleOf(title) || title
       let itemTitle: string
@@ -435,8 +416,7 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
       entries.push(
         entry(parts.length > 1 ? `${source}（第 ${index + 1} 段）` : source, {
           title: itemTitle,
-          legacyUri: single ? prefix : `${prefix}/${id}`,
-          when,
+          ...(runtimes ? { runtimes } : {}),
           topics,
           content: part.text,
         }),
@@ -450,24 +430,21 @@ async function fromFiles(root: string, files: SourceFileSpec[]): Promise<SourceR
 function hermes({
   env,
   path,
-  client,
 }: {
   env: Env
   path?: string
-  client: string
+  client?: string
 }): Promise<SourceReadResult> {
   const root = resolve(path ?? join(env.HERMES_HOME || join(homedir(), '.hermes'), 'memories'))
   return fromFiles(root, [
     {
       file: 'MEMORY.md',
-      prefix: `app://${client}/hermes/notes`,
       title: 'Hermes 的记忆',
-      when: { runtime: ['hermes'] },
+      runtimes: ['hermes'],
       topics: ['hermes', 'notes'],
     },
     {
       file: 'USER.md',
-      prefix: 'user://about/hermes',
       title: 'Hermes 记下的个人偏好',
       topics: ['hermes', 'about'],
     },
@@ -479,11 +456,10 @@ function hermes({
 async function openclaw({
   env,
   path,
-  client,
 }: {
   env: Env
   path?: string
-  client: string
+  client?: string
 }): Promise<SourceReadResult> {
   const root = resolve(path ?? join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'workspace'))
   const notes = join(root, 'memory')
@@ -496,9 +472,8 @@ async function openclaw({
       const suffix = stem.slice(11)
       return {
         file: join('memory', name),
-        prefix: `app://${client}/openclaw/journal/${segment(stem)}`,
         title: suffix ? `${stem.slice(0, 10)} 的笔记（${suffix}）` : `${stem} 的笔记`,
-        when: { runtime: ['openclaw'] },
+        runtimes: ['openclaw'],
         topics: ['openclaw', 'journal'],
         single: true,
       }
@@ -506,14 +481,12 @@ async function openclaw({
   return fromFiles(root, [
     {
       file: 'MEMORY.md',
-      prefix: `app://${client}/openclaw/notes`,
       title: 'OpenClaw 的记忆',
-      when: { runtime: ['openclaw'] },
+      runtimes: ['openclaw'],
       topics: ['openclaw', 'notes'],
     },
     {
       file: 'USER.md',
-      prefix: 'user://about/openclaw',
       title: 'OpenClaw 记下的个人偏好',
       topics: ['openclaw', 'about'],
     },
@@ -525,7 +498,7 @@ export const SOURCES: Record<
   string,
   {
     name: string
-    read: (opts: { env: Env; path?: string; client: string }) => Promise<SourceReadResult>
+    read: (opts: { env: Env; path?: string; client?: string }) => Promise<SourceReadResult>
   }
 > = {
   'claude-code': { name: 'Claude Code 的自动记忆', read: claudeCode },

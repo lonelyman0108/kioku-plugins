@@ -10,27 +10,21 @@ import { doctor } from '../doctor.ts'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-cc',
+    name: 'Claude Code',
+    prefix: 'kioku_cc',
+    runtimeFamily: 'claudecode',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'cc',
     name: 'Claude Code',
     runtimeFamily: 'claudecode',
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry', 'fact', 'episode'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'private',
-    admin: false,
-    credentials: 'use',
   },
 }
 
@@ -82,15 +76,15 @@ describe('kioku doctor', () => {
     expect(requests[0].headers.authorization).toBe(`Bearer ${KEY}`)
     expect(result.lines).toEqual([
       `✓ 地址 ${base}`,
-      '✓ 访问密钥可用：客户端 Claude Code（cc），运行时 claudecode',
-      '  主圈：个人圈（个人圈 · personal）',
-      '  读：会话摘要、联系人事实、正式记忆',
-      '  写：正式记忆',
-      '  最高敏感级：私密',
-      '  凭据：取用',
+      '✓ 访问密钥可用：Claude Code（kioku_cc），运行时 claudecode',
+      '  账号：owner',
+      '  写入权限：可写',
+      '  凭据注入：禁止',
+      '  场域范围：不限',
       '✓ Claude Code 的 kioku 插件已启用',
       '✓ Claude Code 的自动记忆（auto memory）已停用（用户设置）',
     ])
+    expect(result.text).not.toMatch(/^! /m)
     expect(result.text).not.toContain(KEY)
   })
 
@@ -123,26 +117,30 @@ describe('kioku doctor', () => {
     expect(result.text).not.toContain('插件')
   })
 
-  it('客户端的运行时和平台对不上时提醒，并支持关联圈/人格/默认语境展示', async () => {
+  it('访问密钥的运行时和平台对不上时提醒，并展示默认环境、场域范围与凭据权限', async () => {
     reply = () => ({
       status: 200,
       body: {
         ...WHO,
-        linkedCircles: [
-          { id: 'c2', slug: 'team', name: '团队圈', kind: 'shared', mode: 'read_write' },
-        ],
-        persona: { id: 'p1', slug: 'mentor', name: '代码导师' },
-        resolvedFacets: { realm: ['work'] },
+        key: {
+          ...WHO.key,
+          runtimeFamily: 'codex',
+          envs: ['mac', 'linux'],
+          allowedRealms: ['work'],
+          canWrite: false,
+          canResolveCredentials: true,
+        },
         client: { ...WHO.client, runtimeFamily: 'codex' },
       },
     })
     const result = await run(['claude-code'])
     expect(result.code).toBe(0)
-    expect(result.text).toContain('关联圈：团队圈（读写）')
-    expect(result.text).toContain('独立人格：代码导师（mentor）')
-    expect(result.text).toContain('默认语境：realm=work')
-    expect(result.text).toContain('! 这个客户端的运行时不是 claudecode')
-    expect(result.text).toContain('「客户端」页')
+    expect(result.text).toContain('写入权限：只读')
+    expect(result.text).toContain('凭据注入：允许')
+    expect(result.text).toContain('默认环境：mac、linux')
+    expect(result.text).toContain('场域范围：work')
+    expect(result.text).toContain('! 这个访问密钥的运行时不是 claudecode')
+    expect(result.text).toContain('「设置 → 连接与终端」')
   })
 
   it('访问密钥无效、跳转、连不上、响应不对都是 ✗，退出码 1，平台的配置照查', async () => {
@@ -154,21 +152,21 @@ describe('kioku doctor', () => {
       [
         () => ({
           status: 200,
-          body: { primaryCircle: WHO.primaryCircle, client: WHO.client, scopes: null },
+          body: { accountName: 'owner', client: WHO.client, key: null },
         }),
         '✗ Kioku 的响应格式不对',
       ],
       [
         () => ({
           status: 200,
-          body: { ...WHO, linkedCircles: 'not-an-array' },
+          body: { ...WHO, key: { ...WHO.key, allowedRealms: 'not-an-array' } },
         }),
         '✗ Kioku 的响应格式不对',
       ],
       [
         () => ({
           status: 200,
-          body: { ...WHO, scopes: [] },
+          body: { ...WHO, key: { ...WHO.key, canWrite: 'yes' } },
         }),
         '✗ Kioku 的响应格式不对',
       ],
@@ -203,23 +201,21 @@ describe('kioku doctor', () => {
   it('服务端给的名字里的控制字符不原样打印', async () => {
     reply = () => ({
       status: 200,
-      body: { ...WHO, client: { ...WHO.client, name: '甲\n✓ 假的一行\u001b[2J' } },
+      body: { ...WHO, key: { ...WHO.key, name: '甲\n✓ 假的一行\u001b[2J' } },
     })
     const result = await run()
-    expect(result.lines[1]).toBe(
-      '✓ 访问密钥可用：客户端 甲 ✓ 假的一行 [2J（cc），运行时 claudecode',
-    )
+    expect(result.lines[1]).toBe('✓ 访问密钥可用：甲 ✓ 假的一行 [2J（kioku_cc），运行时 claudecode')
     // 行分隔符、段落分隔符与改变显示方向的字符也一样；截断不切开表情
     reply = () => ({
       status: 200,
       body: {
         ...WHO,
-        client: { ...WHO.client, name: `乙\u2028丙\u2029丁\u202e戊${'😀'.repeat(300)}` },
+        key: { ...WHO.key, name: `乙\u2028丙\u2029丁\u202e戊${'😀'.repeat(300)}` },
       },
     })
     const separators = await run()
-    expect(separators.lines).toHaveLength(8)
-    expect(separators.lines[1]).toContain(`客户端 乙 丙 丁 戊${'😀'.repeat(193)}（cc）`)
+    expect(separators.lines).toHaveLength(7)
+    expect(separators.lines[1]).toContain(`乙 丙 丁 戊${'😀'.repeat(193)}（kioku_cc）`)
   })
 
   it('地址里的账号密码与查询参数不打印且会拒绝带凭据的 KIOKU_SERVER_URL', async () => {

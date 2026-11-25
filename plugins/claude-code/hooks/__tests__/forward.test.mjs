@@ -298,12 +298,11 @@ describe('Claude Code 钩子转发', () => {
         '只在 /plugin 里填写了服务地址或访问密钥中的一项',
       )
 
-      // 服务端待迁移（503 legacy_database）在会话开始给出引导提示
-      reply = () => ({ status: 503, body: { error: '待迁移', code: 'legacy_database' } })
-      const legacyDbStart = await run('session.start', {}, { url: base, key: 'kioku_test_key' })
-      expect(JSON.parse(legacyDbStart.stdout).hookSpecificOutput.additionalContext).toContain(
-        '/legacy-upgrade',
-      )
+      // 数据库暂时不可用（503 database_unavailable）时静默不注入上下文，标准错误写明原因
+      reply = () => ({ status: 503, body: { error: '数据库不可用', code: 'database_unavailable' } })
+      const dbDownStart = await run('session.start', {}, { url: base, key: 'kioku_test_key' })
+      expect(dbDownStart).toMatchObject({ code: 0, stdout: '' })
+      expect(dbDownStart.stderr).toContain('数据库暂时无法连接')
     } finally {
       rmSync(cfgDir, { recursive: true, force: true })
     }

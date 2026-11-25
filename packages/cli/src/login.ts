@@ -1,5 +1,5 @@
 // kioku login：浏览器授权。命令行向 Kioku 申请，显示一个确认码；用户在管理界面的确认页输入它、
-// 选好记忆圈与权限后确认，命令行取走访问密钥，交给这个平台的 kioku setup 写下。
+// 选好场域、环境与权限后确认，命令行取走访问密钥，交给这个平台的 kioku setup 写下。
 // 访问密钥不显示、不写进输出；确认码不放进打开的地址里，要用户照着终端输入：别人发来的链接带不了它。
 // 服务端的回答不全信：确认页的路径只收一种写法，时限与间隔收在一个范围里
 
@@ -18,7 +18,7 @@ import type { Env, Reader, Writer } from './types.ts'
 export const LOGIN_USAGE = `用法：kioku login <平台> [--server-url <地址>] [--no-browser] [--remove-conflicts]
 
 用浏览器授权给这个平台签发一个访问密钥并配好，不用手动复制：终端显示一个确认码，
-在 Kioku 管理界面的确认页输入它，选好记忆圈与权限后确认。
+在 Kioku 管理界面的确认页输入它，选好场域、环境与权限后确认。
 
   <平台>               ${platformNames()}
   --server-url <地址>  Kioku 的服务地址，例如 https://kioku.example.com（也可以用 KIOKU_SERVER_URL；配过的沿用上次的）
@@ -43,7 +43,7 @@ class Redirected extends KiokuFailure {}
 
 // 取走访问密钥这一步之后出的问题：访问密钥可能已经签发、却没有落到这台机器上
 const ORPHAN_HINT =
-  '如果确认页上已经点了确认，可能已经签发了一个没被取走的访问密钥：到管理界面的「客户端」页吊销它，再重新运行'
+  '如果确认页上已经点了确认，可能已经签发了一个没被取走的访问密钥：到管理界面的「设置 → 连接与终端」吊销它，再重新运行'
 
 async function post(
   url: string,

@@ -26,9 +26,13 @@ const VALUES = {
   'pg-main#password': 'pg-secret-1',
   'pg-main#username': 'app-user',
   'pin#code': 'abc',
+  'github-token': 'ghp-secret-1',
+  'db.prod': 'prod-secret-1',
+  'foo#': 'foo-main-secret',
+  'foo#value': 'foo-field-secret',
 }
 
-// 一个假的 Kioku：记下收到的请求，按 reply 返回；默认按 VALUES 给值
+// 一个假的 Kioku：记下收到的请求，按 reply 返回；默认按 VALUES 给值，裸标识按服务端规范回 field: 'value'
 let server
 let base
 let requests = []
@@ -36,7 +40,14 @@ let reply
 const defaultReply = (body) => ({
   status: 200,
   body: {
-    values: body.refs.map((r) => ({ ...r, value: VALUES[`${r.identifier}#${r.field}`] })),
+    values: body.refs.map((r) => {
+      const value =
+        r.field === undefined
+          ? (VALUES[`${r.identifier}#`] ?? VALUES[r.identifier])
+          : VALUES[`${r.identifier}#${r.field}`]
+      return { identifier: r.identifier, field: r.field ?? 'value', value }
+    }),
+    expired: [],
   },
 })
 
@@ -162,6 +173,42 @@ describe('kioku run 的参数', () => {
     expect(parseRunArgs(['-e', 'X=a#b', '--help'])).toEqual({ help: true })
   })
 
+  it('支持裸标识、带点号标识与同时取裸标识及 #value', () => {
+    expect(
+      parseRunArgs([
+        '-e',
+        'TOKEN=github-token',
+        '-e',
+        'TOKEN2=github-token',
+        '-e',
+        'PROD=db.prod',
+        '-e',
+        'A=foo',
+        '-e',
+        'B=foo#value',
+        '--',
+        'env',
+      ]),
+    ).toEqual({
+      refs: [
+        { identifier: 'github-token' },
+        { identifier: 'db.prod' },
+        { identifier: 'foo' },
+        { identifier: 'foo', field: 'value' },
+      ],
+      variables: [
+        ['TOKEN', 0],
+        ['TOKEN2', 0],
+        ['PROD', 1],
+        ['A', 2],
+        ['B', 3],
+      ],
+      purpose: undefined,
+      command: 'env',
+      args: [],
+    })
+  })
+
   it('各种写错的参数都报出来', () => {
     expect(usage([])).toContain('--')
     expect(usage(['-e', 'X=a#b'])).toContain('--')
@@ -170,10 +217,29 @@ describe('kioku run 的参数', () => {
     expect(usage(['-e', 'X=a#b', '--', ''])).toContain('命令')
     expect(usage(['--', 'echo'])).toContain('-e')
     expect(usage(['-e'])).toContain('-e')
-    for (const spec of ['X', '=a#b', 'X=', 'X=a', 'X=a#', 'X=#b', 'X=a#b#c', 'X=A#b', 'X=a#B']) {
+    for (const spec of [
+      'X',
+      '=a#b',
+      'X=',
+      'X=a#',
+      'X=#b',
+      'X=a#b#c',
+      'X=A',
+      'X=.a',
+      'X=-a',
+      'X=A#b',
+      'X=a#B',
+      'X=a#b.c',
+    ]) {
       usage(['-e', spec, '--', 'echo'])
     }
-    for (const spec of ['X=-a#b', 'X=a#_b', `X=${'a'.repeat(65)}#b`, 'X=a b#c']) {
+    for (const spec of [
+      'X=-a#b',
+      'X=a#_b',
+      `X=${'a'.repeat(65)}`,
+      `X=${'a'.repeat(65)}#b`,
+      'X=a b#c',
+    ]) {
       usage(['-e', spec, '--', 'echo'])
     }
     // 等号后面可能误填了值本身，报错里不复述
@@ -188,7 +254,7 @@ describe('kioku run 的参数', () => {
     )
     expect(usage(['-e', 'X=a#b', '--purpose'])).toContain('用途')
     expect(usage(['-e', 'X=a#b', '--bogus', '--', 'echo'])).toContain('--bogus')
-    const many = Array.from({ length: 33 }, (_, i) => ['-e', `V${i}=c${i}#password`]).flat()
+    const many = Array.from({ length: 33 }, (_, i) => ['-e', `V${i}=c${i}`]).flat()
     expect(usage([...many, '--', 'echo'])).toContain('32')
   })
 
@@ -196,7 +262,7 @@ describe('kioku run 的参数', () => {
     for (const args of [
       ['run'],
       ['run', '-e', 'X=a#b', 'echo'],
-      ['run', '-e', 'X=a', '--', 'echo'],
+      ['run', '-e', 'X=a#', '--', 'echo'],
       ['run', '-e', 'X=a#b', '--'],
     ]) {
       const result = await kioku(args)
@@ -228,11 +294,14 @@ describe('kioku run 的参数', () => {
       expect(result.stdout).toContain('用法：kioku run')
       expect(result.stdout).toContain('@kioku-memory/cli')
     }
-    for (const sub of ['setup', 'doctor']) {
+    for (const sub of ['setup', 'doctor', 'migrate']) {
       const redirected = await kioku([sub, '--help'])
       expect(redirected.code).toBe(2)
       expect(redirected.stderr).toContain(`npx @kioku-memory/cli ${sub}`)
     }
+    const dropped = await kioku(['transfer'])
+    expect(dropped.code).toBe(2)
+    expect(dropped.stderr).toContain('不认识的子命令 transfer')
   })
 
   posixOnly('bin/kioku 可以直接执行', async () => {
@@ -288,6 +357,61 @@ describe('kioku run', () => {
         { identifier: 'pg-main', field: 'username' },
       ],
       purpose: '备份数据库',
+    })
+  })
+
+  it('支持裸标识取值、点号标识、同时取裸标识与 #value，以及空字符报错不带 undefined', async () => {
+    const result = await kioku([
+      'run',
+      '-e',
+      'TOKEN=github-token',
+      '-e',
+      'PROD=db.prod',
+      '-e',
+      'A=foo',
+      '-e',
+      'B=foo#value',
+      ...node(`
+        const { TOKEN, PROD, A, B } = process.env
+        console.log(TOKEN + ' ' + PROD + ' ' + A + ' ' + B)
+        console.log(JSON.stringify([TOKEN, PROD, A, B].map((v) => Buffer.from(v).toString('hex'))))
+      `),
+    ])
+    expect(result.code).toBe(0)
+    expect(requests[0].body).toEqual({
+      refs: [
+        { identifier: 'github-token' },
+        { identifier: 'db.prod' },
+        { identifier: 'foo' },
+        { identifier: 'foo', field: 'value' },
+      ],
+    })
+    const expectedHex = [
+      'ghp-secret-1',
+      'prod-secret-1',
+      'foo-main-secret',
+      'foo-field-secret',
+    ].map((v) => Buffer.from(v).toString('hex'))
+    expect(result.stdout).toBe(`*** *** *** ***\n${JSON.stringify(expectedHex)}\n`)
+
+    reply = () => ({
+      status: 200,
+      body: { values: [{ identifier: 'github-token', field: 'value', value: 'bad\0val' }] },
+    })
+    const withNul = await kioku(['run', '-e', 'TOKEN=github-token', '--', 'true'])
+    expect(withNul).toMatchObject({
+      code: 2,
+      stderr: 'kioku：github-token 的值含有空字符，放不进环境变量\n',
+    })
+
+    reply = () => ({
+      status: 503,
+      body: { error: '数据库暂时无法连接', code: 'database_unavailable' },
+    })
+    const dbDown = await kioku(['run', '-e', 'TOKEN=github-token', '--', 'true'])
+    expect(dbDown).toMatchObject({
+      code: 2,
+      stderr: 'kioku：Kioku 的数据库暂时无法连接，请稍后重试\n',
     })
   })
 

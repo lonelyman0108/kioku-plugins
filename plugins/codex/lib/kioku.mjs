@@ -5,7 +5,7 @@ import { parseRunArgs, run, USAGE, UsageError } from './run.mjs'
 
 export { parseRunArgs, run, USAGE, UsageError }
 
-const OVERVIEW = `用法：kioku run -e 变量=<标识>#<字段> [-e …] [--purpose <用途>] -- <命令> [参数…]
+const OVERVIEW = `用法：kioku run -e 变量=<标识>[#<字段>] [-e …] [--purpose <用途>] -- <命令> [参数…]
 
 插件目录内置的命令行入口仅包含 kioku run（向 Kioku 取凭据，放进环境变量并打码输出）。
 向导、接入管理与记忆读写等完整功能见 @kioku-memory/cli：
@@ -37,7 +37,6 @@ const FULL_CLI_COMMANDS = new Set([
   'edit',
   'delete',
   'rm',
-  'transfer',
   'boot',
 ])
 

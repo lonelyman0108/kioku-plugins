@@ -35,10 +35,7 @@ export const TOOL_NAMES = [
   'kioku_create',
   'kioku_update',
   'kioku_delete',
-  'kioku_transfer',
-  'kioku_credential',
-  'kioku_credential_save',
-  'kioku_credential_delete',
+  'kioku_list_credentials',
 ]
 
 // OpenClaw 自己的入口（命令行、终端界面、控制界面、网关的 HTTP 接口）用的内部通道名，过了网关鉴权的才到得了
@@ -267,11 +264,7 @@ export function createKioku({ env = process.env, now = Date.now } = {}) {
       if (event !== 'turn.end') quietUntil = now() + BACKOFF
       // 服务地址返回跳转多半是地址写错了，说明怎么改；也可能只是一时的（维护页），所以照样隔一阵再试
       if (err instanceof Misconfigured) {
-        tell(
-          err.kind === 'legacy'
-            ? `Kioku 长期记忆不可用：${err.message}。`
-            : `Kioku 这次没有生效：${err.message}。${SETUP_HINT}`,
-        )
+        tell(`Kioku 这次没有生效：${err.message}。${SETUP_HINT}`)
       } else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
       return undefined
     }

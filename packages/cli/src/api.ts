@@ -8,12 +8,8 @@ import {
   failureText,
   fetchFailure,
   isRedirect,
-  LEGACY_DATABASE_CODE,
-  legacyDatabaseText,
   plain,
   redirectError,
-  rejectionOf,
-  shownUrl,
 } from './core.ts'
 import type { TargetConfig, WhoamiResponse } from './types.ts'
 
@@ -22,16 +18,15 @@ export { KeyRejected }
 const TIMEOUT = 8000
 const PROBE_TIMEOUT = 5000
 
-// 这个命令行能接的服务端接口代际：记忆圈重构换了一代，接口与访问密钥都不兼容上一代
-export const SUPPORTED_API = 2
+// 这个命令行能接的服务端接口代际：扁平架构换了一代，与旧代服务端接口不兼容
+export const SUPPORTED_API = 3
 
 // 服务端的现状：
 // - generation：接口代际，健康检查里没有 api 字段的旧服务端按 1 算；连不上、认不出是 Kioku 时为 null
-// - state：ok 正常；legacy 服务端已升级、库还是旧结构，等管理员迁移；unavailable 数据库暂时连不上；
-//   unreachable 连不上、返回跳转或者不像 Kioku（原因在 problem）
+// - state：ok 正常；unavailable 数据库暂时连不上；unreachable 连不上、返回跳转或者不像 Kioku（原因在 problem）
 export interface ServerProbe {
   generation: number | null
-  state: 'ok' | 'legacy' | 'unavailable' | 'unreachable'
+  state: 'ok' | 'unavailable' | 'unreachable'
   version: string | null
   problem?: string
 }
@@ -73,13 +68,10 @@ export async function probeServer(url: string): Promise<ServerProbe> {
     const code = errorCodeOf(data)
     const isKiokuUnavailable =
       data.status === 'unavailable' ||
-      data.database === 'legacy' ||
       data.database === 'unavailable' ||
-      code === LEGACY_DATABASE_CODE ||
       code === DATABASE_UNAVAILABLE_CODE
     if (isKiokuUnavailable) {
-      const legacy = data.database === 'legacy' || code === LEGACY_DATABASE_CODE
-      return { generation, state: legacy ? 'legacy' : 'unavailable', version }
+      return { generation, state: 'unavailable', version }
     }
   }
   return {
@@ -91,21 +83,20 @@ export async function probeServer(url: string): Promise<ServerProbe> {
 }
 
 export function olderServerText(version: string | null): string {
-  return `服务端是记忆圈重构之前的版本（${version ?? '版本未知'}），这个命令行需要新版服务端：先升级服务端（升级后在管理界面按引导一键迁移），或者暂时使用 npx @kioku-memory/cli@0.5`
+  return `服务端版本过旧（${version ?? '版本未知'}），当前命令行需要新版服务端：先升级服务端，或者改用旧版命令行`
 }
 
 export function newerServerText(generation: number): string {
-  return `服务端的接口是第 ${generation} 代，比这个命令行新：升级命令行（npx @kioku-memory/cli@latest）`
+  return `服务端的接口是第 ${generation} 代，比当前命令行新：升级命令行（npx @kioku-memory/cli@latest）`
 }
 
 export const UNAVAILABLE_TEXT = 'Kioku 的数据库暂时无法连接：稍后再试，或者让管理员查看服务端日志'
 
-// 这个服务端不能直接接的原因（代际不对、库待迁移）；能接、或者连不上（由后面的请求报）时为 null
-export function generationProblem(probe: ServerProbe, url: string): string | null {
+// 这个服务端不能直接接的原因（代际不对）；能接、或者连不上（由后面的请求报）时为 null
+export function generationProblem(probe: ServerProbe): string | null {
   if (probe.state === 'unreachable' || probe.generation === null) return null
   if (probe.generation < SUPPORTED_API) return olderServerText(probe.version)
   if (probe.generation > SUPPORTED_API) return newerServerText(probe.generation)
-  if (probe.state === 'legacy') return legacyDatabaseText(url)
   return null
 }
 
@@ -118,26 +109,25 @@ export class ServerMismatch extends KiokuFailure {
   }
 }
 
-// 走服务端的入口先调它：代际不对、库待迁移、数据库连不上时抛 ServerMismatch；连不上的交给后面的请求去报
+// 走服务端的入口先调它：代际不对、数据库连不上时抛 ServerMismatch；连不上的交给后面的请求去报
 export async function assertServerSupported(url: string): Promise<ServerProbe> {
   const probe = await probeServer(url)
-  const problem = generationProblem(probe, url)
+  const problem = generationProblem(probe)
   if (problem) throw new ServerMismatch(problem, probe)
   if (probe.state === 'unavailable') throw new ServerMismatch(UNAVAILABLE_TEXT, probe)
   return probe
 }
 
 // 请求失败之后再看一眼健康检查：是代际或库的问题就换成那个说法，否则用原来的失败
-async function explained(url: string, fallback: KiokuFailure): Promise<KiokuFailure> {
+export async function explained(url: string, fallback: KiokuFailure): Promise<KiokuFailure> {
   const probe = await probeServer(url)
-  const problem = generationProblem(probe, url)
+  const problem = generationProblem(probe)
   if (problem) return new ServerMismatch(problem, probe)
   if (probe.state === 'unavailable') return new ServerMismatch(UNAVAILABLE_TEXT, probe)
   return fallback
 }
 
-// 这个访问密钥对应的客户端与权限；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出。
-// 访问密钥被拒时抛 KeyRejected（legacy 为真时是升级前签发的）；响应不对时先看服务端的代际
+// 这个访问密钥对应的账号、客户端与权限范围；连不上、跳转、访问密钥无效、响应不对都以 KiokuFailure 抛出。
 export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse> {
   let res: Response
   let data: unknown
@@ -155,57 +145,70 @@ export async function whoami({ url, key }: TargetConfig): Promise<WhoamiResponse
   if (isRedirect(res.status)) {
     throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
   }
-  const rejected = res.ok ? null : rejectionOf(res.status, data, url)
-  if (rejected) throw rejected
+  if (res.status === 401) throw new KeyRejected()
   if (res.status === 503 && errorCodeOf(data) === DATABASE_UNAVAILABLE_CODE) {
-    throw await explained(url, new KiokuFailure(UNAVAILABLE_TEXT))
+    throw await explained(
+      url,
+      new ServerMismatch(UNAVAILABLE_TEXT, {
+        generation: SUPPORTED_API,
+        state: 'unavailable',
+        version: null,
+      }),
+    )
   }
   if (!res.ok) throw await explained(url, new KiokuFailure(`Kioku 返回 HTTP ${res.status}`))
   const record = data as Partial<WhoamiResponse> | null
-  const primaryKind = record?.primaryCircle?.kind
+  const keyInfo = record?.key
+  const clientInfo = record?.client
+  const realmsValid =
+    keyInfo?.allowedRealms === null ||
+    (Array.isArray(keyInfo?.allowedRealms) &&
+      keyInfo.allowedRealms.every((item) => typeof item === 'string'))
   if (
-    typeof record?.client?.runtimeFamily !== 'string' ||
-    typeof record?.client?.slug !== 'string' ||
-    typeof record?.client?.name !== 'string' ||
-    (record.client.id !== undefined && typeof record.client.id !== 'string') ||
-    (record.client.circleId !== undefined && typeof record.client.circleId !== 'string') ||
-    typeof record?.primaryCircle?.id !== 'string' ||
-    typeof record?.primaryCircle?.slug !== 'string' ||
-    typeof record?.primaryCircle?.name !== 'string' ||
-    (primaryKind !== undefined && primaryKind !== 'personal' && primaryKind !== 'shared') ||
-    (record.linkedCircles !== undefined && !Array.isArray(record.linkedCircles)) ||
-    !record.scopes ||
-    typeof record.scopes !== 'object' ||
-    Array.isArray(record.scopes) ||
-    (record.scopes.readKinds !== undefined && !Array.isArray(record.scopes.readKinds)) ||
-    (record.scopes.writeKinds !== undefined && !Array.isArray(record.scopes.writeKinds))
+    typeof record?.accountName !== 'string' ||
+    !keyInfo ||
+    typeof keyInfo !== 'object' ||
+    typeof keyInfo.id !== 'string' ||
+    typeof keyInfo.name !== 'string' ||
+    typeof keyInfo.prefix !== 'string' ||
+    typeof keyInfo.runtimeFamily !== 'string' ||
+    !Array.isArray(keyInfo.envs) ||
+    keyInfo.envs.some((item) => typeof item !== 'string') ||
+    !realmsValid ||
+    typeof keyInfo.canWrite !== 'boolean' ||
+    typeof keyInfo.canResolveCredentials !== 'boolean' ||
+    typeof clientInfo?.runtimeFamily !== 'string' ||
+    typeof clientInfo?.slug !== 'string' ||
+    typeof clientInfo?.name !== 'string'
   ) {
     throw await explained(url, new KiokuFailure('Kioku 的响应格式不对'))
   }
-  const isObj = (v: unknown): v is Record<string, string[]> =>
-    Boolean(v && typeof v === 'object' && !Array.isArray(v))
+  const circle = record.primaryCircle
+  const validCircle =
+    circle &&
+    typeof circle === 'object' &&
+    typeof circle.slug === 'string' &&
+    typeof circle.name === 'string' &&
+    circle.kind === 'personal'
+      ? { slug: circle.slug, name: circle.name, kind: 'personal' as const }
+      : undefined
   return {
-    ...(record as WhoamiResponse),
-    primaryCircle: {
-      ...record.primaryCircle,
-      kind: primaryKind ?? 'personal',
+    accountName: record.accountName,
+    key: {
+      id: keyInfo.id,
+      name: keyInfo.name,
+      prefix: keyInfo.prefix,
+      runtimeFamily: keyInfo.runtimeFamily,
+      envs: keyInfo.envs,
+      allowedRealms: keyInfo.allowedRealms,
+      canWrite: keyInfo.canWrite,
+      canResolveCredentials: keyInfo.canResolveCredentials,
     },
-    linkedCircles: Array.isArray(record.linkedCircles) ? record.linkedCircles : [],
-    persona:
-      record.persona &&
-      typeof record.persona === 'object' &&
-      typeof record.persona.id === 'string' &&
-      typeof record.persona.slug === 'string' &&
-      typeof record.persona.name === 'string'
-        ? record.persona
-        : null,
-    contextFacets: isObj(record.contextFacets) ? record.contextFacets : undefined,
-    resolvedFacets: isObj(record.resolvedFacets) ? record.resolvedFacets : undefined,
-    vocabulary: Array.isArray(record.vocabulary) ? record.vocabulary : undefined,
+    client: {
+      slug: clientInfo.slug,
+      name: clientInfo.name,
+      runtimeFamily: clientInfo.runtimeFamily,
+    },
+    ...(validCircle ? { primaryCircle: validCircle } : {}),
   }
-}
-
-// 地址只给协议、主机与路径，给提示文字用
-export function upgradePageOf(url: string): string {
-  return `${shownUrl(url)}/legacy-upgrade`
 }
