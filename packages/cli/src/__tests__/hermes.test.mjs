@@ -20,26 +20,21 @@ import { setup } from '../setup.ts'
 
 const KEY = 'kioku_test_key'
 const WHO = {
-  primaryCircle: {
-    id: '00000000-0000-4000-8000-000000000001',
-    slug: 'personal',
-    name: '个人圈',
-    kind: 'personal',
+  accountName: 'owner',
+  key: {
+    id: 'key-hermes',
+    name: 'Hermes',
+    prefix: 'kioku_hermes',
+    runtimeFamily: 'hermes',
+    envs: [],
+    allowedRealms: null,
+    canWrite: true,
+    canResolveCredentials: false,
   },
-  linkedCircles: [],
   client: {
-    id: 'a',
-    circleId: '00000000-0000-4000-8000-000000000001',
     slug: 'hermes',
     name: 'Hermes',
     runtimeFamily: 'hermes',
-  },
-  persona: null,
-  scopes: {
-    readKinds: ['entry'],
-    writeKinds: ['entry'],
-    maxSensitivity: 'internal',
-    credentials: 'none',
   },
 }
 

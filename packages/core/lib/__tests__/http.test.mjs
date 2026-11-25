@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { errorKind, failureText, fetchFailure, keyFormatError, KiokuFailure } from '../http.mjs'
+import {
+  DATABASE_UNAVAILABLE_CODE,
+  DatabaseUnavailable,
+  errorKind,
+  failureText,
+  fetchFailure,
+  keyFormatError,
+  KeyRejected,
+  KiokuFailure,
+  rejectionOf,
+} from '../http.mjs'
 
 const KEY = 'kioku_test_key'
 
@@ -37,5 +47,18 @@ describe('访问密钥检查与报错', () => {
     expect(failureText(Object.assign(new Error(`open ${KEY}`), { code: 'ENOENT' }))).toBe('ENOENT')
     expect(errorKind(Object.assign(new Error('x'), { code: KEY, name: KEY }))).toBe('未知错误')
     expect(errorKind('不是错误对象')).toBe('未知错误')
+  })
+
+  it('rejectionOf 识别 401 与 503 database_unavailable，其余返回 null', () => {
+    const unauth = rejectionOf(401, { error: 'invalid' })
+    expect(unauth).toBeInstanceOf(KeyRejected)
+    expect(unauth.message).toBe('访问密钥无效或已吊销')
+
+    const dbDown = rejectionOf(503, { code: DATABASE_UNAVAILABLE_CODE, error: 'down' })
+    expect(dbDown).toBeInstanceOf(DatabaseUnavailable)
+    expect(dbDown.message).toContain('数据库暂时无法连接')
+
+    expect(rejectionOf(503, {})).toBeNull()
+    expect(rejectionOf(500, { code: DATABASE_UNAVAILABLE_CODE })).toBeNull()
   })
 })

@@ -65,13 +65,13 @@ export async function resolveTarget(
   const expectedFamily = runtimeFamily ?? id
   if (key && options.check) {
     const who = await whoami({ url, key })
-    const family = who.client.runtimeFamily
+    const family = who.key.runtimeFamily
     out.write(
-      `✓ 访问密钥可用：客户端 ${formatPlain(who.client.name)}，运行时 ${formatPlain(family)}\n`,
+      `✓ 访问密钥可用：${formatPlain(who.key.name)}（${formatPlain(who.key.prefix)}），运行时 ${formatPlain(family)}\n`,
     )
     if (family !== expectedFamily) {
       out.write(
-        `! 这个客户端的运行时不是 ${expectedFamily}，注入的内容不按 ${name} 的格式：在管理界面「客户端」页为 ${name} 另建一个客户端\n`,
+        `! 这个访问密钥的运行时不是 ${expectedFamily}，注入的内容不按 ${name} 的格式：在管理界面「设置 → 连接与终端」为 ${name} 另建一个访问密钥\n`,
       )
     }
   }

@@ -21,7 +21,6 @@ import { OPENCODE_PLUGIN, opencodeHome } from './opencode.ts'
 import { resolvePlatformCommand } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
-import { kindLabel, sensitivityBadge, sortEntryKinds } from './ui/theme.ts'
 
 export const CLI_VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -429,25 +428,20 @@ export function formatHandshakeLines(report: HandshakeReport): string[] {
     return [`✗ 连通测试失败：${report.problem ?? '未知错误'}`]
   }
   const { who, toolCount } = report
-  const circle = who.primaryCircle.name
-    ? plain(who.primaryCircle.name)
-    : who.primaryCircle.slug
-      ? plain(who.primaryCircle.slug)
-      : plain(who.primaryCircle.id).slice(0, 8)
-  const linkedCount = Array.isArray(who.linkedCircles) ? who.linkedCircles.length : 0
-  const linkedNote = linkedCount > 0 ? `（含 ${linkedCount} 个关联圈）` : ''
-  const readScopes =
-    sortEntryKinds(who.scopes.readKinds ?? [])
-      .map(kindLabel)
-      .join('、') || '无'
-  const writeScopes =
-    sortEntryKinds(who.scopes.writeKinds ?? [])
-      .map(kindLabel)
-      .join('、') || '无'
-  const maxSens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal')
+  const writeText = who.key.canWrite ? '可写' : '只读'
+  const credText = who.key.canResolveCredentials ? '允许凭据注入' : '禁止凭据注入'
+  const realmText =
+    who.key.allowedRealms === null
+      ? '全部场域'
+      : who.key.allowedRealms.length
+        ? `场域 ${who.key.allowedRealms.map((r) => plain(r)).join('、')}`
+        : '仅通用记忆'
+  const envNote = who.key.envs.length
+    ? ` · 环境 ${who.key.envs.map((e) => plain(e)).join('、')}`
+    : ''
   const mcpNote = typeof toolCount === 'number' ? ` · MCP 工具 ${toolCount} 个` : ''
   return [
-    `✓ 握手成功：客户端 ${plain(who.client.name)}（${plain(who.client.slug)}） · 主圈 ${circle}${linkedNote}${mcpNote}`,
-    `  读形态：${readScopes} · 写形态：${writeScopes} · 上限：${maxSens}`,
+    `✓ 握手成功：${plain(who.key.name)}（${plain(who.key.prefix)}） · 账号 ${plain(who.accountName)}${mcpNote}`,
+    `  ${writeText} · ${credText} · ${realmText}${envNote}`,
   ]
 }

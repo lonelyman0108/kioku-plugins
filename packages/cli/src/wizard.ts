@@ -1,7 +1,6 @@
 // 在终端里不带参数运行 kioku 时的向导：一个渐进披露的状态面板，先扫描服务器与本机各平台的现状，
 // 再按缺什么列出动作；接入后自动尝试安装对应平台插件并完成 MCP 握手验证，做完回到面板刷新。
 
-import { upgradePageOf } from './api.ts'
 import { migrateCommand, planMigration, type MigrationPlan } from './commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from './conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from './connect.ts'
@@ -276,7 +275,7 @@ async function migrate(ctx: WizardContext, id: string): Promise<void> {
     config = await deps.loadConfig(env).catch(() => null)
     if ((!config || (ctx.url && config.url !== ctx.url)) && ctx.url) {
       const key = await ui.password({
-        message: `${platform.name} 用的访问密钥（记忆迁进它所属的记忆圈）`,
+        message: `${platform.name} 用的访问密钥`,
         validate: (text) => keyFormatError((text ?? '').trim()) ?? undefined,
       })
       if (cancelled(ui, key)) return
@@ -478,7 +477,7 @@ async function startLocal(ctx: WizardContext): Promise<'connect' | undefined> {
     }
     if (prepared.env.written) {
       ui.log.warn(
-        `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢失将无法解开机密记忆与托管凭据`,
+        `主密钥在 ${prepared.env.file} 的 KIOKU_MASTER_KEY：另外保存一份，和数据库备份分开放；丢失将无法解开托管凭据与模型接口密钥`,
       )
     } else ui.log.info(`${prepared.env.file} 已经有了，沿用`)
     await bringUp(ctx, dir)
@@ -526,14 +525,6 @@ async function perform(ctx: WizardContext, choice: string, state: PanelState): P
     if (ctx.url) await awaitSetup(ctx, ctx.url, null)
     return
   }
-  if (choice === 'open-upgrade') {
-    if (ctx.url) {
-      const page = upgradePageOf(ctx.url)
-      ctx.deps.open(page)
-      ctx.ui.log.info(`已在浏览器打开升级页 ${page}，完成就地迁移后回到控制台继续`)
-    }
-    return
-  }
   if (choice === 'migrate') {
     if (!ctx.url) return
     const candidates = migrationCandidates(state)
@@ -562,7 +553,7 @@ async function perform(ctx: WizardContext, choice: string, state: PanelState): P
   if (choice === 'reauth') {
     return connect(
       ctx,
-      state.platforms.filter((row) => row.connection === 'invalid' && !row.legacyKey),
+      state.platforms.filter((row) => row.connection === 'invalid'),
       { reauth: true },
     )
   }

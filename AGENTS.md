@@ -1,6 +1,6 @@
 # kioku-plugins
 
-Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、Gemini CLI 的扩展（钩子与持久化同步目录）、Antigravity 插件（插件目录与 hooks）、OpenCode 插件（npm/config 钩子）、pi 的扩展（在 pi 进程里跑的 JS）、OpenClaw 的记忆插件（在网关进程里跑的 JS，发 npm）、DeepSeek Harness 的插件（Cordis 插件，按仓库装）、Hermes 的记忆提供方（Python，只用标准库）、AstrBot 插件（Python，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
+Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚本，vitest 测试）、Gemini CLI 的扩展（钩子与持久化同步目录）、Antigravity 插件（插件目录与 hooks）、OpenCode 插件（npm/config 钩子）、pi 的扩展（在 pi 进程里跑的 JS）、OpenClaw 的记忆插件（在网关进程里跑的 JS，发 npm）、DeepSeek Harness 的插件（Cordis 插件，按仓库装）、Hermes 的记忆提供方（Python，只用标准库，uv 与 pytest），以及各 JS 插件共用的实现（`packages/core`）与发到 npm 的 `kioku` 命令（`packages/cli`）。服务端、接口与规则在 [Kioku 仓库](https://github.com/lonelyman0108/kioku)。
 
 提交、PR、发版的完整规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只写 agent 需要、又无法从代码推出来的内容，每条约定都附原因。超过 300 行时拆到子目录的 AGENTS.md。
 
@@ -33,8 +33,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - 门禁：`scripts/check.sh`（`--quick` 只跑通用检查）
 - 初始化：`scripts/bootstrap.sh`
 - 开 PR：`scripts/pr.sh`（`--no-merge` 只开不合并）
-- 测试：`pnpm test`（JS 的几个包）；`cd plugins/astrbot_plugin_kioku && uv run pytest`；`cd plugins/hermes && uv run pytest`
-- 同步客户端：`scripts/sync-client.sh <Kioku 仓库的路径>`
+- 测试：`pnpm test`（JS 的几个包）；`cd plugins/hermes && uv run pytest`
 - 改版本号：`scripts/bump-version.sh <X.Y.Z>`（发版时用，流程见 CONTRIBUTING.md「发布」）；核对会发出哪些文件：`scripts/ci/publish-npm.sh --dry-run v<X.Y.Z>`
 - 同步共用实现：`node scripts/sync-core.mjs`（`--check` 只比对）
 
@@ -49,7 +48,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 
 | `plugins/claude-code` | Claude Code 插件；根目录的 `.claude-plugin/marketplace.json` 把本仓库作为插件市场。hooks 与 `hooks/mcp-stdio.mjs` 支持 `/plugin` 配置，选项留空时回退读取 `~/.config/kioku/claude-code.json` |
 | `packages/core` | 各 JS 插件共用的零依赖运行时（`http.mjs`、`profile.mjs`、`config.mjs`、`text.mjs`、`usage.mjs`、`command.mjs`、`mcp.mjs`、`redact.mjs`、`lifecycle.mjs`、`run.mjs`、`kioku.mjs` 与 `bin/kioku` 入口）；保持纯运行时最小集合，向导、终端界面与平台诊断不放这里 |
-| `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：TypeScript + tsdown 构建成零外部运行依赖的单文件包 `dist/index.mjs`（`bin/kioku` 运行它）。包含各平台接入、校验、迁移与巡检（`claudeCode.ts`、`codex.ts`、`pi.ts`、`hermes.ts`、`openclaw.ts`、`dsh.ts`、`opencode.ts`、`gemini.ts`、`agy.ts`、`api.ts`、`legacy.ts`、`doctor.ts`、`setup.ts`、`login.ts`、`connect.ts`、`install.ts`、`installer.ts`、`conflicts.ts`、`clean.ts`、`import.ts`、`sources.ts`、`local.ts`、`panel.ts`、`wizard.ts`、`identity.ts`）、高阶/记忆与旧版迁移命令（`commands/status.ts`、`commands/manage.ts`、`commands/memory.ts`、`commands/migrate.ts`）、Strata 终端 UI 层（`ui/{width,theme,screen,viewport,lineInput,clipboard,prompts,tui}.ts`）及 `copyRules.test.ts` |
+| `packages/cli` | 发到 npm 的 `@kioku-memory/cli`：TypeScript + tsdown 构建成零外部运行依赖的单文件包 `dist/index.mjs`（`bin/kioku` 运行它）。包含各平台接入、校验、迁移与巡检（`claudeCode.ts`、`codex.ts`、`pi.ts`、`hermes.ts`、`openclaw.ts`、`dsh.ts`、`opencode.ts`、`gemini.ts`、`agy.ts`、`api.ts`、`legacy.ts`、`doctor.ts`、`setup.ts`、`login.ts`、`connect.ts`、`install.ts`、`installer.ts`、`conflicts.ts`、`clean.ts`、`import.ts`、`sources.ts`、`local.ts`、`panel.ts`、`wizard.ts`、`identity.ts`）、状态/接入/记忆与升级迁移命令（`commands/status.ts`、`commands/manage.ts`、`commands/memory.ts`、`commands/migrate.ts`）、终端 UI 层（`ui/{width,theme,screen,viewport,lineInput,clipboard,prompts,tui}.ts`）及 `copyRules.test.ts` |
 | `plugins/claude-code/bin`、`plugins/claude-code/lib` | `packages/core` 的副本，由 `scripts/sync-core.mjs` 生成，不手改。插件启用期间 `bin/` 在 Bash 工具的 `PATH` 里 |
 | `plugins/codex` | Codex 插件：清单在 `.codex-plugin/plugin.json`，钩子在 `hooks/`，`bin/`、`lib/` 同样是副本；根目录的 `.agents/plugins/marketplace.json` 把本仓库作为 Codex 的插件市场 |
 | `plugins/pi` | pi 的扩展：入口 `index.js`（`createKioku` 是可以单测的那一层），`lib/` 同样是副本；根 `package.json` 的 `pi` 键把本仓库作为 pi 的包 |
@@ -59,17 +58,14 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 | `plugins/opencode` | OpenCode 的插件：在 `config` 钩子自动注册远程 MCP 服务并在 `experimental.chat.system.transform`、`chat.message` 与 `session.idle` 转发生命周期；`lib/` 同样是副本 |
 | `plugins/gemini` | Gemini CLI 扩展：清单 `gemini-extension.json`，钩子 `hooks/hooks.json` 与 `hooks/forward.mjs`；`lib/` 同样是副本 |
 | `plugins/agy` | Antigravity 插件：清单 `plugin.json`，钩子 `hooks.json` 与 `hooks/forward.mjs`（单轮工具调用按 transcript 步骤去重）；`lib/` 同样是副本 |
-| `packages/cli/src/ui/` | Strata 终端视觉规范与全屏 TUI 实现（零依赖）；细线框、`NO_COLOR`/`FORCE_COLOR`、CJK 宽度与样式保留截断、归属染色+文字标签、纯字符敏感级纹理、字素簇行输入（`lineInput.ts`）、全屏双缓冲视口（`viewport.ts`）、客户端管理 TUI（`tui.ts`）、原地重绘（`screen.ts`）、`[o]`/`[c]`/`[Esc]` 浏览器授权等待框与剪贴板辅助 |
-| `plugins/astrbot_plugin_kioku` | AstrBot 插件；目录名就是 AstrBot 认的插件名 |
-| `plugins/astrbot_plugin_kioku/kioku_client` | 从 Kioku 的 `sdks/python` 复制来的生成客户端，来源提交记在 `SOURCE`；不手改 |
+| `packages/cli/src/ui/` | 终端纸墨风格与全屏 TUI 实现（零依赖）；细线框、`NO_COLOR`/`FORCE_COLOR`、CJK 宽度与样式保留截断、单强调色（砖红告警/错误）、字素簇行输入（`lineInput.ts`）、全屏双缓冲视口（`viewport.ts`）、客户端管理 TUI（`tui.ts`）、原地重绘（`screen.ts`）、`[o]`/`[c]`/`[Esc]` 浏览器授权等待框与剪贴板辅助 |
 
 - 插件放在 `plugins/` 下：门禁按 `plugins/*/pyproject.toml` 找 Python 项目，pnpm 工作区按 `packages/*`、`plugins/*` 找包。
 - 共用的实现只改 `packages/core`，改完跑 `node scripts/sync-core.mjs` 把副本一起提交。原因：Claude Code 这类平台按插件目录复制安装，装好之后引用不到目录之外的文件，所以每个插件目录里要有一份；`packages/core` 的用例 `vendored.test.mjs` 核对副本与核心一致，手改的副本过不了门禁。新加要收副本的插件时加进脚本的 `TARGETS`。
 
 ## 已知的坑
 
-- `kioku_client` 不手改：Kioku 改了客户端调用的接口、重新生成 SDK 后，用 `scripts/sync-client.sh` 整个替换。原因：手改的地方下次同步会被覆盖，和服务端对不上也要到运行时才报错。
-- 插件失败时静默：Kioku 不可用、超时或拒绝时只记日志，不向 agent 或聊天里注入错误。原因：记忆服务出问题不能打断对话。`kioku run` 例外：它是 agent 主动执行的命令，失败时在标准错误里说明原因、退出码 2，不启动要跑的命令。
+- 插件失败时静默：Kioku 不可用、超时或拒绝时只记日志，不向 agent 或聊天里注入错误。原因：记忆服务出问题不能打断对话。`kioku run` 例外：它是 agent 主动执行的命令，失败时在标准错误里说明原因、退出码 2，不启动要跑的命令。`kioku run` 支持 `-e 变量=<标识>`（默认取主值）与 `-e 变量=<标识>#<字段>`（兼容多字段凭据），标识允许 `.`、`_`、`-`，字段名允许 `_`、`-`。
 - 钩子与 `kioku run` 的报错不带值和访问密钥：`spawn` 的参数错误会把环境变量的值写进错误文字，`fetch` 的错误会带上整个 Authorization 请求头，响应解析失败的文字带着响应的开头。所以格式不对的访问密钥不发请求，报错只打插件自己写的文字（`KiokuFailure`）或错误类别，不打印 `err.message` 或整个错误对象；检查与报错只在 `packages/core/lib/http.mjs` 写一份，钩子和命令都用它。
 - `kioku run` 有终端时（标准输入、输出或错误是 TTY）收到 SIGINT 不转给命令，只接住它、等命令结束：终端的 Ctrl-C 发给整个前台进程组，命令已经收到，再转一次就成了两次；没有终端时（Claude Code 的 Bash 工具）SIGINT 是单独发来的，照样转发。命令被信号结束时，`kioku` 等自己的输出写完，再以同一个信号结束，不按 128 + n 正常退出：外层的 shell 看到子进程被 SIGINT 结束才会停下循环。会转储的信号（SIGSEGV、SIGQUIT 等）不发给自己，免得 Node 自己转储，退回 128 + n。退出之前一律先等输出写完（`flushed`）再去掉信号的处理：Node 还在往外写时被信号结束，排着队的输出就丢了。
 - 访问密钥文件每个会话一份（`api-key.<session_id>`），会话结束时删，会话开始时清掉超过 30 天没用过的和写到一半留下的临时文件。原因：只有一份时，每次会话开始都覆盖它，配置清空时删掉它，正在跑的别的会话跟着受影响。临时文件只删一分钟以前的：更新的可能是同时开始的别的会话正在写。
@@ -81,7 +77,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
 - Codex 的钩子要注意三点（都在真实的 Codex 上核对过，版本 0.167.1）：Stop 不带用户的输入，要在 UserPromptSubmit 时按会话与轮次记下、结束时取走；注入的上下文默认超过约 2,500 token 就被存成文件、只给模型看头尾，`hooks.json` 里的 `additionalContextLimit` 要比服务端给 Codex 的字数上限（`HOST_CONTEXT_LIMIT`，9,500 字约 7,400 token）宽；插件带的钩子要用户在 `/hooks` 里信任过才运行，自动化的测试用 `--dangerously-bypass-hook-trust`。
 - pi 的扩展在 pi 的进程里跑（核对过 pi 1.5.2）：标准输出属于 pi（`--print`、JSON 模式都用它），原因只写标准错误；`before_agent_start` 在用户按下回车之后等着，启动加载与召回一起发、各有时限；`agent_end` 不是最后一次（重试、排队的消息还会再跑），回复攒到 `agent_settled` 再上报；上报不等它完成，但 `session_shutdown` 要等，否则 `--print` 跑完进程先退出就丢了。服务端对没有专门输出格式的运行时回 `return_value`，文本在 `value.context`（`contextOf`）。`forward` 用空字符串表示「没有内容」、`undefined` 表示失败：启动加载失败时下一次输入再试，空的不重取。
 - 浏览器授权（`login.ts`，服务端在 Kioku 的 `routes/device.ts`）：确认码不放进打开的地址，要用户照着终端输入，别人发来的链接带不了它；访问密钥、设备码不写进输出，拿到之后直接交给这个平台的 `setup`（核对、写文件都照它的规矩）；服务端给的确认码、客户端名与自报的机器名都经 `plain` 再显示或上报；确认页的路径只收以 `/` 开头的，接在配置的服务地址后面，不让服务端把人带到别的站点。服务端的回答不全信：确认页的路径只收一种写法（`VERIFICATION_PATH`，不带查询参数与符号），时限与间隔收在范围里（`seconds`），打开浏览器不经过 shell（Windows 上用 rundll32，不用 `cmd /c start`）。访问密钥只在签发时给一次：申请之前先做平台的预检（`preflight`、`beforeLogin`），取走之后写不下、或者有过没得到回答的轮询之后申请不在了，报错里都要提醒去吊销那个没人拿着的访问密钥。`kioku setup` 只在终端里运行时（`process.stdin.isTTY`）才回落到它：agent 的 Bash 工具里没有人去确认。
-- `kioku import`：为每个来源生成兼容 `legacyUri` 标识（`sources.ts`）并按目标记忆圈的适用条件与标题匹配去重，不另外记「迁过没有」。已经有、内容不一样的默认不覆盖（可能在 Kioku 里改过）。写入走访问密钥的记忆接口，不带 `plaintextOk`：疑似明文的照常被服务端拦下，输出里只写第几行、哪一类，不带值。本地的文件一律不删、不改。Hermes 与 OpenClaw 的位置、文件名与分隔符均已核对（Hermes 0.19.0 源码的 `ENTRY_DELIMITER`、OpenClaw 2026.6.35 真实安装）。读文件只收普通的文本文件（`readable`）：符号链接不跟、项目的 memory 目录是符号链接时不进去，否则记忆目录之外的文件（`.env` 这类）会被读出来发给服务端。没有标题的段用内容的摘要做标识，不按顺序编号：文件里插一条之后别的条的标识不能变。文件头只认单独一行的 `---` 结尾，像文件头却没写完的不迁，不把它当正文发出去。输出里的路径、目录名也经 `plain`。流程编号检查会把分节号当成编号：代码与用例里写成转义（`\u00a7`），注释里写「分节号」。
+- `kioku import`：把平台本地的记忆文件按扁平标签（`projects`、`runtimes`、`topics`、`disclosure`）经 `/v1/mcp`（`kioku_get` / `kioku_create` / `kioku_update`）写入 Kioku，并按标题去重，不另外记「迁过没有」。已经有、内容不一样的默认不覆盖（可能在 Kioku 里改过），`--overwrite` 才带 `expected_version` 覆盖。本地的文件一律不删、不改。Hermes 与 OpenClaw 的位置、文件名与分隔符均已核对（Hermes 0.19.0 源码的 `ENTRY_DELIMITER`、OpenClaw 2026.6.35 真实安装）。读文件只收普通的文本文件（`readable`）：符号链接不跟、项目的 memory 目录是符号链接时不进去，否则记忆目录之外的文件（`.env` 这类）会被读出来发给服务端。没有标题的段用内容的摘要做标识，不按顺序编号：文件里插一条之后别的条的标识不能变。文件头只认单独一行的 `---` 结尾，像文件头却没写完的不迁，不把它当正文发出去。输出里的路径、目录名也经 `plain`。流程编号检查会把分节号当成编号：代码与用例里写成转义（`\u00a7`），注释里写「分节号」。
 - Hermes 的 provider（核对过 Hermes 0.19.0 与真实的 Kioku）：
   - **只用发布版里有的东西**：GitHub 主干比 PyPI 的发布版新，主干的 `agent/memory_provider.py` 里有 `is_trivial_prompt`、`spawn_context_thread`，0.19.0 没有，直接导入的话 provider 加载失败、Hermes 只说「没有装」。这类新东西一律 `try` 导入、带退路。写之前对着装出来的版本看，不对着主干的文档。
   - **工具清单要在初始化之前就拿得出来**：Hermes 在 `add_provider` 时就调 `get_tool_schemas()` 登记「哪个工具归谁」，早于 `initialize()`。那时返回空的话，模型看得到工具（之后又问了一次清单），调用时却报 `Unknown tool`。所以第一次被问到就向 Kioku 取（只取一次）；开始之后，不启用的会话里返回空的，调用时再拒绝一次。
@@ -100,7 +96,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **工具上下文里没有触发方式**，心跳在主会话上跑时通道、会话键和本机的一轮一样：给不给工具按通道定，调得动调不动另看这个会话现在跑的是不是过了 `localRun` 的一轮（`approved`，输入钩子里记、一轮结束或接着跑别的运行时收回）。新加的工具路径也要过它。
   - **配置每分钟重读一次**（`ready`），换了地址或访问密钥时清掉按会话记着的启动加载与退避；服务地址返回跳转只当一次失败，不把插件停到重启为止。上报（`turn.end`）失败不设退避：它拦的是输入前的召回。
   - 工具清单取回来是空的不当真（手上的接着用、不写回本机），`kioku setup openclaw` 也不留空的。
-  - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份名单，用例核对；Kioku 加了新工具要两处一起加，否则 OpenClaw 不认。
+  - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份 8 个工具的名单（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`），用例核对；Kioku 增减工具时两处与 `scripts/e2e/fakes.mjs` 一起改，否则 OpenClaw 不认。
   - **启动加载每一轮都要给**：`prependSystemContext` 不存进会话，系统提示每轮重建。按会话 id 记着取到的文本，隔一小时重新取；`session.start` 不是每轮都发。
   - **一次性的运行里上报要等发完**：`openclaw agent --local` 跑完进程就退出，`agent_end` 里不等的话 `turn.end` 发不出去。
   - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。`openclaw plugins inspect` 失败、输出读不懂是「没查出来」（`pluginState` 返回 undefined），和「没装」（它明说 Plugin not found）分开：当成没装的话 `--undo` 会删了配置却留着槽位。
@@ -117,7 +113,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
 - 端到端实测（`scripts/e2e/`，workflow `E2E`）：`node scripts/e2e/run.mjs <平台>` 在这台机器上装真实的平台，照安装说明走一遍（`kioku setup` → 装插件 → `kioku doctor` → 跑一轮），模型与 Kioku 都是假的（`fakes.mjs`），不用密钥。CI 在 Linux 与 Windows 上各跑五个平台，不是必需检查，每周一也跑一次：平台自己发新版本会让它变红，红了先看是平台变了还是这边坏了。要守住的几条：
-  - 假的 Kioku 照服务端的格式回答（`hostOutput` 按运行时分、MCP 的握手与工具清单），服务端的接口变了要跟着改，否则它测的是旧格式。
+  - 假的 Kioku 照服务端的扁平接口格式回答（`/v1/health` 带 `api: 3`、`/v1/whoami` 带 `accountName`/`key`/`client`、`hostOutput` 按运行时分、MCP 握手与 8 个工具清单及 `structuredContent`），服务端的接口变了要跟着改，否则它测的是旧格式。
   - 假的模型不生成内容，只把「请求里有没有注入的两个标记、有没有 Kioku 的工具」写成一句回答；上报里带着这句回答，就同时说明注入到了模型手上、回复被上报了。
   - **断言要在该失败的时候失败**（第一版太松，审查指出来的）：只算这一轮开始之后的请求（`kioku setup`、`kioku doctor` 自己也会取工具清单）；假的 Kioku 照契约校验事件，不合格的回 400；三个事件各要正好一次；`kioku doctor` 有提醒（`!`）也算没过；访问密钥只在 `kioku setup` 时给，平台只能从 setup 写下的地方读到。改断言之后故意改坏插件跑一次，确认抓得到。
   - 工具怎么核对按平台分（`tools`）：Codex、dsh、Hermes 直接把工具放进模型的请求；pi 按需才给，看它这一轮向 Kioku 取过清单；新一些的 OpenClaw（2026.11.3）把插件的工具放在 `tool_search` 后面，假的模型会搜一次 kioku，看搜索结果。`openclaw plugins inspect` 不装载插件，看不出运行时登记了什么，不能拿它核对。

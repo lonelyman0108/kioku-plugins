@@ -2,6 +2,29 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-11-25
+
+同步适配 Kioku `v0.6.0` 单人扁平架构（服务端接口第 3 代），`@kioku-memory/cli`、`@kioku-memory/openclaw` 与 `@kioku-memory/plugin-opencode` 一并发布至 `0.6.0`；其余按仓库安装的 7 个插件已随主干同步更新。
+
+### 不兼容变更
+
+- **要求 Kioku `v0.6.0` 服务端（`api: 3`）**：命令行与全部插件不再兼容旧代服务端，升级本版时需同步将 Kioku 服务端升级至 `v0.6.0`；旧代服务端会自动提示升级指引
+- **移除 AstrBot 插件与相关同步脚本**：删除 `plugins/astrbot_plugin_kioku` 与 `scripts/sync-client.sh`
+- **移除 `kioku transfer` 与旧概念参数**：删除 `kioku transfer` 子命令，不再支持记忆圈、变体、四级敏感级与旧版地层视觉参数；记忆读写与导入命令全面切换为扁平标签参数（`--env`、`--realm`、`--project`、`--runtime`、`--topic`、`--pinned`）
+
+### 新功能
+
+- **`kioku run` 支持简化凭据标识**：同时支持无字段的裸凭据标识（`-e 变量=<标识>`）与多字段写法（`-e 变量=<标识>#<字段>`），标识支持包含 `.`、`_`、`-`，并与新版凭据解析接口保持一致
+- **全部 9 个插件对齐扁平协议**：OpenClaw 收敛至精确 8 个 MCP 工具（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`）并同步插件清单；Hermes（Python 记忆提供方）、OpenCode、Claude Code、Codex、pi、DeepSeek Harness、Gemini CLI、Antigravity 全部更新至最新运行时与扁平接口
+- **基于 MCP 结构化协议的记忆读写与导入**：`kioku search`、`kioku get`、`kioku ls`、`kioku add`、`kioku edit`、`kioku rm` 与 `kioku import` 改经 `/v1/mcp` 的结构化响应读写扁平记忆与场景标签
+- **旧版客户端迁移命令 `kioku migrate`**：自动识别升级后的失效访问密钥（401）、旧插件来源、过旧插件与旧工具清单缓存，支持 `--dry-run` 预览与批量清理、升级插件及浏览器重新授权
+- **纸墨风格终端界面**：全屏客户端管理工作台与命令行输出改用统一纸墨视觉（单砖红强调色与细线框，移除旧地层色带），并统一全仓客户端与产品用语
+
+### 问题修复
+
+- **修复 TUI 切换服务地址与刷新时的状态竞态**：慢速初始地址探测返回空值时不再覆盖新设置的地址，且交互测试在忙碌状态收尾后稳定退出
+- **修复无参 `kioku migrate` 与 `kioku local up` 边界**：无参运行 `kioku migrate` 时对已更新插件但密钥失效的平台同样安排重新授权；`kioku local up` 启动检测补充服务端接口代际校验，避免误判旧代本机实例为就绪
+
 ## [0.5.0] - 2026-11-18
 
 ### 新功能

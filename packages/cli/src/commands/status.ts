@@ -1,5 +1,5 @@
 // kioku status [--json]：只读展示服务端与本机各客户端的接入现状。
-// 交互模式使用 Strata 细线卡片排版并折叠未安装的客户端，--json 输出结构化结果（绝不含访问密钥）。
+// 交互模式使用细线卡片排版并折叠未安装的客户端，--json 输出结构化结果（绝不含访问密钥）。
 
 import { UsageError, plain, shownUrl } from '../core.ts'
 import {
@@ -12,14 +12,7 @@ import {
 } from '../panel.ts'
 import type { Env, Writer } from '../types.ts'
 import { osc8Link } from '../ui/clipboard.ts'
-import {
-  capabilityLabel,
-  createTheme,
-  kindLabel,
-  renderBox,
-  sensitivityBadge,
-  sortEntryKinds,
-} from '../ui/theme.ts'
+import { createTheme, renderBox } from '../ui/theme.ts'
 
 export const STATUS_USAGE = `用法：kioku status [--server-url <地址>] [--json]
 
@@ -41,15 +34,6 @@ export function parseStatusArgs(argv: string[]): { serverUrl?: string; json: boo
     } else throw new UsageError(`不认识的选项 ${arg}`)
   }
   return options
-}
-
-function formatFacets(facets?: Record<string, string[]>): string {
-  if (!facets) return ''
-  const parts = Object.keys(facets)
-    .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
-    .sort()
-    .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
-  return parts.join(' · ')
 }
 
 function serverLines(state: PanelState, out: Writer & { isTTY?: boolean }, env: Env): string[] {
@@ -110,43 +94,22 @@ function platformSummaryLines(
         lines.push(`  ${theme.muted(details.details.join(' · '))}`)
       }
       if (row.connection === 'ok' && row.who) {
-        const who = row.who
-        const primaryKind = who.primaryCircle.kind === 'shared' ? '独立圈' : '个人圈'
-        const linkedStr = who.linkedCircles
-          .map(
-            (c) =>
-              `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
-          )
-          .join('、')
-        lines.push(
-          `  ${theme.muted(
-            `主圈 ${plain(who.primaryCircle.name)}（${primaryKind}）${linkedStr ? ` · 关联圈 ${linkedStr}` : ''}`,
-          )}`,
-        )
-
-        const extra: string[] = []
-        if (who.persona) extra.push(`独立人格 ${plain(who.persona.name)}`)
-        const facetText = formatFacets(who.resolvedFacets ?? who.contextFacets)
-        if (facetText) extra.push(`默认语境 ${facetText}`)
-        if (extra.length) lines.push(`  ${theme.muted(extra.join(' · '))}`)
-
-        const readStr =
-          sortEntryKinds(who.scopes.readKinds ?? [])
-            .map(kindLabel)
-            .join('、') || '无'
-        const writeStr =
-          sortEntryKinds(who.scopes.writeKinds ?? [])
-            .map(kindLabel)
-            .join('、') || '无'
-        const sens = sensitivityBadge(who.scopes.maxSensitivity ?? 'internal', theme)
-        const cred = capabilityLabel(who.scopes.credentials)
-        const realmNote = Array.isArray(who.scopes.allowedRealms)
-          ? ` · 场域白名单 ${who.scopes.allowedRealms.length ? who.scopes.allowedRealms.map((r) => plain(r)).join('、') : '空（受限）'}`
-          : ''
-        const adminNote = who.scopes.admin ? ' · 管理权限' : ''
-        lines.push(
-          `  ${theme.muted(`读 ${readStr} · 写 ${writeStr} · 上限 ${sens} · 凭据 ${cred}${realmNote}${adminNote}`)}`,
-        )
+        const { key } = row.who
+        const parts: string[] = [
+          key.canWrite ? '可写' : '只读',
+          key.canResolveCredentials ? '允许凭据注入' : '禁止凭据注入',
+        ]
+        if (key.envs.length) {
+          parts.push(`环境 ${key.envs.map((e) => plain(e)).join('、')}`)
+        }
+        const realmText =
+          key.allowedRealms === null
+            ? '全部场域'
+            : key.allowedRealms.length
+              ? `场域 ${key.allowedRealms.map((r) => plain(r)).join('、')}`
+              : '仅通用记忆'
+        parts.push(realmText)
+        lines.push(`  ${theme.muted(parts.join(' · '))}`)
       }
     }
   }

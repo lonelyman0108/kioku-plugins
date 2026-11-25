@@ -34,26 +34,21 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            primaryCircle: {
-              id: '11111111-2222-3333-4444-555555555555',
-              slug: 'personal',
-              name: '个人圈',
-              kind: 'personal',
+            accountName: 'owner',
+            key: {
+              id: 'key-oc',
+              name: 'OpenClaw 客户端',
+              prefix: 'kioku_oc',
+              runtimeFamily: 'openclaw',
+              envs: ['mac'],
+              allowedRealms: ['work'],
+              canWrite: true,
+              canResolveCredentials: true,
             },
-            linkedCircles: [],
             client: {
-              id: 'a',
-              circleId: '11111111-2222-3333-4444-555555555555',
               slug: 'oc',
               name: 'OpenClaw 客户端',
               runtimeFamily: 'openclaw',
-            },
-            persona: null,
-            scopes: {
-              readKinds: ['entry', 'fact', 'episode'],
-              writeKinds: ['entry'],
-              maxSensitivity: 'private',
-              credentials: 'use',
             },
           }),
         )
@@ -231,10 +226,9 @@ describe('installer', () => {
 
     const lines = formatHandshakeLines(ok).join('\n')
     expect(lines).toContain('OpenClaw 客户端')
-    expect(lines).toContain('个人圈')
+    expect(lines).toContain('账号 owner')
     expect(lines).toContain('MCP 工具 2 个')
-    expect(lines).toContain('会话摘要、联系人事实、正式记忆')
-    expect(lines).toContain('[╱] 私密')
+    expect(lines).toContain('可写 · 允许凭据注入 · 场域 work · 环境 mac')
 
     const bad = await verifyConnectionHandshake(
       'openclaw',

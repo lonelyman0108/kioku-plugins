@@ -13,94 +13,121 @@ export const RECALL_MARK = 'KIOKU-E2E-RECALL'
 const TOOLS = [
   {
     name: 'kioku_boot',
-    description: '获取启动加载上下文',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'kioku_get',
-    description: '读一条记忆',
+    description: '加载当前终端透镜对应的常驻记忆与近期会话摘要',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: '短 ID、标题或旧坐标' } },
-      required: ['id'],
+      properties: {
+        project: { type: 'string', description: '当前项目标识' },
+        device_key: { type: 'string', description: '当前设备标识' },
+      },
     },
   },
   {
     name: 'kioku_search',
-    description: '搜索记忆',
+    description: '按混合检索（向量 + 中文全文 + 场景亲和 + 一跳双链）召回记忆线索',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string', description: '查询' } },
+      properties: {
+        query: { type: 'string', description: '查询语句或关键词' },
+        limit: { type: 'integer', description: '返回条数，默认 10' },
+        env: { type: 'string', description: '临时环境焦点覆盖' },
+        realm: { type: 'string', description: '临时场域焦点覆盖' },
+        project: { type: 'string', description: '临时项目焦点覆盖' },
+        runtime: { type: 'string', description: '临时客户端焦点覆盖' },
+      },
       required: ['query'],
     },
   },
   {
-    name: 'kioku_browse',
-    description: '浏览记忆目录',
+    name: 'kioku_get',
+    description: '按短 ID（m-xxxxxx）或精确标题读取记忆正文、元数据、双链邻居与凭据引用状态',
     inputSchema: {
       type: 'object',
-      properties: { circle: { type: 'string', description: '记忆圈' } },
+      properties: { id: { type: 'string', description: '记忆短 ID（如 m-234abc）或精确标题' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'kioku_list_credentials',
+    description: '列出当前访问密钥允许使用的凭据标识与说明（仅元数据，绝不返回明文值）',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'kioku_browse',
+    description: '按项目、环境、场域、客户端、主题或类型分组浏览可见记忆目录',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        group_by: {
+          type: 'string',
+          enum: ['topic', 'project', 'env', 'realm', 'runtime', 'kind'],
+          description: '分组维度，默认 project',
+        },
+        kind: { type: 'string', enum: ['entry', 'episode'], description: '按类型过滤' },
+        topic: { type: 'string', description: '按主题标签过滤' },
+        project: { type: 'string', description: '按项目过滤' },
+        env: { type: 'string', description: '按环境过滤' },
+        realm: { type: 'string', description: '按场域过滤' },
+        runtime: { type: 'string', description: '按客户端过滤' },
+        pinned_only: { type: 'boolean', description: '仅看常驻启动加载记忆' },
+        query: { type: 'string', description: '按标题或短 ID 关键词过滤' },
+        limit: { type: 'integer', description: '最多返回条数' },
+      },
     },
   },
   {
     name: 'kioku_create',
-    description: '新建一条记忆',
+    description:
+      '新建一条扁平长期记忆，正文支持 Markdown、[[m-xxxxxx]] 双链与 {{cred:<slug>}} 占位符',
     inputSchema: {
       type: 'object',
-      properties: { content: { type: 'string', description: '正文' } },
+      properties: {
+        title: { type: 'string', description: '标题' },
+        content: { type: 'string', description: 'Markdown 正文' },
+        topics: { type: 'array', items: { type: 'string' }, description: '主题标签列表' },
+        envs: { type: 'array', items: { type: 'string' }, description: '适用环境列表' },
+        realms: { type: 'array', items: { type: 'string' }, description: '适用场域列表' },
+        projects: { type: 'array', items: { type: 'string' }, description: '适用项目标识列表' },
+        runtimes: { type: 'array', items: { type: 'string' }, description: '适用客户端标识列表' },
+        is_pinned: { type: 'boolean', description: '是否作为常驻记忆在会话启动时自动注入' },
+        disclosure: { type: 'string', description: '何时需要想起此条的简短说明' },
+        valid_to: { type: 'string', description: '过期时间（ISO 8601 带时区）' },
+      },
+      required: ['content'],
     },
   },
   {
     name: 'kioku_update',
-    description: '修改一条记忆',
+    description: '修改已有记忆的标题、正文、场景标签、常驻状态或有效期',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: '短 ID 或标题' } },
+      properties: {
+        id: { type: 'string', description: '记忆短 ID 或精确标题' },
+        expected_version: { type: 'integer', description: '期望版本号（乐观锁）' },
+        title: { type: 'string' },
+        content: { type: 'string' },
+        topics: { type: 'array', items: { type: 'string' } },
+        envs: { type: 'array', items: { type: 'string' } },
+        realms: { type: 'array', items: { type: 'string' } },
+        projects: { type: 'array', items: { type: 'string' } },
+        runtimes: { type: 'array', items: { type: 'string' } },
+        is_pinned: { type: 'boolean' },
+        disclosure: { type: 'string' },
+        valid_to: { type: 'string' },
+      },
       required: ['id'],
     },
   },
   {
     name: 'kioku_delete',
-    description: '删除一条记忆',
-    inputSchema: {
-      type: 'object',
-      properties: { id: { type: 'string', description: '短 ID 或标题' } },
-      required: ['id'],
-    },
-  },
-  {
-    name: 'kioku_transfer',
-    description: '跨圈迁移记忆',
+    description: '软删除一条记忆（移入回收站，可在管理界面恢复）',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: '短 ID' },
-        to_circle: { type: 'string', description: '目标记忆圈 slug' },
+        id: { type: 'string', description: '记忆短 ID 或精确标题' },
+        expected_version: { type: 'integer', description: '期望版本号' },
       },
-      required: ['id', 'to_circle'],
-    },
-  },
-  {
-    name: 'kioku_credential',
-    description: '列出或按标识取用凭据',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'kioku_credential_save',
-    description: '保存或更新一条凭据',
-    inputSchema: {
-      type: 'object',
-      properties: { identifier: { type: 'string', description: '凭据标识' } },
-      required: ['identifier'],
-    },
-  },
-  {
-    name: 'kioku_credential_delete',
-    description: '删除一条凭据',
-    inputSchema: {
-      type: 'object',
-      properties: { identifier: { type: 'string', description: '凭据标识' } },
-      required: ['identifier'],
+      required: ['id'],
     },
   },
 ]
@@ -176,7 +203,7 @@ function eventProblem(body) {
 // 假的 Kioku。runtimeFamily 决定生命周期输出的格式，和服务端的 hostOutput 一样
 export async function startFakeKioku(
   runtimeFamily,
-  { apiGeneration = 2, databaseState = 'ok', legacyKeys = new Set() } = {},
+  { apiGeneration = 3, databaseState = 'ok' } = {},
 ) {
   const requests = []
   const hostOutput = (event, context) => {
@@ -225,15 +252,6 @@ export async function startFakeKioku(
     }
     requests.push({ method: req.method, path: req.url, authorized, body })
     if (req.url === '/v1/health') {
-      if (databaseState === 'legacy') {
-        return json(res, 503, {
-          status: 'unavailable',
-          version: 'e2e',
-          api: apiGeneration,
-          database: 'legacy',
-          code: 'legacy_database',
-        })
-      }
       if (databaseState === 'unavailable') {
         return json(res, 503, {
           status: 'unavailable',
@@ -250,53 +268,34 @@ export async function startFakeKioku(
           : { status: 'ok', version: 'e2e', api: apiGeneration },
       )
     }
-    if (databaseState === 'legacy') {
-      return json(res, 503, { error: '数据库等待管理员迁移', code: 'legacy_database' })
-    }
     if (databaseState === 'unavailable') {
       return json(res, 503, { error: '数据库暂时无法连接', code: 'database_unavailable' })
     }
-    const auth = req.headers.authorization ?? ''
-    const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
     if (!authorized) {
-      if (legacyKeys.has(bearer)) {
-        return json(res, 401, {
-          error: '访问密钥是升级前签发的，已失效：运行 npx @kioku-memory/cli migrate 重新接入',
-          code: 'legacy_key',
-        })
-      }
-      return json(res, 401, { error: '访问密钥无效' })
+      return json(res, 401, { error: '访问密钥无效或已吊销' })
     }
     if (req.url === '/v1/whoami') {
       return json(res, 200, {
-        primaryCircle: {
-          id: '11111111-1111-4111-8111-111111111111',
-          slug: 'personal',
-          name: '个人圈',
-          kind: 'personal',
-        },
-        linkedCircles: [],
-        client: {
+        accountName: 'E2E Owner',
+        key: {
           id: '22222222-2222-4222-8222-222222222222',
-          circleId: '11111111-1111-4111-8111-111111111111',
+          name: `e2e ${runtimeFamily}`,
+          prefix: 'e2e000000000',
+          runtimeFamily,
+          envs: [],
+          allowedRealms: null,
+          canWrite: true,
+          canResolveCredentials: false,
+        },
+        client: {
           slug: runtimeFamily,
           name: `e2e ${runtimeFamily}`,
           runtimeFamily,
-          ownerAccountId: '33333333-3333-4333-8333-333333333333',
-          defaultPersonaId: null,
-          config: { personMemoryMode: 'strict', recordPrompt: false },
         },
-        persona: null,
-        contextFacets: {},
-        resolvedFacets: {},
-        vocabulary: [],
-        scopes: {
-          readKinds: ['entry'],
-          writeKinds: ['entry'],
-          maxSensitivity: 'private',
-          allowedRealms: null,
-          admin: false,
-          credentials: 'none',
+        primaryCircle: {
+          slug: 'default',
+          name: 'Kioku',
+          kind: 'personal',
         },
       })
     }
@@ -359,7 +358,50 @@ export async function startFakeKioku(
       }
       if (body.method === 'tools/list') return reply({ tools: TOOLS })
       if (body.method === 'tools/call') {
-        return reply({ content: [{ type: 'text', text: `e2e ${body.params?.name}` }] })
+        const name = String(body.params?.name ?? '')
+        const args =
+          body.params?.arguments && typeof body.params.arguments === 'object'
+            ? body.params.arguments
+            : {}
+        const structuredContent =
+          name === 'kioku_list_credentials'
+            ? { items: [] }
+            : name === 'kioku_delete'
+              ? { deleted: true, id: String(args.id ?? 'm-222222') }
+              : name === 'kioku_browse'
+                ? { groupBy: String(args.group_by ?? 'project'), groups: [], truncated: false }
+                : ['kioku_get', 'kioku_create', 'kioku_update'].includes(name)
+                  ? {
+                      entry: {
+                        id: '11111111-1111-4111-8111-111111111111',
+                        shortId: 'm-222222',
+                        kind: 'entry',
+                        title: String(args.title ?? 'e2e'),
+                        content: String(args.content ?? 'e2e'),
+                        disclosure: null,
+                        isPinned: false,
+                        envs: [],
+                        realms: [],
+                        projects: [],
+                        runtimes: [],
+                        topics: [],
+                        deviceKey: null,
+                        projectSlug: null,
+                        validTo: null,
+                        version: 1,
+                        createdAt: '2026-01-01T00:00:00.000Z',
+                        updatedAt: '2026-01-01T00:00:00.000Z',
+                        deletedAt: null,
+                      },
+                      outboundLinks: [],
+                      backlinks: [],
+                      credentialRefs: [],
+                    }
+                  : undefined
+        return reply({
+          content: [{ type: 'text', text: `e2e ${name}` }],
+          ...(structuredContent ? { structuredContent } : {}),
+        })
       }
       if (body.method === 'ping') return reply({})
       return json(res, 200, {
@@ -388,16 +430,20 @@ export async function startFakeKioku(
 // 这次请求里模型看到了什么：注入的两个标记，以及工具清单里有没有 Kioku 的工具
 // （只看 tools 字段：正文里提到工具名不算）
 function seen(raw, body) {
+  const toolsJson = JSON.stringify(body?.tools ?? [])
+  const convoJson = JSON.stringify(body?.messages ?? body?.input ?? [])
   return {
     boot: raw.includes(BOOT_MARK),
     recall: raw.includes(RECALL_MARK),
-    tools: JSON.stringify(body?.tools ?? []).includes('kioku_get'),
+    tools: toolsJson.includes('kioku_get') && toolsJson.includes('kioku_list_credentials'),
+    legacyTools: toolsJson.includes('kioku_transfer'),
     // 工具的名字，出问题时看得到模型手上到底有什么
     toolNames: (Array.isArray(body?.tools) ? body.tools : [])
       .map((tool) => tool?.function?.name ?? tool?.name ?? tool?.type)
       .slice(0, 60),
     // 对话里（工具的结果）有没有出现 Kioku 的工具：按需搜索工具的平台靠它核对
-    found: JSON.stringify(body?.messages ?? body?.input ?? []).includes('kioku_get'),
+    found: convoJson.includes('kioku_get') && convoJson.includes('kioku_list_credentials'),
+    legacyFound: convoJson.includes('kioku_transfer'),
   }
 }
 export const replyText = ({ boot, recall, tools }) =>

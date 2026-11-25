@@ -3,22 +3,17 @@
 
 export {
   DATABASE_UNAVAILABLE_CODE,
+  DatabaseUnavailable,
   INVALID_KEY_TEXT,
   KeyRejected,
   KiokuFailure,
-  LEGACY_DATABASE_CODE,
-  LEGACY_KEY_CODE,
-  LEGACY_KEY_TEXT,
-  LegacyDatabase,
   errorCodeOf,
   errorKind,
   failureText,
   fetchFailure,
   isRedirect,
   keyFormatError,
-  legacyDatabaseText,
   redirectError,
-  rejectionOf,
 } from '../../core/lib/http.mjs'
 
 export {
