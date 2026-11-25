@@ -63,7 +63,7 @@ JSON
 | `ci.yml` | `windows-2025` | `test-windows`：在 Windows 上跑 JS 的用例，不是必需检查 |
 | `e2e.yml` | `ubuntu-24.04`、`windows-2025` | 装真实的平台做端到端实测，不是必需检查；改到插件、共用核心或实测脚本的 PR、每周一、手动触发时跑 |
 | `release.yml` | `ubuntu-24.04` | 推版本 tag 时发 npm、建 Release 页面 |
-| `edge.yml` | `ubuntu-24.04` | `main` 上 push 触发的 CI 成功后（或手动触发），发 npm `edge` 预览标签 |
+| `edge.yml` | `ubuntu-24.04` | `main` 上 push 触发的 CI 成功后（或手动触发），发 npm `edge` 预览标签并更新滚动 `edge` 预发布页 |
 
 ## 本机凭据
 

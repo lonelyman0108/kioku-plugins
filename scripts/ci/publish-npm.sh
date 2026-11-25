@@ -163,9 +163,11 @@ fi
 
 pub_args=(--access public)
 [ "$mode" != edge ] || pub_args+=(--tag edge)
+published_names=()
 
 for dir in "${dirs[@]}"; do
   name=$(node -p 'require(process.argv[1]).name' "./$dir/package.json")
+  published_names+=("$name")
   # 许可证与声明跟着包走；原本已跟踪的文件在退出时恢复原样
   for doc in LICENSE NOTICE; do
     preserve_file "$dir/$doc"
@@ -182,6 +184,14 @@ for dir in "${dirs[@]}"; do
   (cd "$dir" && npm publish "${pub_args[@]}")
 done
 
+if [ "$dry" -eq 0 ] && [ "$mode" = edge ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
+  {
+    echo "edge_version=${version}"
+    echo "commit=${full_sha}"
+    echo "packages=${published_names[*]}"
+  } >> "$GITHUB_OUTPUT"
+fi
+
 if [ "$dry" -eq 0 ] && [ "$mode" = edge ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "## npm edge 预览包"
@@ -190,8 +200,7 @@ if [ "$dry" -eq 0 ] && [ "$mode" = edge ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; 
     echo "- 版本：\`${version}\`"
     echo "- 体验命令：\`npx @kioku-memory/cli@edge\`"
     echo ""
-    for dir in "${dirs[@]}"; do
-      name=$(node -p 'require(process.argv[1]).name' "./$dir/package.json")
+    for name in "${published_names[@]}"; do
       echo "- \`${name}@${version}\`（dist-tag：\`edge\`）"
     done
   } >> "$GITHUB_STEP_SUMMARY"

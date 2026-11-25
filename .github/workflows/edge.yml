@@ -1,4 +1,5 @@
-# main 上的 CI 通过之后，把 packages/ 与 plugins/ 下公开的包以 edge 标签发到 npm（预览版，不改 latest）。
+# main 上的 CI 通过之后，把 packages/ 与 plugins/ 下公开的包以 edge 标签发到 npm（预览版，不改 latest）；
+# 发布成功后，再将滚动预发布页（edge）的 tag 与说明更新到同一提交。
 # 用 workflow_run 等 CI：CI 失败的提交不出包，发布的是 CI 测过的那个提交（head_sha），不是 main 的最新提交。
 name: Edge
 on:
@@ -34,10 +35,15 @@ jobs:
       contents: read
       # 向 npm 换一次性的发布凭证
       id-token: write
+    outputs:
+      edge_version: ${{ steps.publish.outputs.edge_version }}
+      commit: ${{ steps.publish.outputs.commit }}
+      packages: ${{ steps.publish.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       # 不用依赖缓存：发布的构建不从缓存里取东西
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -48,7 +54,31 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run --if-present build
-      - name: 发布 edge 包
+      - id: publish
+        name: 发布 edge 包
         env:
           COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: scripts/ci/publish-npm.sh --edge "$COMMIT"
+
+  release:
+    needs: publish
+    # npm 预览包全部发布成功后才更新 edge 预发布页；只声明 contents: write，不接触 OIDC 发布权限
+    if: github.repository == 'lonelyman0108/kioku-plugins'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 更新 edge 预发布页
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ needs.publish.outputs.commit }}
+          EDGE_VERSION: ${{ needs.publish.outputs.edge_version }}
+          PACKAGES: ${{ needs.publish.outputs.packages }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/ci/edge-release.sh
