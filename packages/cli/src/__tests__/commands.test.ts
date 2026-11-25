@@ -276,6 +276,31 @@ describe('新管理子命令集', () => {
     expect(localCode).toBe(0)
     expect(localOut).toContain('本机 Kioku 服务')
     expect(localOut).toContain('未创建')
+
+    let upOkOut = ''
+    const upOkCode = await localCommand(['up', '--dir', join(dir, 'local-kioku')], {
+      env,
+      out: { write: (c) => (upOkOut += c) },
+      probeHealth: async () => ({ generation: 3, state: 'ok', version: '0.7.0' }),
+    })
+    expect(upOkCode).toBe(0)
+    expect(upOkOut).toContain('已经有 Kioku 在运行')
+
+    await expect(
+      localCommand(['up', '--dir', join(dir, 'local-kioku')], {
+        env,
+        out: { write: () => true },
+        probeHealth: async () => ({ generation: 2, state: 'ok', version: '0.6.0' }),
+      }),
+    ).rejects.toThrow(/服务端版本过旧（0\.6\.0）/)
+
+    await expect(
+      localCommand(['up', '--dir', join(dir, 'local-kioku')], {
+        env,
+        out: { write: () => true },
+        probeHealth: async () => ({ generation: 4, state: 'ok', version: '0.9.0' }),
+      }),
+    ).rejects.toThrow(/第 4 代/)
   })
 
   it('main --help 列出所有新增子命令', async () => {

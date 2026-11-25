@@ -126,8 +126,7 @@ export async function planMigration(
     if (!relevant) continue
 
     const reauth = Boolean(
-      (row.connection === 'invalid' && (explicit || hasLegacyArtifacts)) ||
-      (explicit && row.connection === 'broken'),
+      row.connection === 'invalid' || (explicit && row.connection === 'broken'),
     )
     const removeSource = Boolean(findings.legacySource)
     const pluginAction: MigrationPlanItem['pluginAction'] = removeSource

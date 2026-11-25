@@ -9,7 +9,7 @@ import { postEvent } from '../../../core/lib/lifecycle.mjs'
 import { mcpCall } from '../../../core/lib/mcp.mjs'
 import { assertServerSupported, probeServer, ServerMismatch, whoami } from '../api.ts'
 import { searchCommand } from '../commands/memory.ts'
-import { migrateCommand } from '../commands/migrate.ts'
+import { migrateCommand, planMigration } from '../commands/migrate.ts'
 import {
   DatabaseUnavailable,
   INVALID_KEY_TEXT,
@@ -546,5 +546,42 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
       }),
     )
     expect((await detectLegacyPlugin('opencode', { env, cwd: dir })).legacySource).toBeNull()
+  })
+
+  it('无参 migrate 对已切到新版插件但访问密钥返回 401 的平台仍安排重新授权，并跳过其他服务器', async () => {
+    // OpenCode 已使用无版本钉死的新插件源（无旧残留），但访问密钥在服务端升级后已失效（401）
+    await writeProfile('opencode', { url: base, key: OLD_KEY }, env)
+    mkdirSync(join(dir, 'opencode'), { recursive: true })
+    writeFileSync(
+      join(dir, 'opencode', 'opencode.json'),
+      JSON.stringify({ plugin: ['@kioku-memory/plugin-opencode'] }),
+    )
+    // 另一个平台指向不同服务器，无参 migrate 不应动它
+    await writeProfile('agy', { url: 'http://127.0.0.1:1', key: OLD_KEY }, env)
+
+    const findings = await detectLegacyPlugin('opencode', { env, cwd: dir })
+    expect(findings.legacySource).toBeNull()
+    expect(findings.outdatedPlugin).toBeNull()
+    expect(findings.staleToolCache).toBe(false)
+
+    const plan = await planMigration(base, { env, cwd: dir })
+    expect(plan.items.map((item) => item.id)).toEqual(['opencode'])
+    expect(plan.items[0]?.reauth).toBe(true)
+    expect(plan.items[0]?.reasons).toContain('访问密钥已失效')
+
+    let execOut = ''
+    const code = await migrateCommand(['--server-url', base, '-y', '--no-browser'], {
+      env,
+      cwd: dir,
+      out: { write: (s) => ((execOut += s), true) },
+      open: () => {},
+      sleep: async () => {},
+      now: () => 0,
+      installFn: async (id) => ({ id, status: 'upgraded', message: 'ok' }),
+    })
+    expect(code).toBe(0)
+    expect(execOut).toContain('✓ 已签发新访问密钥')
+    expect((await readProfile('opencode', env))?.key).toBe(NEW_KEY)
+    expect((await readProfile('agy', env))?.key).toBe(OLD_KEY)
   })
 })

@@ -4,7 +4,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { assertServerSupported, SUPPORTED_API } from '../api.ts'
+import { assertServerSupported, generationProblem, SUPPORTED_API } from '../api.ts'
 import { ensureNoConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
 import {
@@ -472,7 +472,12 @@ export async function localCommand(
   {
     env = process.env,
     out = process.stdout,
-  }: { env?: Env; out?: Writer & { isTTY?: boolean } } = {},
+    probeHealth = probeLocalHealth,
+  }: {
+    env?: Env
+    out?: Writer & { isTTY?: boolean }
+    probeHealth?: typeof probeLocalHealth
+  } = {},
 ): Promise<number> {
   const { action, dir: rawDir } = parseLocalArgs(argv)
   const dir = expandDir(rawDir ?? defaultLocalDir(env), env)
@@ -480,17 +485,20 @@ export async function localCommand(
 
   if (action === 'status') {
     const state = await composeState(dir, env)
-    const probe = state === 'running' ? await probeLocalHealth(LOCAL_URL) : null
+    const probe = state === 'running' ? await probeHealth(LOCAL_URL) : null
     const olderGen = Boolean(probe && probe.generation !== null && probe.generation < SUPPORTED_API)
-    const isUp = probe?.state === 'ok' && !olderGen
+    const newerGen = Boolean(probe && probe.generation !== null && probe.generation > SUPPORTED_API)
+    const isUp = probe?.state === 'ok' && probe.generation === SUPPORTED_API
     const inited = isUp ? await setupDone(LOCAL_URL) : false
     const healthLine = olderGen
       ? `旧版服务端（${plain(probe?.version) || '版本未知'}），需要先升级服务端镜像`
-      : probe?.state === 'unavailable'
-        ? '数据库暂时无法连接'
-        : isUp
-          ? `${LOCAL_URL}（就绪）`
-          : '未就绪'
+      : newerGen
+        ? `服务端接口（第 ${probe!.generation} 代）比当前命令行新，需升级命令行`
+        : probe?.state === 'unavailable'
+          ? '数据库暂时无法连接'
+          : isUp
+            ? `${LOCAL_URL}（就绪）`
+            : '未就绪'
     const box = renderBox({
       title: '本机 Kioku 服务',
       theme,
@@ -544,12 +552,14 @@ export async function localCommand(
   }
 
   // up
-  const initialProbe = await probeLocalHealth(LOCAL_URL)
-  if (initialProbe.state === 'ok') {
+  const initialProbe = await probeHealth(LOCAL_URL)
+  if (initialProbe.state === 'ok' && initialProbe.generation === SUPPORTED_API) {
     await rememberServerUrl(LOCAL_URL, env).catch(() => {})
     out.write(`✓ 本机 ${LOCAL_PORT} 端口上已经有 Kioku 在运行：${LOCAL_URL}\n`)
     return 0
   }
+  const mismatch = generationProblem(initialProbe)
+  if (mismatch) throw new KiokuFailure(mismatch)
   if (!(await hasCompose(env))) {
     throw new KiokuFailure('没有找到 docker compose：先装好 Docker（含 compose 插件）再来')
   }
@@ -571,9 +581,15 @@ export async function localCommand(
 
   out.write('正在运行 docker compose up -d…\n')
   await composeUp(dir, env)
-  const up = await waitUntil(async () => (await probeLocalHealth(LOCAL_URL)).state === 'ok', {
-    timeoutMs: 180_000,
-  })
+  const up = await waitUntil(
+    async () => {
+      const p = await probeHealth(LOCAL_URL)
+      return p.state === 'ok' && p.generation === SUPPORTED_API
+    },
+    {
+      timeoutMs: 180_000,
+    },
+  )
   if (!up) {
     throw new KiokuFailure(
       `Kioku 在 3 分钟内没有就绪：运行 kioku local logs --dir ${plain(dir)} 查看原因`,
