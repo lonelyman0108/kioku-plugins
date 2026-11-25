@@ -1,0 +1,54 @@
+# main 上的 CI 通过之后，把 packages/ 与 plugins/ 下公开的包以 edge 标签发到 npm（预览版，不改 latest）。
+# 用 workflow_run 等 CI：CI 失败的提交不出包，发布的是 CI 测过的那个提交（head_sha），不是 main 的最新提交。
+name: Edge
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+# 连着合并几次时排队发，不取消正在发的那次：中途取消会让几个包的 edge 指向不同提交。
+# 排队里只留最新的一次，更早的待跑 run 由 GitHub 替换掉
+concurrency:
+  group: edge-main
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  publish:
+    # 只接 main 上 push 触发、跑成功的 CI，或在 main 上手动触发；fork 里没有受信发布权限，不跑
+    if: >-
+      github.repository == 'lonelyman0108/kioku-plugins' &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main'))
+    # 受信发布只认 GitHub 托管的 runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # 向 npm 换一次性的发布凭证
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      # 不用依赖缓存：发布的构建不从缓存里取东西
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          registry-url: https://registry.npmjs.org
+      - name: 构建包
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run --if-present build
+      - name: 发布 edge 包
+        env:
+          COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: scripts/ci/publish-npm.sh --edge "$COMMIT"
