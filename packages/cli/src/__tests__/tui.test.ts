@@ -131,6 +131,23 @@ function createFakeTty(cols = 104, rows = 28) {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 
+async function quitWhenIdle(ttyIn: EventEmitter, done: Promise<number>): Promise<number> {
+  let settled = false
+  let exitCode = -1
+  void done.then((code) => {
+    settled = true
+    exitCode = code
+  })
+  await vi.waitFor(
+    () => {
+      if (!settled) ttyIn.emit('keypress', 'q', { name: 'q' })
+      expect(settled).toBe(true)
+    },
+    { interval: 20 },
+  )
+  return exitCode
+}
+
 describe('renderTuiFrame 纯渲染布局与弹出层对齐', () => {
   it('在宽屏、窄屏、矮窗及 TrueColor / 256色 / 无色主题下严格保持行数与列宽不变量，并展示正确标题', () => {
     const state = makeState()
@@ -373,6 +390,7 @@ describe('runTui 交互工作台状态流', () => {
       },
       installPlugin,
       verifyConnectionHandshake,
+      rememberServerUrl: async () => {},
       open: (u) => opened.push(u),
       copy: async (text) => {
         copied.push(text)
@@ -412,10 +430,10 @@ describe('runTui 交互工作台状态流', () => {
     await vi.waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith('codex', { env: emptyEnv, cwd: '/tmp' })
       expect(stripAnsi(writes.join(''))).toContain('已安装 Codex 插件')
+      expect(stripAnsi(writes.at(-1) ?? '')).not.toContain('正在为 Codex 安装插件并验证握手')
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('按 d 收集诊断输出在右侧展示，按 u 预览并断开 Antigravity 托管插件', async () => {
@@ -465,6 +483,7 @@ describe('runTui 交互工作台状态流', () => {
     await vi.waitFor(() => {
       expect(doctorMock).toHaveBeenCalledOnce()
       expect(stripAnsi(writes.join(''))).toContain('Antigravity 配置正常')
+      expect(stripAnsi(writes.at(-1) ?? '')).not.toContain('正在诊断')
     })
 
     ttyIn.emit('keypress', 'u', { name: 'u' })
@@ -479,8 +498,7 @@ describe('runTui 交互工作台状态流', () => {
       expect(removeManagedAgyPlugin).toHaveBeenCalledOnce()
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('按 s 设置服务地址后会持久化到 cli.json 并保留 defaultPlatform，下次启动直接读回', async () => {
@@ -532,8 +550,7 @@ describe('runTui 交互工作台状态流', () => {
         expect(stripAnsi(writes.join(''))).toContain('已切换到 https://kioku.example.com'),
       )
 
-      ttyIn.emit('keypress', 'q', { name: 'q' })
-      await expect(done).resolves.toBe(0)
+      expect(await quitWhenIdle(ttyIn, done)).toBe(0)
 
       expect(await readCliPreferences(env)).toEqual({
         defaultPlatform: 'codex',
@@ -719,6 +736,7 @@ describe('runTui 交互工作台状态流', () => {
         connectedTargets.push(target)
         return []
       },
+      rememberServerUrl: async () => {},
     }
 
     const done = runTui({
@@ -746,8 +764,7 @@ describe('runTui 交互工作台状态流', () => {
       ids: ['claude-code', 'codex'],
     })
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('服务与权限完整渲染访问密钥、所属账号、读写权限、默认环境与场域范围；narrow/help 分页不截断', () => {
@@ -967,10 +984,8 @@ describe('runTui 交互工作台状态流', () => {
     const beforeCloseReport = writes.length
     ttyIn.emit('keypress', '', { name: 'escape' })
     await vi.waitFor(() => expect(writes.length).toBeGreaterThan(beforeCloseReport))
-    await flush()
 
-    ttyIn.emit('keypress', 'q', { name: 'q' })
-    await expect(done).resolves.toBe(0)
+    expect(await quitWhenIdle(ttyIn, done)).toBe(0)
   })
 
   it('慢速 defaultServerUrl 在按 s 切换服务地址后返回 null 时不覆盖新地址且按 q 可立即退出', async () => {
@@ -1033,8 +1048,7 @@ describe('runTui 交互工作台状态流', () => {
         expect(stripAnsi(writes.join(''))).toContain('已切换到 https://kioku.example.com'),
       )
 
-      ttyIn.emit('keypress', 'q', { name: 'q' })
-      await expect(done).resolves.toBe(0)
+      expect(await quitWhenIdle(ttyIn, done)).toBe(0)
       expect(await readCliPreferences(env)).toEqual({ serverUrl: 'https://kioku.example.com' })
     } finally {
       rmSync(tmp, { recursive: true, force: true })
