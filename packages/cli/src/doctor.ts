@@ -2,11 +2,11 @@
 // 单平台默认输出与既有脚本、E2E 合约完全一致（✓ / ! / ✗ 行）；
 // 未指定平台且未从会话认出时可自动巡检全部已接入/已安装平台（或使用 --all），并支持 --json 输出。
 
-import { KeyRejected, ServerMismatch, whoami } from './api.ts'
+import { ServerMismatch, whoami } from './api.ts'
 import { scanConflicts } from './conflicts.ts'
 import {
+  DatabaseUnavailable,
   KiokuFailure,
-  LegacyDatabase,
   NotConfigured,
   UsageError,
   failureText,
@@ -20,7 +20,6 @@ import { detectLegacyPlugin } from './legacy.ts'
 import { detectPlatformPresence } from './panel.ts'
 import { detectPlatform, platformNames, PLATFORMS } from './platforms.ts'
 import type { Env, SavedProfile, TargetConfig, WhoamiResponse, Writer } from './types.ts'
-import { capabilityLabel, kindLabel, sortEntryKinds } from './ui/theme.ts'
 
 export const DOCTOR_USAGE = `用法：kioku doctor [平台] [--all] [--json]
 
@@ -32,25 +31,6 @@ export const DOCTOR_USAGE = `用法：kioku doctor [平台] [--all] [--json]
 
 有问题的项以 ✗ 开头，这时退出码为 1。
 `
-
-const SENSITIVITIES: Record<string, string> = {
-  public: '公开',
-  internal: '内部',
-  private: '私密',
-  secret: '机密',
-}
-
-function named(names: Record<string, string>, value: string | undefined): string {
-  const key = value ?? ''
-  return Object.hasOwn(names, key) ? names[key] : plain(key)
-}
-
-function kindsText(kinds: string[] | undefined): string {
-  if (!Array.isArray(kinds) || !kinds.length) return '无'
-  return sortEntryKinds(kinds)
-    .map((kind) => kindLabel(kind))
-    .join('、')
-}
 
 export function parseDoctorArgs(argv: string[]): {
   platform: string | null
@@ -84,21 +64,16 @@ function claudeOptionConfig(env: Env): TargetConfig | null {
 }
 
 type DoctorIssueCategory =
-  | 'server_generation'
-  | 'legacy_database'
-  | 'database_unavailable'
-  | 'legacy_key'
-  | 'legacy_source'
-  | 'outdated_plugin'
+  'server_generation' | 'database_unavailable' | 'legacy_source' | 'outdated_plugin'
 
 interface DoctorTargetReport {
   id: string | null
   name: string | null
   url?: string
   profileFile?: string
-  primaryCircle?: WhoamiResponse['primaryCircle']
+  accountName?: string
+  key?: WhoamiResponse['key']
   client?: WhoamiResponse['client']
-  scopes?: WhoamiResponse['scopes']
   checks: Array<{
     level: 'ok' | 'warn' | 'bad' | 'note'
     message: string
@@ -188,17 +163,13 @@ async function inspectOne(
       who = await whoami(config)
     } catch (err) {
       const category: DoctorIssueCategory | undefined =
-        err instanceof LegacyDatabase
-          ? 'legacy_database'
+        err instanceof DatabaseUnavailable
+          ? 'database_unavailable'
           : err instanceof ServerMismatch
-            ? err.probe.state === 'legacy'
-              ? 'legacy_database'
-              : err.probe.state === 'unavailable'
-                ? 'database_unavailable'
-                : 'server_generation'
-            : err instanceof KeyRejected && err.legacy
-              ? 'legacy_key'
-              : undefined
+            ? err.probe.state === 'unavailable'
+              ? 'database_unavailable'
+              : 'server_generation'
+            : undefined
       bad(failureText(err), category)
     }
   } catch (err) {
@@ -206,49 +177,29 @@ async function inspectOne(
   }
 
   if (who) {
-    const { primaryCircle, linkedCircles, client, scopes } = who
-    report.primaryCircle = primaryCircle
+    const { accountName, key, client } = who
+    report.accountName = accountName
+    report.key = key
     report.client = client
-    report.scopes = scopes
     ok(
-      `访问密钥可用：客户端 ${plain(client.name)}（${plain(client.slug)}），运行时 ${plain(client.runtimeFamily)}`,
+      `访问密钥可用：${plain(key.name)}（${plain(key.prefix)}），运行时 ${plain(key.runtimeFamily)}`,
     )
-    const primaryKind = primaryCircle.kind === 'shared' ? '独立圈' : '个人圈'
-    note(`主圈：${plain(primaryCircle.name)}（${primaryKind} · ${plain(primaryCircle.slug)}）`)
-    if (Array.isArray(linkedCircles) && linkedCircles.length) {
-      const linked = linkedCircles
-        .map(
-          (c) =>
-            `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
-        )
-        .join('、')
-      note(`关联圈：${linked}`)
+    note(`账号：${plain(accountName)}`)
+    note(`写入权限：${key.canWrite ? '可写' : '只读'}`)
+    note(`凭据注入：${key.canResolveCredentials ? '允许' : '禁止'}`)
+    if (key.envs.length) {
+      note(`默认环境：${key.envs.map((item) => plain(item)).join('、')}`)
     }
-    if (who.persona) {
-      note(`独立人格：${plain(who.persona.name)}（${plain(who.persona.slug)}）`)
-    }
-    const facets = who.resolvedFacets ?? who.contextFacets
-    if (facets) {
-      const facetParts = Object.keys(facets)
-        .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
-        .sort()
-        .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
-      if (facetParts.length) note(`默认语境：${facetParts.join(' · ')}`)
-    }
-    note(`读：${kindsText(scopes.readKinds)}`)
-    note(`写：${kindsText(scopes.writeKinds)}`)
-    note(`最高敏感级：${named(SENSITIVITIES, scopes.maxSensitivity)}`)
-    if (Array.isArray(scopes.allowedRealms)) {
-      const realms = scopes.allowedRealms.length
-        ? scopes.allowedRealms.map((r) => plain(r)).join('、')
-        : '空（受限）'
-      note(`场域白名单：${realms}`)
-    }
-    note(`凭据：${capabilityLabel(scopes.credentials)}`)
-    if (scopes.admin === true) note('管理权限：是')
-    if (platform && client.runtimeFamily !== platform.runtimeFamily) {
+    const realmText =
+      key.allowedRealms === null
+        ? '不限'
+        : key.allowedRealms.length
+          ? key.allowedRealms.map((r) => plain(r)).join('、')
+          : '无（仅通用）'
+    note(`场域范围：${realmText}`)
+    if (platform && key.runtimeFamily !== platform.runtimeFamily) {
       warn(
-        `这个客户端的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面「客户端」页为 ${platform.name} 另建一个客户端`,
+        `这个访问密钥的运行时不是 ${platform.runtimeFamily}，注入的内容不按 ${platform.name} 的格式：在管理界面「设置 → 连接与终端」为 ${platform.name} 另建一个访问密钥`,
       )
     }
   }

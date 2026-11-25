@@ -1,7 +1,7 @@
 // 零依赖字素簇行输入引擎：按中文/表情字素簇移动光标与删除，支持左右键、Home/End、Ctrl+U/K 与水平窗口滚动。
 // 供流式终端提示（prompts.ts）与全屏 TUI 弹出层输入框共用。
 
-import { createTheme, type StrataTheme } from './theme.ts'
+import { createTheme, type CliTheme } from './theme.ts'
 import { graphemeWidth, truncateWidth } from './width.ts'
 
 export interface LineInputKey {
@@ -122,7 +122,7 @@ export function renderLineWindow(
     maxWidth: number
     mask?: string
     showCursor?: boolean
-    theme?: StrataTheme
+    theme?: CliTheme
   },
 ): { text: string; cursorCol: number } {
   const limit = Math.max(1, maxWidth)

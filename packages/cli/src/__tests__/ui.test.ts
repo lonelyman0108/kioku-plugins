@@ -17,19 +17,7 @@ import {
   startDeviceAuthWait,
 } from '../ui/prompts.ts'
 import { createScreen } from '../ui/screen.ts'
-import {
-  bandForKind,
-  capabilityLabel,
-  createTheme,
-  ENTRY_KIND_ORDER,
-  kindLabel,
-  renderBox,
-  sensitivityBadge,
-  sortEntryKinds,
-  STRATA_BANDS,
-  supportsColor,
-  supportsTrueColor,
-} from '../ui/theme.ts'
+import { createTheme, kindLabel, renderBox, supportsColor, supportsTrueColor } from '../ui/theme.ts'
 import { createViewport } from '../ui/viewport.ts'
 import {
   displayWidth,
@@ -92,21 +80,16 @@ describe('ui/theme', () => {
     const plainTheme = createTheme({ color: false })
     expect(plainTheme.error('失败')).toBe('失败')
     expect(plainTheme.brandStamp('記 憶')).toBe('[記 憶]')
-    expect(plainTheme.kindChip('entry')).toBe('[正式记忆]')
     expect(plainTheme.keycap('Enter', '接入')).toBe('[Enter] 接入')
 
     const tcTheme = createTheme({ color: true, env: { COLORTERM: 'truecolor' } })
     expect(tcTheme.trueColor).toBe(true)
     expect(tcTheme.warn('注意')).toContain('\x1b[38;2;216;181;107m')
     expect(tcTheme.warn('注意')).not.toBe('\x1b[2m注意\x1b[0m')
-    expect(displayWidth(tcTheme.kindChip('entry'))).toBe(displayWidth('■ 正式记忆'))
 
     const theme256 = createTheme({ color: true, env: { TERM: 'xterm-256color' } })
     expect(theme256.trueColor).toBe(false)
     expect(theme256.warn('注意')).toContain('\x1b[38;5;179m')
-    expect(theme256.kind('persona')).toContain('\x1b[38;5;108m')
-    expect(theme256.kind('shared-away')).toContain('\x1b[38;5;144m')
-    expect(theme256.kind('primary')).toContain('\x1b[38;5;109m')
 
     // 内嵌状态色彩重置后，表面背景应自动恢复且不改变视觉宽度
     const inner = `  ${tcTheme.ok('●')} 正常  ${tcTheme.muted('说明')}  `
@@ -116,30 +99,10 @@ describe('ui/theme', () => {
     expect(row.endsWith('\x1b[0m')).toBe(true)
   })
 
-  it('提供规范的形态名、地层排序、敏感级纹理与细线方框排版（含标题超宽截断）', () => {
-    expect(ENTRY_KIND_ORDER).toEqual(['episode', 'fact', 'entry'])
-    expect(STRATA_BANDS).toEqual([
-      'episode',
-      'fact',
-      'personal',
-      'shared-away',
-      'persona',
-      'primary',
-    ])
-    expect(sortEntryKinds(['entry', 'episode', 'fact'])).toEqual(['episode', 'fact', 'entry'])
-    expect(bandForKind('entry', 'personal')).toBe('personal')
-    expect(bandForKind('entry', 'shared')).toBe('primary')
+  it('提供规范的类型名与细线方框排版（含标题超宽截断）', () => {
     expect(kindLabel('entry')).toBe('正式记忆')
-    expect(kindLabel('fact')).toBe('联系人事实')
     expect(kindLabel('episode')).toBe('会话摘要')
-    expect(sensitivityBadge('public')).toBe('[ ] 公开')
-    expect(sensitivityBadge('internal')).toBe('[·] 内部')
-    expect(sensitivityBadge('private')).toBe('[╱] 私密')
-    expect(sensitivityBadge('secret')).toBe('[■] 机密')
-    expect(capabilityLabel('use')).toBe('取用')
-
-    const tc = createTheme({ color: true, env: { COLORTERM: 'truecolor' } })
-    expect(sensitivityBadge('secret', tc)).toBe('\x1b[1m[■] 机密\x1b[0m')
+    expect(kindLabel('custom')).toBe('custom')
 
     const box = renderBox({
       title: '面板',

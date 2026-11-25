@@ -166,19 +166,12 @@ describe('Claude Code MCP stdio 桥接', () => {
     expect(requests).toHaveLength(0)
     expect(JSON.parse(mixed.stdout.trim()).error.message).toContain('须成对填写')
 
-    // 401 legacy_key 与 503 legacy_database 返回准确迁移提示
-    reply = () => ({ status: 401, body: { error: 'old', code: 'legacy_key' } })
-    const legacyKeyRes = await runBridgeProc([{ jsonrpc: '2.0', id: 5, method: 'tools/list' }], {
+    // 503 database_unavailable 返回清晰提示
+    reply = () => ({ status: 503, body: { error: 'down', code: 'database_unavailable' } })
+    const dbDownRes = await runBridgeProc([{ jsonrpc: '2.0', id: 5, method: 'tools/list' }], {
       CLAUDE_PLUGIN_OPTION_SERVER_URL: base,
       CLAUDE_PLUGIN_OPTION_API_KEY: secretKey,
     })
-    expect(JSON.parse(legacyKeyRes.stdout.trim()).error.message).toContain('migrate')
-
-    reply = () => ({ status: 503, body: { error: 'old db', code: 'legacy_database' } })
-    const legacyDbRes = await runBridgeProc([{ jsonrpc: '2.0', id: 6, method: 'tools/list' }], {
-      CLAUDE_PLUGIN_OPTION_SERVER_URL: base,
-      CLAUDE_PLUGIN_OPTION_API_KEY: secretKey,
-    })
-    expect(JSON.parse(legacyDbRes.stdout.trim()).error.message).toContain('/legacy-upgrade')
+    expect(JSON.parse(dbDownRes.stdout.trim()).error.message).toContain('数据库暂时无法连接')
   })
 })

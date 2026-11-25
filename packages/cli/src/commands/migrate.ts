@@ -32,9 +32,9 @@ import { createTheme, renderBox } from '../ui/theme.ts'
 
 export const MIGRATE_USAGE = `用法：kioku migrate [平台…] [--server-url <地址>] [-y|--yes] [--no-browser] [--dry-run]
 
-将重构之前版本的客户端插件与访问密钥迁移到新版 Kioku：
-  1. 核对服务端代际与迁移状态（旧代服务端或待迁移数据库会直接给出下一步指引）
-  2. 扫描本机已失效的旧访问密钥、旧插件市场来源、过旧插件与旧工具清单缓存
+将旧版客户端插件、旧缓存与失效访问密钥迁移到新版 Kioku：
+  1. 核对服务端代际与连接状态（旧代服务端会直接给出下一步指引）
+  2. 扫描本机已失效的访问密钥、旧插件市场来源、过旧插件与旧工具清单缓存
   3. 卸载旧来源、清理缓存、升级/重装插件，并在浏览器内一次批量重新签发访问密钥
   4. 刷新 MCP 工具清单缓存并运行 doctor 验证
 
@@ -126,9 +126,7 @@ export async function planMigration(
     if (!relevant) continue
 
     const reauth = Boolean(
-      row.legacyKey ||
-      (row.connection === 'invalid' && (explicit || hasLegacyArtifacts)) ||
-      (explicit && row.connection === 'broken'),
+      row.connection === 'invalid' || (explicit && row.connection === 'broken'),
     )
     const removeSource = Boolean(findings.legacySource)
     const pluginAction: MigrationPlanItem['pluginAction'] = removeSource
@@ -144,8 +142,7 @@ export async function planMigration(
     if (!removeSource && !clearCache && !pluginAction && !reauth) continue
 
     const reasons: string[] = []
-    if (row.legacyKey) reasons.push('旧访问密钥已失效')
-    else if (reauth && row.connection === 'invalid') reasons.push('访问密钥已失效')
+    if (reauth && row.connection === 'invalid') reasons.push('访问密钥已失效')
     else if (reauth && row.connection === 'broken') reasons.push('本机配置格式有误')
     if (findings.legacySource) reasons.push(findings.legacySource)
     if (findings.outdatedPlugin) reasons.push(findings.outdatedPlugin)
@@ -249,7 +246,7 @@ export async function migrateCommand(
   if (urlProblem) throw new KiokuFailure(urlProblem)
 
   const probe = await probeServer(rawUrl)
-  const mismatch = generationProblem(probe, rawUrl)
+  const mismatch = generationProblem(probe)
   if (mismatch) {
     out.write(`✗ ${mismatch}\n`)
     return 1

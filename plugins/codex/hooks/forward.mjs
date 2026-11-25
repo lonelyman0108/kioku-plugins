@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
+import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -110,10 +110,8 @@ async function sweepPending(env) {
   }
 }
 
-// 配置写错或待迁移时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
+// 配置写错时，会话开始给模型一段提示，让它告诉用户去处理；不带访问密钥
 function noticeOf(err) {
-  if (err instanceof LegacyDatabase || err.kind === 'legacy')
-    return `Kioku 长期记忆不可用：${err.message}。`
   return `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
 }
 
@@ -185,10 +183,7 @@ async function main(event) {
 
 const event = process.argv[2]
 main(event).catch((err) => {
-  if (
-    event === 'session.start' &&
-    (err instanceof Misconfigured || err instanceof LegacyDatabase)
-  ) {
+  if (event === 'session.start' && err instanceof Misconfigured) {
     writeContext(event, noticeOf(err))
   }
   // 标准错误不进上下文；插件自己写的原因原样给出，别的只给类别

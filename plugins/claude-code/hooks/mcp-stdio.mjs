@@ -127,10 +127,10 @@ async function forwardMessage(msg, { env, fetchImpl, out, errOut, timeoutMs }) {
     return
   }
 
-  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text), config.url)
+  const rejected = res.ok ? null : rejectionOf(res.status, jsonOrNull(text))
   if (rejected) {
     const reason =
-      rejected instanceof KeyRejected && !rejected.legacy
+      rejected instanceof KeyRejected
         ? `${rejected.message}：${LOGIN_HINT}重新授权`
         : rejected.message
     errOut.write(`Kioku MCP 未生效：${reason}\n`)

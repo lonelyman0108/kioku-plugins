@@ -30,8 +30,6 @@ import {
   lsCommand,
   SEARCH_USAGE,
   searchCommand,
-  TRANSFER_USAGE,
-  transferCommand,
 } from './commands/memory.ts'
 import { MIGRATE_USAGE, migrateCommand } from './commands/migrate.ts'
 import { STATUS_USAGE, statusCommand } from './commands/status.ts'
@@ -51,13 +49,12 @@ const OVERVIEW = `用法：kioku <子命令> [参数…]
 
 日常记忆读写：
   search      召回相关记忆，支持交互展开详情与 --json
-  get         按短 ID、标题或旧坐标读取单条记忆、变体与双链
-  ls          按记忆圈、场域、主题或形态分组浏览记忆目录
-  add         写入新正式记忆（支持管道输入、编辑器、适用条件与明文拦阻确认）
-  edit        修改记忆属性、正文或适用条件变体
+  get         按短 ID 或标题读取单条记忆、关联双链与凭据引用
+  ls          按主题、项目、环境、场域、客户端或类型分组浏览记忆目录
+  add         写入新正式记忆（支持管道输入、编辑器与场景标签）
+  edit        修改记忆属性、正文或场景标签
   delete      软删除单条记忆（别名 rm）
-  transfer    在有读写权限的独立圈之间迁移记忆
-  boot        预览会话启动加载的独立人格与高优先级记忆
+  boot        预览会话启动加载的常驻记忆与近期会话摘要
 
 客户端与接入管理：
   status      查看服务端连接状态与本机各客户端接入概况（支持 --json）
@@ -89,23 +86,19 @@ const VALUE_FLAGS = new Set([
   '--content',
   '--query',
   '--disclosure',
-  '--circle',
   '--path',
   '--platform',
   '--server-url',
   '--topic',
-  '--when',
-  '--remove-when',
-  '--sensitivity',
-  '--priority',
+  '--env',
+  '--realm',
+  '--project',
+  '--runtime',
+  '--group-by',
   '--limit',
   '--dir',
   '--from',
-  '--to',
   '--valid-to',
-  '--glossary',
-  '--glossary-add',
-  '--glossary-remove',
   '--expected-version',
   '--kind',
   '--tail',
@@ -206,8 +199,6 @@ export async function main(
   if (sub === 'delete' || sub === 'rm') {
     return guarded(sub, DELETE_USAGE, (a) => deleteCommand(a), rest)
   }
-  if (sub === 'transfer')
-    return guarded('transfer', TRANSFER_USAGE, (a) => transferCommand(a), rest)
   if (sub === 'boot') return guarded('boot', BOOT_USAGE, (a) => bootCommand(a), rest)
   if (sub === 'status') return guarded('status', STATUS_USAGE, (a) => statusCommand(a), rest)
   if (sub === 'connect') return guarded('connect', CONNECT_USAGE, (a) => connectCommand(a), rest)

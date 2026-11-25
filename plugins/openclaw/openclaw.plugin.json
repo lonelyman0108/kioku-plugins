@@ -12,10 +12,7 @@
       "kioku_create",
       "kioku_update",
       "kioku_delete",
-      "kioku_transfer",
-      "kioku_credential",
-      "kioku_credential_save",
-      "kioku_credential_delete"
+      "kioku_list_credentials"
     ]
   },
   "activation": {

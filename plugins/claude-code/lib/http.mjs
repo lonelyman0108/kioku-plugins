@@ -1,8 +1,6 @@
 // 钩子与 kioku 命令共用的访问密钥检查与报错。报错只给插件自己写的文字或错误类别：
 // fetch 的报错会带上整个 Authorization 请求头，响应解析失败的文字会带上响应的开头
 
-import { shownUrl } from './text.mjs'
-
 // 访问密钥只能是可见的 ASCII 字符：别的字符放不进请求头，fetch 报错时会把整个请求头写进错误文字
 const KEY = /^[\x21-\x7e]+$/
 // 错误码（ECONNREFUSED、UND_ERR_SOCKET 这类）与错误类名（TypeError 这类）的样子
@@ -59,25 +57,25 @@ export function failureText(err) {
 }
 
 // 服务端在响应体里给的错误码（与服务端 contracts 的常量一致）：
-// legacy_key 是升级前签发的访问密钥（401），legacy_database 是库还没从旧结构迁移过来（503）
-export const LEGACY_KEY_CODE = 'legacy_key'
-export const LEGACY_DATABASE_CODE = 'legacy_database'
+// database_unavailable 表示数据库尚未配置或暂时无法连接（503）
 export const DATABASE_UNAVAILABLE_CODE = 'database_unavailable'
 
 export const INVALID_KEY_TEXT = '访问密钥无效或已吊销'
-export const LEGACY_KEY_TEXT =
-  '访问密钥是升级前签发的，已失效：运行 npx @kioku-memory/cli migrate 重新接入'
+export const DATABASE_UNAVAILABLE_TEXT = 'Kioku 的数据库暂时无法连接，请稍后重试'
 
-// 服务端明说访问密钥不能用（401）：和连不上、响应不对分开。legacy 为真时是升级前签发的访问密钥
+// 服务端明说访问密钥不能用（401）：和连不上、响应不对分开
 export class KeyRejected extends KiokuFailure {
-  constructor(legacy = false) {
-    super(legacy ? LEGACY_KEY_TEXT : INVALID_KEY_TEXT)
-    this.legacy = legacy
+  constructor() {
+    super(INVALID_KEY_TEXT)
   }
 }
 
-// 服务端已升级、库还是旧结构，等管理员在管理界面迁移
-export class LegacyDatabase extends KiokuFailure {}
+// 服务端数据库尚未配置或暂时无法连接（503 database_unavailable）
+export class DatabaseUnavailable extends KiokuFailure {
+  constructor() {
+    super(DATABASE_UNAVAILABLE_TEXT)
+  }
+}
 
 // 响应体里的错误码；没有、或者不像错误码时为 null（服务端写的文字不原样拿来用）
 export function errorCodeOf(data) {
@@ -85,23 +83,11 @@ export function errorCodeOf(data) {
   return typeof code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : null
 }
 
-// 管理界面升级页的地址只给协议、主机与路径：写在地址里的账号密码不打印
-export function legacyDatabaseText(url) {
-  let base = ''
-  try {
-    base = shownUrl(url)
-  } catch {
-    // 地址解析不了时不举例
-  }
-  const where = base ? `打开 ${base}/legacy-upgrade` : '打开管理界面的升级页'
-  return `服务端已升级、尚未迁移旧数据：${where} 按引导迁移，完成后运行 npx @kioku-memory/cli migrate 重新接入`
-}
-
-// 401 与带 legacy_database 的 503 的统一解读：返回要抛的失败，别的状态返回 null
-export function rejectionOf(status, data, url) {
-  if (status === 401) return new KeyRejected(errorCodeOf(data) === LEGACY_KEY_CODE)
-  if (status === 503 && errorCodeOf(data) === LEGACY_DATABASE_CODE) {
-    return new LegacyDatabase(legacyDatabaseText(url))
+// 401 与带 database_unavailable 的 503 的统一解读：返回要抛的失败，别的状态返回 null
+export function rejectionOf(status, data) {
+  if (status === 401) return new KeyRejected()
+  if (status === 503 && errorCodeOf(data) === DATABASE_UNAVAILABLE_CODE) {
+    return new DatabaseUnavailable()
   }
   return null
 }

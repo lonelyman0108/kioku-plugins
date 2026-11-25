@@ -6,7 +6,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { failureText, KiokuFailure, LegacyDatabase } from '../lib/http.mjs'
+import { failureText, KiokuFailure } from '../lib/http.mjs'
 import {
   clip,
   contextOf,
@@ -179,15 +179,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (text && HOOK_EVENTS[event]) writeContext(event, text)
     })
     .catch((err) => {
-      if (
-        event === 'session.start' &&
-        (err instanceof Misconfigured || err instanceof LegacyDatabase)
-      ) {
-        const text =
-          err instanceof LegacyDatabase || err.kind === 'legacy'
-            ? `Kioku 长期记忆不可用：${err.message}。`
-            : `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`
-        writeContext(event, text)
+      if (event === 'session.start' && err instanceof Misconfigured) {
+        writeContext(
+          event,
+          `Kioku 插件的配置无法使用，长期记忆不可用：${err.message}。${SETUP_HINT}。`,
+        )
       }
       process.stderr.write(`Kioku ${event ?? ''} 未生效：${failureText(err)}\n`)
     })

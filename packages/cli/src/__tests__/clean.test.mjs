@@ -33,7 +33,7 @@ beforeAll(async () => {
       requests.push({ method: req.method, url: req.url, body })
       if (req.url === '/v1/health') {
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', version: '0.1.0', api: 2 }))
+        res.end(JSON.stringify({ status: 'ok', version: '0.6.0', api: 3 }))
         return
       }
       if (req.url === '/v1/setup/status') {
@@ -66,26 +66,21 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            primaryCircle: {
-              id: '00000000-0000-4000-8000-000000000001',
-              slug: 'personal',
-              name: '个人圈',
-              kind: 'personal',
+            accountName: 'owner',
+            key: {
+              id: `key-${family}`,
+              name: family,
+              prefix: `kioku_${family}`,
+              runtimeFamily: family,
+              envs: [],
+              allowedRealms: null,
+              canWrite: true,
+              canResolveCredentials: false,
             },
-            linkedCircles: [],
             client: {
-              id: 'a',
-              circleId: '00000000-0000-4000-8000-000000000001',
               slug: family,
               name: family,
               runtimeFamily: family,
-            },
-            persona: null,
-            scopes: {
-              readKinds: ['entry'],
-              writeKinds: ['entry'],
-              maxSensitivity: 'internal',
-              credentials: 'none',
             },
           }),
         )

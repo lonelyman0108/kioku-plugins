@@ -177,11 +177,7 @@ export function createKioku({
       if (event === 'turn.end') reportQuietUntil = now() + BACKOFF
       else quietUntil = now() + BACKOFF
       if (err instanceof Misconfigured) {
-        tell(
-          err.kind === 'legacy'
-            ? `Kioku 长期记忆不可用：${err.message}。`
-            : `Kioku 这次没有生效：${err.message}。${SETUP_HINT}`,
-        )
+        tell(`Kioku 这次没有生效：${err.message}。${SETUP_HINT}`)
       } else if (event === 'turn.end') tell(`Kioku 这一轮没有上报（${failureText(err)}），稍后再试`)
       else tell(`Kioku 这次没有生效（${failureText(err)}），稍后的输入会再试`)
       return undefined

@@ -1,24 +1,13 @@
-// kioku import：把客户端自带的本地长期记忆迁进 Kioku。先读本地文件出一份计划（每条的标题、适用条件与目标记忆圈），
-// 和 Kioku 里已有的比过之后列出来，确认了才写。按标题去重（兼容旧坐标兜底对照）：
+// kioku import：把客户端自带的本地长期记忆迁进 Kioku。先读本地文件出一份计划（每条的标题与场景标签），
+// 和 Kioku 里已有的比过之后列出来，确认了才写。按标题去重：
 // 已经有、内容一样的跳过；已经有、内容不一样的不覆盖（可能在 Kioku 里改过），要覆盖得明说。
 // 本地的文件不删、不改
 
 import { createHash } from 'node:crypto'
 
-import { UNAVAILABLE_TEXT, whoami } from './api.ts'
-import { plaintextKindLabel } from './commands/memory.ts'
-import {
-  DATABASE_UNAVAILABLE_CODE,
-  KiokuFailure,
-  UsageError,
-  errorCodeOf,
-  fetchFailure,
-  isRedirect,
-  plain,
-  redirectError,
-  rejectionOf,
-  shownUrl,
-} from './core.ts'
+import { whoami } from './api.ts'
+import { callMemoryTool, type EntryDetailData } from './commands/memory.ts'
+import { KiokuFailure, UsageError, plain, shownUrl } from './core.ts'
 import { isInteractiveTty, resolveIdentity } from './identity.ts'
 import { platformNames, PLATFORMS } from './platforms.ts'
 import { isCancel, loadPrompts } from './prompts.ts'
@@ -31,34 +20,28 @@ import {
 } from './sources.ts'
 import type { Env, Reader, TargetConfig, WhoamiResponse, Writer } from './types.ts'
 
-export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>] [--circle <记忆圈>]
+export const IMPORT_USAGE = `用法：kioku import --from <来源> [--path <目录>] [--platform <平台>]
                 [--dry-run] [-y|--yes] [--select] [--overwrite]
 
-把客户端自带的本地长期记忆迁进 Kioku：先列出每条将写入的标题与记忆圈，确认之后才写。
+把客户端自带的本地长期记忆迁进 Kioku：先列出每条将写入的标题与场景标签，确认之后才写。
 
   --from <来源>      ${sourceNames()}
   --path <目录>      不用默认的位置时指明（Claude Code 是 projects 目录或某个项目的 memory 目录）
   --platform <平台>  使用已配置客户端的地址与访问密钥（${platformNames()}）；省略时自动解析身份或环境变量
-  --circle <记忆圈>  目标记忆圈 slug（默认写入当前客户端的主圈）
   --dry-run          只列出计划，不写
   -y, --yes          不问，直接写（不在终端里运行时要带上）
   --select           在交互式终端里逐条勾选本次要写入的记忆子集
   --overwrite        Kioku 里同名记忆已经有、内容不一样的也覆盖（默认跳过）
 
 本地的文件不删、不改。重复运行不会重复写：已经迁过、内容没变的会跳过。
-疑似明文凭据的不写，列出是哪个文件的哪一行：先把值存成凭据，或者从文件里去掉再迁。
 未指定 --platform 时按环境变量 KIOKU_SERVER_URL/KIOKU_API_KEY 或本机已配置的默认客户端身份解析。
-记忆迁进目标记忆圈（默认为主圈）。
 指令文件（AGENTS.md、CLAUDE.md）不是记忆，不迁。
 `
-
-const TIMEOUT = 15_000
 
 export interface ImportOptions {
   from: string
   path?: string
   platform?: string
-  circle?: string
   dryRun: boolean
   yes: boolean
   select: boolean
@@ -69,8 +52,8 @@ export interface UsableSourceEntry {
   source: string
   title: string
   baseTitle?: string
-  legacyUri?: string
-  when?: Record<string, string[]>
+  projects?: string[]
+  runtimes?: string[]
   topics?: string[]
   content: string
   disclosure?: string
@@ -81,9 +64,6 @@ export interface ComparedEntry extends UsableSourceEntry {
   reason?: string
   version?: number
   shortId?: string
-  replaceGenericVariant?: boolean
-  matchedByLegacy?: boolean
-  appendVariant?: boolean
 }
 
 export interface ImportPlan {
@@ -98,7 +78,6 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     from: string | undefined
     path: string | undefined
     platform: string | undefined
-    circle: string | undefined
     dryRun: boolean
     yes: boolean
     select: boolean
@@ -107,7 +86,6 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     from: undefined,
     path: undefined,
     platform: undefined,
-    circle: undefined,
     dryRun: false,
     yes: false,
     select: false,
@@ -124,15 +102,11 @@ export function parseImportArgs(argv: string[]): ImportOptions {
     else if (!endOfFlags && (arg === '--yes' || arg === '-y')) options.yes = true
     else if (!endOfFlags && arg === '--select') options.select = true
     else if (!endOfFlags && arg === '--overwrite') options.overwrite = true
-    else if (
-      !endOfFlags &&
-      (arg === '--from' || arg === '--path' || arg === '--platform' || arg === '--circle')
-    ) {
+    else if (!endOfFlags && (arg === '--from' || arg === '--path' || arg === '--platform')) {
       const value = argv[++i]
       if (!value) throw new UsageError(`${arg} 后面要写值`)
       if (arg === '--from') options.from = value
       else if (arg === '--path') options.path = value
-      else if (arg === '--circle') options.circle = value
       else options.platform = value
     } else throw new UsageError(`不认识的参数 ${arg}`)
   }
@@ -149,26 +123,10 @@ export function parseImportArgs(argv: string[]): ImportOptions {
   return options as ImportOptions
 }
 
-function whenSignature(raw?: Record<string, readonly string[]> | null): string {
-  if (!raw) return '{}'
-  const out: Record<string, string[]> = {}
-  for (const rawKey of Object.keys(raw).sort()) {
-    const key = rawKey.trim().toLowerCase()
-    if (!key) continue
-    const unique = [
-      ...new Set((raw[rawKey] ?? []).map((v) => v.trim().toLowerCase()).filter(Boolean)),
-    ].sort()
-    if (unique.length) out[key] = unique
-  }
-  return JSON.stringify(out)
-}
-
-function formatWhenTag(when?: Record<string, string[]>): string {
-  if (!when) return ''
-  const parts = Object.keys(when)
-    .filter((k) => when[k]?.length)
-    .sort()
-    .map((k) => `${k}=${when[k].join(',')}`)
+function formatSceneTag(item: Pick<UsableSourceEntry, 'projects' | 'runtimes'>): string {
+  const parts: string[] = []
+  if (item.projects?.length) parts.push(`project=${item.projects.join(',')}`)
+  if (item.runtimes?.length) parts.push(`runtime=${item.runtimes.join(',')}`)
   return parts.length ? ` [${parts.join(' ')}]` : ''
 }
 
@@ -176,251 +134,145 @@ function sourceHash6(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 6)
 }
 
-async function request(
-  { url, key }: TargetConfig,
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<{ status: number; data: Record<string, unknown> | null }> {
-  let res: Response
-  let data: Record<string, unknown> | null
-  try {
-    res = await fetch(`${url}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${key}`,
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      // 不跟着跳转走：访问密钥只发给配置的地址
-      redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT),
-    })
-    data = (await res.json().catch(() => null)) as Record<string, unknown> | null
-  } catch (err) {
-    throw new KiokuFailure(fetchFailure(err, TIMEOUT))
-  }
-  if (isRedirect(res.status)) {
-    throw new KiokuFailure(redirectError(res.status, res.headers.get('location'), url))
-  }
-  const rejected = res.ok ? null : rejectionOf(res.status, data, url)
-  if (rejected) throw rejected
-  if (res.status === 503 && errorCodeOf(data) === DATABASE_UNAVAILABLE_CODE) {
-    throw new KiokuFailure(UNAVAILABLE_TEXT)
-  }
-  return { status: res.status, data }
+function isNotFound(res: {
+  isError: boolean
+  errorStatus?: number
+  errorMessage?: string
+}): boolean {
+  if (!res.isError) return false
+  if (res.errorStatus === 404) return true
+  return res.errorStatus === undefined && Boolean(res.errorMessage?.includes('不存在'))
 }
 
-// 服务端的错误文字压成一行；万一带着访问密钥也盖掉
-function serverText(data: Record<string, unknown> | null, status: number, key: string): string {
-  const text = typeof data?.error === 'string' ? data.error.split(key).join('***') : ''
-  return plain(text) || `HTTP ${status}`
-}
-
-async function fetchEntry(
-  config: TargetConfig,
-  ref: string,
-  circleSlug: string,
-): Promise<{ status: number; data: Record<string, unknown> | null }> {
-  const params = new URLSearchParams({
-    id: ref,
-    circle: circleSlug,
-    allVariants: 'true',
-  })
-  return request(config, 'GET', `/v1/entries?${params.toString()}`)
-}
-
-function isDisjointProjectEntry(
-  data: Record<string, unknown> | null,
-  item: UsableSourceEntry,
-): boolean {
-  const itemProjects = item.when?.project
-  if (!Array.isArray(itemProjects) || itemProjects.length === 0) return false
-  const variants = Array.isArray(data?.variants)
-    ? (data.variants as Array<{ when?: { project?: unknown }; whenSignature?: unknown }>)
-    : []
-  if (!variants.length) return false
-  const sig = whenSignature(item.when)
-  if (variants.some((v) => v?.whenSignature === sig)) return false
-  if (variants.length === 1 && variants[0]?.whenSignature === '{}') return false
-  return variants.every((v) => {
-    const projs = v?.when?.project
-    return Array.isArray(projs) && projs.length > 0 && !itemProjects.some((p) => projs.includes(p))
-  })
-}
-
-function validateImportTarget(who: WhoamiResponse, requestedCircle?: string): string {
-  if (who.scopes.writeKinds !== undefined && !who.scopes.writeKinds.includes('entry')) {
-    throw new KiokuFailure('当前客户端访问密钥无权写入正式记忆')
+function isDisjointProject(detail: EntryDetailData | null, item: UsableSourceEntry): boolean {
+  const itemProjects = item.projects
+  const existingProjects = detail?.entry?.projects
+  if (!itemProjects?.length || !Array.isArray(existingProjects) || !existingProjects.length) {
+    return false
   }
-  const targetCircle = requestedCircle ?? who.primaryCircle.slug
-  const matchesPrimary =
-    who.primaryCircle.slug === targetCircle || who.primaryCircle.id === targetCircle
-  if (matchesPrimary) return who.primaryCircle.slug
-  const linked = who.linkedCircles.find(
-    (c) => (c.slug && c.slug === targetCircle) || c.id === targetCircle,
-  )
-  if (!linked) {
-    throw new KiokuFailure(`未找到记忆圈：${plain(targetCircle)}`)
-  }
-  if (linked.mode !== 'read_write') {
-    throw new KiokuFailure(`记忆圈 ${plain(targetCircle)} 为只读，无法写入记忆`)
-  }
-  return linked.slug ?? linked.id
+  return !itemProjects.some((p) => existingProjects.includes(p))
 }
 
-// 和 Kioku 里现有的比：优先按旧坐标精确匹配，404 时再按标题兜底（跨项目重名自动转项目后缀，避免顶掉其他项目记忆）；
-// new 没有，same 有且对应变体正文一样，differs 有但不一样或需要新增变体（含无法读取正文的机密）
-async function compare(
-  config: TargetConfig,
-  circleSlug: string,
-  item: UsableSourceEntry,
-): Promise<ComparedEntry> {
-  const sig = whenSignature(item.when)
+function hasSameProjects(detail: EntryDetailData | null, item: UsableSourceEntry): boolean {
+  const itemProjects = item.projects ?? []
+  const existingProjects = detail?.entry?.projects ?? []
+  if (!itemProjects.length) return existingProjects.length === 0
+  return itemProjects.some((p) => existingProjects.includes(p))
+}
+
+function validateImportTarget(who: WhoamiResponse): void {
+  if (!who.key.canWrite) {
+    throw new KiokuFailure('当前访问密钥为只读，无法写入记忆')
+  }
+}
+
+// 和 Kioku 里现有的比：按标题精确查找（跨项目重名自动转项目后缀，避免顶掉其他项目记忆）；
+// new 没有，same 有且正文一样，differs 有但正文不一样
+async function compare(config: TargetConfig, item: UsableSourceEntry): Promise<ComparedEntry> {
   let effectiveTitle = item.title
-  let matchedByLegacy = false
-  let res: { status: number; data: Record<string, unknown> | null }
-  if (item.legacyUri) {
-    res = await fetchEntry(config, item.legacyUri, circleSlug)
-    matchedByLegacy = res.status === 200
-    if (res.status === 404) res = await fetchEntry(config, effectiveTitle, circleSlug)
-  } else {
-    res = await fetchEntry(config, effectiveTitle, circleSlug)
-  }
-  if (!matchedByLegacy) {
-    const proj = item.when?.project?.[0]
-    if (
-      proj &&
-      !effectiveTitle.endsWith(`（${proj}）`) &&
-      (res.status === 409 || (res.status === 200 && isDisjointProjectEntry(res.data, item)))
-    ) {
-      const projTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
-      if (projTitle !== effectiveTitle) {
-        effectiveTitle = projTitle
-        res = await fetchEntry(config, effectiveTitle, circleSlug)
-      }
-    } else if (res.status === 409) {
-      const disambiguated = titleWithSuffix(effectiveTitle, `（${sourceHash6(item.source)}）`)
-      if (disambiguated !== effectiveTitle) {
-        effectiveTitle = disambiguated
-        res = await fetchEntry(config, effectiveTitle, circleSlug)
-      }
-    } else if (res.status === 404 && item.baseTitle && item.baseTitle !== effectiveTitle) {
-      const baseRes = await fetchEntry(config, item.baseTitle, circleSlug)
-      const baseVariants = Array.isArray(baseRes.data?.variants)
-        ? (baseRes.data.variants as Array<{ whenSignature?: unknown }>)
-        : []
-      if (baseRes.status === 200 && baseVariants.some((v) => v?.whenSignature === sig)) {
-        effectiveTitle = item.baseTitle
-        res = baseRes
-      }
-    } else if (
-      res.status === 404 &&
-      !item.baseTitle &&
-      proj &&
-      !effectiveTitle.endsWith(`（${proj}）`)
-    ) {
-      const suffixedTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
-      if (suffixedTitle !== effectiveTitle) {
-        const suffixedRes = await fetchEntry(config, suffixedTitle, circleSlug)
-        const suffixedVariants = Array.isArray(suffixedRes.data?.variants)
-          ? (suffixedRes.data.variants as Array<{ whenSignature?: unknown }>)
-          : []
-        if (suffixedRes.status === 200 && suffixedVariants.some((v) => v?.whenSignature === sig)) {
-          effectiveTitle = suffixedTitle
-          res = suffixedRes
-        }
+  let res = await callMemoryTool<EntryDetailData>(config, 'kioku_get', { id: effectiveTitle })
+
+  const proj = item.projects?.[0]
+  if (
+    proj &&
+    !effectiveTitle.endsWith(`（${proj}）`) &&
+    ((res.isError && res.errorStatus === 409) ||
+      (!res.isError && isDisjointProject(res.structured, item)))
+  ) {
+    const projTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
+    if (projTitle !== effectiveTitle) {
+      effectiveTitle = projTitle
+      res = await callMemoryTool<EntryDetailData>(config, 'kioku_get', { id: effectiveTitle })
+    }
+  } else if (res.isError && res.errorStatus === 409) {
+    const disambiguated = titleWithSuffix(effectiveTitle, `（${sourceHash6(item.source)}）`)
+    if (disambiguated !== effectiveTitle) {
+      effectiveTitle = disambiguated
+      res = await callMemoryTool<EntryDetailData>(config, 'kioku_get', { id: effectiveTitle })
+    }
+  } else if (isNotFound(res) && item.baseTitle && item.baseTitle !== effectiveTitle) {
+    const baseRes = await callMemoryTool<EntryDetailData>(config, 'kioku_get', {
+      id: item.baseTitle,
+    })
+    if (!baseRes.isError && hasSameProjects(baseRes.structured, item)) {
+      effectiveTitle = item.baseTitle
+      res = baseRes
+    }
+  } else if (
+    isNotFound(res) &&
+    !item.baseTitle &&
+    proj &&
+    !effectiveTitle.endsWith(`（${proj}）`)
+  ) {
+    const suffixedTitle = titleWithSuffix(effectiveTitle, `（${proj}）`)
+    if (suffixedTitle !== effectiveTitle) {
+      const suffixedRes = await callMemoryTool<EntryDetailData>(config, 'kioku_get', {
+        id: suffixedTitle,
+      })
+      if (!suffixedRes.isError && hasSameProjects(suffixedRes.structured, item)) {
+        effectiveTitle = suffixedTitle
+        res = suffixedRes
       }
     }
   }
-  const { status, data } = res
-  if (status === 404) return { ...item, title: effectiveTitle, state: 'new' }
-  if (status !== 200) {
+
+  if (isNotFound(res)) return { ...item, title: effectiveTitle, state: 'new' }
+  if (res.isError) {
     return {
       ...item,
       title: effectiveTitle,
       state: 'failed',
-      reason: serverText(data, status, config.key),
+      reason: res.errorMessage || (res.errorStatus ? `HTTP ${res.errorStatus}` : '读取失败'),
     }
   }
-  if (matchedByLegacy && typeof data?.title === 'string' && data.title.trim()) {
-    effectiveTitle = data.title
-  }
-  const variants = Array.isArray(data?.variants)
-    ? (data.variants as Array<{ whenSignature?: unknown; content?: unknown }>)
-    : []
-  const exactMatch = variants.find((v) => v?.whenSignature === sig)
-  const genericFallback =
-    !exactMatch && sig !== '{}' && variants.length === 1 && variants[0]?.whenSignature === '{}'
-      ? variants[0]
-      : undefined
-  const matched = exactMatch ?? genericFallback
-  const appendVariant = !matched && variants.length > 0
-  const same = typeof matched?.content === 'string' && matched.content.trim() === item.content
+  const existing = res.structured?.entry
+  const same = typeof existing?.content === 'string' && existing.content.trim() === item.content
   return {
     ...item,
     title: effectiveTitle,
     state: same ? 'same' : 'differs',
-    version: typeof data?.version === 'number' ? data.version : undefined,
-    shortId: typeof data?.shortId === 'string' ? data.shortId : undefined,
-    ...(!same && genericFallback ? { replaceGenericVariant: true } : {}),
-    ...(matchedByLegacy ? { matchedByLegacy: true } : {}),
-    ...(appendVariant ? { appendVariant: true } : {}),
+    version: typeof existing?.version === 'number' ? existing.version : undefined,
+    shortId: typeof existing?.shortId === 'string' ? existing.shortId : undefined,
   }
 }
 
-interface PlaintextSpot {
-  line?: unknown
-  kind?: unknown
-}
-
-// 写一条：新建，或者覆盖已有的。返回 { ok } 或 { ok: false, reason, plaintext }
+// 写一条：新建，或者覆盖已有的。返回 { ok } 或 { ok: false, reason }
 async function write(
   config: TargetConfig,
-  circleSlug: string,
   item: ComparedEntry,
-): Promise<{ ok: true } | { ok: false; reason: string; plaintext: PlaintextSpot[] | null }> {
-  const hasWhen = Boolean(item.when && Object.keys(item.when).length > 0)
-  const commonFields = {
-    circle: circleSlug,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const commonArgs: Record<string, unknown> = {
     title: item.title,
     content: item.content,
-    ...(hasWhen ? { when: item.when } : {}),
+    ...(item.projects?.length ? { projects: item.projects } : {}),
+    ...(item.runtimes?.length ? { runtimes: item.runtimes } : {}),
     ...(item.topics?.length ? { topics: item.topics } : {}),
     ...(item.disclosure ? { disclosure: item.disclosure } : {}),
   }
-  let { status, data } =
+
+  let res =
     item.state === 'differs'
-      ? await request(config, 'PATCH', '/v1/entries', {
+      ? await callMemoryTool<EntryDetailData>(config, 'kioku_update', {
           id: item.shortId ?? item.title,
-          circle: circleSlug,
-          content: item.content,
-          ...(hasWhen ? { when: item.when } : {}),
-          ...(item.matchedByLegacy
-            ? {}
-            : {
-                title: item.title,
-                ...(item.topics?.length ? { topics: item.topics } : {}),
-                ...(item.disclosure ? { disclosure: item.disclosure } : {}),
-              }),
-          ...(item.replaceGenericVariant ? { removeVariantWhens: [{}] } : {}),
-          ...(Number.isInteger(item.version) ? { expectedVersion: item.version } : {}),
+          ...commonArgs,
+          ...(Number.isInteger(item.version) ? { expected_version: item.version } : {}),
         })
-      : await request(config, 'POST', '/v1/entries', commonFields)
-  if (item.state === 'new' && status === 409 && !item.when?.project?.length) {
+      : await callMemoryTool<EntryDetailData>(config, 'kioku_create', commonArgs)
+
+  if (item.state === 'new' && res.isError && res.errorStatus === 409 && !item.projects?.length) {
     const disambiguated = titleWithSuffix(item.title, `（${sourceHash6(item.source)}）`)
     if (disambiguated !== item.title) {
-      const retry = await request(config, 'POST', '/v1/entries', {
-        ...commonFields,
+      res = await callMemoryTool<EntryDetailData>(config, 'kioku_create', {
+        ...commonArgs,
         title: disambiguated,
       })
-      status = retry.status
-      data = retry.data
     }
   }
-  if (status === 200 || status === 201) return { ok: true }
-  const plaintext = Array.isArray(data?.plaintext) ? (data.plaintext as PlaintextSpot[]) : null
-  return { ok: false, reason: serverText(data, status, config.key), plaintext }
+  if (!res.isError) return { ok: true }
+  return {
+    ok: false,
+    reason: res.errorMessage || (res.errorStatus ? `HTTP ${res.errorStatus}` : '写入失败'),
+  }
 }
 
 const KINDS: Record<'new' | 'same' | 'differs', string> = {
@@ -478,7 +330,7 @@ export async function countLocal(
   from: string,
   { env, path }: { env: Env; path?: string },
 ): Promise<number | null> {
-  const { found, entries } = await SOURCES[from].read({ env, path, client: 'client' })
+  const { found, entries } = await SOURCES[from].read({ env, path })
   return found ? entries.filter((item) => !item.skipped).length : null
 }
 
@@ -503,7 +355,7 @@ async function mapLimit<T, R>(
 // 和 Kioku 里比时同时发的请求数
 const COMPARE_CONCURRENCY = 8
 
-// 计划里尚未迁进 Kioku 的条数。有比对失败的（不是 200、404）时说不准，pending 为 null，reason 写明几条读取失败
+// 计划里尚未迁进 Kioku 的条数。有比对失败的时说不准，pending 为 null，reason 写明几条读取失败
 export function pendingOf(plan: Pick<ImportPlan, 'compared'>): {
   pending: number | null
   reason?: string
@@ -513,26 +365,21 @@ export function pendingOf(plan: Pick<ImportPlan, 'compared'>): {
   return { pending: plan.compared.filter((item) => item.state === 'new').length }
 }
 
-// 读本地的记忆、和 Kioku 里的比过，列出计划：每条的标题、适用条件与目标记忆圈。
+// 读本地的记忆、和 Kioku 里的比过，列出计划：每条的标题与场景标签。
 // 返回 { compared, skipped, todo }；没有可以迁的时 todo 是空的、empty 为真
 export async function planImport(
   config: TargetConfig,
-  {
-    from,
-    path,
-    circle,
-    overwrite = false,
-  }: { from: string; path?: string; circle?: string; overwrite?: boolean },
+  { from, path, overwrite = false }: { from: string; path?: string; overwrite?: boolean },
   { env, out }: { env: Env; out: Writer },
 ): Promise<ImportPlan> {
   const source = SOURCES[from]
   const who = await whoami(config)
-  const targetCircle = validateImportTarget(who, circle)
+  validateImportTarget(who)
   out.write(
-    `Kioku：${shownUrl(config.url)}，客户端 ${plain(who.client.name)}（${plain(who.client.slug)}），记忆圈 ${plain(targetCircle)}\n`,
+    `Kioku：${shownUrl(config.url)}，账号 ${plain(who.accountName)}，访问密钥 ${plain(who.key.name)}（${plain(who.key.prefix)}）\n`,
   )
 
-  const { root, found, entries } = await source.read({ env, path, client: who.client.slug })
+  const { root, found, entries } = await source.read({ env, path })
   if (!found) {
     throw new KiokuFailure(`未找到${source.name}：${plain(root)} 不是目录，用 --path 指明位置`)
   }
@@ -556,21 +403,14 @@ export async function planImport(
     }
   }
   // 一条一个请求：有界并发，几百条也不至于等太久
-  const compared = await mapLimit(usable, COMPARE_CONCURRENCY, (item) =>
-    compare(config, targetCircle, item),
-  )
+  const compared = await mapLimit(usable, COMPARE_CONCURRENCY, (item) => compare(config, item))
 
   out.write('\n')
   for (const item of compared) {
-    const kind =
-      item.state === 'failed'
-        ? `读取失败（${item.reason}）`
-        : item.appendVariant
-          ? '已有，将追加变体'
-          : KINDS[item.state]
+    const kind = item.state === 'failed' ? `读取失败（${item.reason}）` : KINDS[item.state]
     const idNote = item.shortId ? `（${plain(item.shortId)}）` : ''
     out.write(
-      `${kind}  ${plain(item.title)}${idNote}${formatWhenTag(item.when)}\n    ← ${plain(item.source)}\n`,
+      `${kind}  ${plain(item.title)}${idNote}${formatSceneTag(item)}\n    ← ${plain(item.source)}\n`,
     )
   }
   for (const item of skipped) out.write(`不迁  ${plain(item.source)}\n    ${item.skipped}\n`)
@@ -590,19 +430,17 @@ export async function planImport(
 // 按计划写入，返回退出码：有没写成的、读取失败的为 1
 export async function writeImport(
   config: TargetConfig,
-  { compared, todo, circle }: Pick<ImportPlan, 'compared' | 'todo'> & { circle?: string },
+  { compared, todo }: Pick<ImportPlan, 'compared' | 'todo'>,
   { out }: { out: Writer },
 ): Promise<number> {
-  const targetCircle = circle ?? (await whoami(config)).primaryCircle.slug
   let written = 0
-  const failed: Array<{ item: ComparedEntry; reason: string; plaintext: PlaintextSpot[] | null }> =
-    []
+  const failed: Array<{ item: ComparedEntry; reason: string }> = []
   // 连不上、超时这类不是某一条的问题：停下来，把已经写了多少、还剩多少说清楚，不让它跳出整个命令
   let stopped: { reason: string; left: number } | null = null
   for (const [index, item] of todo.entries()) {
     let result: Awaited<ReturnType<typeof write>>
     try {
-      result = await write(config, targetCircle, item)
+      result = await write(config, item)
     } catch (err) {
       if (!(err instanceof KiokuFailure)) throw err
       stopped = { reason: err.message, left: todo.length - index }
@@ -612,15 +450,8 @@ export async function writeImport(
     else failed.push({ item, ...result })
   }
   out.write(`\n写入 ${written} 条\n`)
-  for (const { item, reason, plaintext } of failed) {
+  for (const { item, reason } of failed) {
     out.write(`没有写入  ${plain(item.title)}\n    ← ${plain(item.source)}\n    ${reason}\n`)
-    // 只说第几行、哪一类，不带值；行号按正文算（文件头之后）
-    for (const spot of plaintext ?? []) {
-      out.write(`    正文第 ${Number(spot.line) || '?'} 行：${plaintextKindLabel(spot.kind)}\n`)
-    }
-  }
-  if (failed.some((entry) => entry.plaintext)) {
-    out.write('疑似明文凭据的没有写：把值存成凭据、正文里写占位符，或者从文件里去掉，再运行一次\n')
   }
   if (stopped) {
     out.write(
@@ -669,7 +500,7 @@ export async function importMemories(
         options: plan.todo.map((item, idx) => ({
           value: idx,
           label: plain(item.title),
-          hint: `${item.topics?.join(',') ?? ''}${formatWhenTag(item.when)}`.trim(),
+          hint: `${item.topics?.join(',') ?? ''}${formatSceneTag(item)}`.trim(),
         })),
         initialValues: plan.todo.map((_, idx) => idx),
       })
@@ -694,7 +525,6 @@ export async function importMemories(
     {
       compared: plan.compared,
       todo: selectedTodo,
-      ...(options.circle ? { circle: options.circle } : {}),
     },
     { out },
   )

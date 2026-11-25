@@ -3,7 +3,6 @@
 
 import { emitKeypressEvents } from 'node:readline'
 
-import { upgradePageOf } from '../api.ts'
 import { migrateCommand, planMigration, type MigrationPlan } from '../commands/migrate.ts'
 import { conflictToolsText, formatConflicts, removeConflicts } from '../conflicts.ts'
 import { connectPlatforms, pluginSteps, resultsText } from '../connect.ts'
@@ -72,16 +71,7 @@ import {
 } from './lineInput.ts'
 import { formatCountdown, spacedCode, type DeviceWaitHandle } from './prompts.ts'
 import type { ScreenStream } from './screen.ts'
-import {
-  bandForKind,
-  capabilityLabel,
-  createTheme,
-  kindLabel,
-  renderBox,
-  sensitivityBadge,
-  sortEntryKinds,
-  type StrataTheme,
-} from './theme.ts'
+import { createTheme, renderBox, type CliTheme } from './theme.ts'
 import { createViewport, type ViewportScreen } from './viewport.ts'
 import {
   displayWidth,
@@ -275,23 +265,6 @@ function canDisableClaudeMemory(row: PlatformRow | null): boolean {
   )
 }
 
-function circleSummary(platforms: PlatformRow[]): string[] {
-  const set = new Set<string>()
-  for (const row of platforms) {
-    if (row.connection !== 'ok' || !row.who) continue
-    const c =
-      typeof row.who.primaryCircle.name === 'string' && row.who.primaryCircle.name
-        ? plain(row.who.primaryCircle.name)
-        : typeof row.who.primaryCircle.slug === 'string' && row.who.primaryCircle.slug
-          ? plain(row.who.primaryCircle.slug)
-          : typeof row.who.primaryCircle.id === 'string'
-            ? plain(row.who.primaryCircle.id).slice(0, 8)
-            : ''
-    if (c) set.add(c)
-  }
-  return [...set]
-}
-
 function horizontalRule(cols: number, junctionChar?: string, junctionCol?: number): string {
   if (!junctionChar || junctionCol === undefined || junctionCol < 0 || junctionCol >= cols) {
     return '─'.repeat(cols)
@@ -302,7 +275,7 @@ function horizontalRule(cols: number, junctionChar?: string, junctionCol?: numbe
 function renderTopBar(
   state: TuiState,
   cols: number,
-  theme: StrataTheme,
+  theme: CliTheme,
   splitCol?: number,
 ): [string, string] {
   const stamp = theme.brandStamp('記 憶')
@@ -325,10 +298,8 @@ function renderTopBar(
   } else if (server.needsSetup) {
     right = `${theme.warn('!')} ${shownUrl(server.url)} · ${theme.warn('待初始化管理员')}`
   } else {
-    const circles = circleSummary(state.platforms)
     const verNote = server.version ? ` ${plain(server.version)}` : ''
-    const circleNote = circles.length > 1 ? ` · ${circles.length} 个记忆圈` : ''
-    right = `${theme.ok('●')} ${shownUrl(server.url)}${theme.muted(`${verNote}${circleNote}`)}`
+    right = `${theme.ok('●')} ${shownUrl(server.url)}${theme.muted(verNote)}`
   }
 
   const leftW = displayWidth(left)
@@ -343,7 +314,7 @@ function renderTopBar(
 function rowBadge(
   row: PlatformRow,
   spinnerFrame: number,
-  theme: StrataTheme,
+  theme: CliTheme,
 ): { icon: string; status: string; coloredStatus: string } {
   const spinner = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length]
   if (row.checking) {
@@ -412,7 +383,7 @@ function renderClientList(
   state: TuiState,
   width: number,
   height: number,
-  theme: StrataTheme,
+  theme: CliTheme,
 ): string[] {
   const { visible, primaryCount, uninstalledCount } = visiblePlatformRows(state)
   const selectedIdx = Math.max(
@@ -483,13 +454,13 @@ function renderClientList(
   return lines.slice(0, height)
 }
 
-function sectionHeader(title: string, width: number, theme: StrataTheme): string {
+function sectionHeader(title: string, width: number, theme: CliTheme): string {
   const label = plain(title)
   const rest = Math.max(2, width - displayWidth(label) - 6)
   return ` ${theme.accent('▸')} ${theme.bold(label)} ${theme.hairline('─'.repeat(rest))}`
 }
 
-function kvLines(label: string, value: string, width: number, theme: StrataTheme): string[] {
+function kvLines(label: string, value: string, width: number, theme: CliTheme): string[] {
   const prefix = `  ${theme.muted(fitWidth(label, 10))} `
   const indent = ' '.repeat(13)
   const restWidth = Math.max(8, width - 13)
@@ -506,12 +477,7 @@ function manualInstallCommands(row: PlatformRow | null): string[] {
   return PLATFORMS[row.id].install.commands.filter((cmd) => cmd !== row.id)
 }
 
-function pushCommandBlock(
-  commands: string[],
-  width: number,
-  out: string[],
-  theme: StrataTheme,
-): void {
+function pushCommandBlock(commands: string[], width: number, out: string[], theme: CliTheme): void {
   const blockW = Math.max(16, width - 3)
   for (const cmd of commands) {
     for (const part of wrapWidth(cmd, Math.max(10, blockW - 4))) {
@@ -521,7 +487,7 @@ function pushCommandBlock(
   }
 }
 
-function styledResultLine(line: string, theme: StrataTheme): string {
+function styledResultLine(line: string, theme: CliTheme): string {
   const clean = plain(line)
   if (clean.startsWith('✓')) return theme.ok(clean)
   if (clean.startsWith('✗')) return theme.error(clean)
@@ -533,7 +499,7 @@ function buildDetailBody(
   state: TuiState,
   row: PlatformRow | null,
   width: number,
-  theme: StrataTheme,
+  theme: CliTheme,
 ): string[] {
   const wrapBudget = Math.max(12, width - 3)
   const out: string[] = []
@@ -543,12 +509,7 @@ function buildDetailBody(
     }
   }
 
-  if (state.server?.mismatch === 'legacy' && state.url) {
-    out.push(sectionHeader('服务端等待数据迁移', width, theme))
-    pushWrapped(theme.error('! 服务端已升级、尚未迁移旧数据'))
-    pushWrapped(`按 o 打开升级页：${upgradePageOf(state.url)}`)
-    out.push('')
-  } else if (state.server?.mismatch === 'older' || state.server?.mismatch === 'newer') {
+  if (state.server?.mismatch === 'older' || state.server?.mismatch === 'newer') {
     out.push(sectionHeader('服务端代际不匹配', width, theme))
     pushWrapped(theme.error(`! ${state.server.problem ?? '服务端与命令行代际不兼容'}`))
     out.push('')
@@ -590,80 +551,36 @@ function buildDetailBody(
   if (row.checking) {
     out.push(...kvLines('接入状态', theme.muted('正在向服务端校验访问密钥…'), width, theme))
   } else if (row.connection === 'ok' && row.who) {
-    const { primaryCircle, linkedCircles, client, scopes, persona } = row.who
-    const clientText = `${theme.bold(plain(client.name))} ${theme.muted(`（${plain(client.slug)}）`)}`
+    const { accountName, key } = row.who
+    const keyText = `${theme.bold(plain(key.name))} ${theme.muted(`（${plain(key.prefix)}）`)}`
     const mismatch =
-      client.runtimeFamily !== PLATFORMS[row.id].runtimeFamily
+      key.runtimeFamily !== PLATFORMS[row.id].runtimeFamily
         ? ` ${theme.error('! 运行时类型不匹配')}`
         : ''
-    out.push(...kvLines('客户端', `${clientText}${mismatch}`, width, theme))
-
-    const circle =
-      typeof primaryCircle.name === 'string' && primaryCircle.name
-        ? plain(primaryCircle.name)
-        : typeof primaryCircle.slug === 'string' && primaryCircle.slug
-          ? plain(primaryCircle.slug)
-          : typeof primaryCircle.id === 'string'
-            ? plain(primaryCircle.id).slice(0, 8)
-            : '主圈'
-    const primaryKindKey = primaryCircle.kind === 'shared' ? 'shared' : 'personal'
-    const primaryKindText = primaryKindKey === 'shared' ? '独立圈' : '个人圈'
-    const acct =
-      typeof row.who.accountName === 'string' && row.who.accountName
-        ? ` · ${theme.muted(`账号 ${plain(row.who.accountName)}`)}`
-        : ''
-    out.push(...kvLines('主圈', `${circle}（${primaryKindText}）${acct}`, width, theme))
-
-    if (Array.isArray(linkedCircles) && linkedCircles.length) {
-      const linkedText = linkedCircles
-        .map(
-          (c) =>
-            `${plain(c.name ?? c.slug ?? c.id)}（${c.mode === 'read_write' ? '读写' : '只读'}）`,
-        )
-        .join('、')
-      out.push(...kvLines('关联圈', linkedText, width, theme))
-    }
-
-    if (persona) {
-      out.push(
-        ...kvLines('独立人格', `${plain(persona.name)}（${plain(persona.slug)}）`, width, theme),
-      )
-    }
-
-    const facets = row.who.resolvedFacets ?? row.who.contextFacets
-    if (facets) {
-      const facetParts = Object.keys(facets)
-        .filter((k) => Array.isArray(facets[k]) && facets[k].length > 0)
-        .sort()
-        .map((k) => `${plain(k)}=${facets[k].map((v) => plain(v)).join(',')}`)
-      if (facetParts.length) {
-        out.push(...kvLines('默认语境', facetParts.join(' · '), width, theme))
-      }
-    }
-
-    const readChips =
-      sortEntryKinds(scopes.readKinds ?? [])
-        .map((k) => theme.kindChip(bandForKind(k, primaryKindKey), kindLabel(k)))
-        .join('  ') || theme.muted('无')
-    const writeChips =
-      sortEntryKinds(scopes.writeKinds ?? [])
-        .map((k) => theme.kindChip(bandForKind(k, primaryKindKey), kindLabel(k)))
-        .join('  ') || theme.muted('无')
-    out.push(...kvLines('读取形态', readChips, width, theme))
-    out.push(...kvLines('写入形态', writeChips, width, theme))
-
-    const bounds = [
-      sensitivityBadge(scopes.maxSensitivity ?? 'internal', theme),
-      `凭据 ${capabilityLabel(scopes.credentials)}`,
+    out.push(...kvLines('访问密钥', `${keyText}${mismatch}`, width, theme))
+    out.push(
+      ...kvLines(
+        '所属账号',
+        `${plain(accountName)} · ${theme.muted(`运行时 ${plain(key.runtimeFamily)}`)}`,
+        width,
+        theme,
+      ),
+    )
+    const perms = [
+      key.canWrite ? '可写' : '只读',
+      key.canResolveCredentials ? '允许凭据注入' : '禁止凭据注入',
     ]
-    if (Array.isArray(scopes.allowedRealms)) {
-      const realmsText = scopes.allowedRealms.length
-        ? scopes.allowedRealms.map((r) => plain(r)).join('、')
-        : '空（受限）'
-      bounds.push(`场域白名单 ${realmsText}`)
+    out.push(...kvLines('读写权限', perms.join(' · '), width, theme))
+    if (key.envs.length) {
+      out.push(...kvLines('默认环境', key.envs.map((e) => plain(e)).join('、'), width, theme))
     }
-    if (scopes.admin === true) bounds.push('管理权限')
-    out.push(...kvLines('安全边界', bounds.join(' · '), width, theme))
+    const realmsText =
+      key.allowedRealms === null
+        ? '不限'
+        : key.allowedRealms.length
+          ? key.allowedRealms.map((r) => plain(r)).join('、')
+          : '无（仅通用）'
+    out.push(...kvLines('场域范围', realmsText, width, theme))
   } else if (row.connection === 'invalid' || row.connection === 'broken') {
     out.push(...kvLines('接入状态', theme.error(row.reason || connectionText(row)), width, theme))
   } else {
@@ -773,11 +690,7 @@ function buildDetailBody(
     } else if (state.server.needsSetup) {
       pushWrapped('服务端尚未初始化管理员：按 o 打开网页端完成首次初始化。')
     } else if (row.connection === 'invalid') {
-      if (row.legacyKey) {
-        pushWrapped('升级前访问密钥已失效：按 Enter 或 M 从旧版迁移（更新插件并重新授权）。')
-      } else {
-        pushWrapped('当前访问密钥已失效或被吊销：按 Enter 重新走浏览器授权签发新访问密钥。')
-      }
+      pushWrapped('当前访问密钥已失效或被吊销：按 Enter 重新走浏览器授权签发新访问密钥。')
     } else if (row.connection === 'broken') {
       pushWrapped('本机配置文件格式无法解析：检查文件后按 Enter 重新写入，或按 d 查看诊断。')
     } else if (row.connection === 'manual') {
@@ -832,7 +745,7 @@ function buildDetailBody(
   return out
 }
 
-function detailMaxScroll(state: TuiState, cols: number, rows: number, theme: StrataTheme): number {
+function detailMaxScroll(state: TuiState, cols: number, rows: number, theme: CliTheme): number {
   const safeCols = Math.max(48, cols)
   const safeRows = Math.max(12, rows)
   const bodyRows = Math.max(4, safeRows - 4)
@@ -861,7 +774,7 @@ function renderClientDetail(
   state: TuiState,
   width: number,
   height: number,
-  theme: StrataTheme,
+  theme: CliTheme,
 ): string[] {
   const row = selectedRowOf(state)
   const bodyLines = buildDetailBody(state, row, width, theme)
@@ -905,7 +818,7 @@ function renderClientDetail(
 function renderBottomBar(
   state: TuiState,
   cols: number,
-  theme: StrataTheme,
+  theme: CliTheme,
   splitCol?: number,
 ): [string, string] {
   const spinner = SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length]
@@ -944,7 +857,7 @@ function renderBottomBar(
   }
   if (row && ready) {
     if (row.connection === 'invalid') {
-      items.push(theme.keycap('Enter', row.legacyKey ? '旧版迁移' : '重授权'))
+      items.push(theme.keycap('Enter', '重授权'))
     } else if (row.connection !== 'ok' || row.otherServer) {
       if (PLATFORMS[row.id].setup) items.push(theme.keycap('Enter', '接入'))
     } else if (row.plugin === false) {
@@ -986,7 +899,7 @@ function renderBottomBar(
   return [statusRow, shortcutRow]
 }
 
-function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: StrataTheme): string {
+function buildModalBox(modal: TuiModal, cols: number, rows: number, theme: CliTheme): string {
   const maxBoxWidth = Math.max(32, cols - 4)
   if (modal.kind === 'text') {
     const width = Math.min(maxBoxWidth, 68)
@@ -1169,7 +1082,7 @@ function overlayModal(
   modal: TuiModal,
   cols: number,
   rows: number,
-  theme: StrataTheme,
+  theme: CliTheme,
 ): string[] {
   const boxLines = buildModalBox(modal, cols, rows, theme).split('\n')
   const clippedBox =
@@ -1196,7 +1109,7 @@ export function renderTuiFrame(
   state: TuiState,
   cols: number,
   rows: number,
-  theme: StrataTheme = createTheme({ color: true }),
+  theme: CliTheme = createTheme({ color: true }),
 ): string[] {
   const safeCols = Math.max(48, cols)
   const safeRows = Math.max(12, rows)
@@ -1636,7 +1549,7 @@ export async function runTui({
           '',
           '职责分工：',
           '  本控制台专注于本机客户端插件、配置文件与本地记忆迁移；',
-          '  记忆目录编排、人格配置、访问密钥签发与凭据管理请按 [o] 在网页端操作。',
+          '  记忆整理、访问密钥签发与托管凭据管理请按 [o] 在网页端操作。',
           '',
           '按任意键关闭说明',
         ],
@@ -2073,10 +1986,6 @@ export async function runTui({
         setToast('warn', '服务器当前无法连接，可按 [s] 更换地址或 [l] 检查本机容器')
         return
       }
-      if (state.server.mismatch === 'legacy') {
-        setToast('warn', '服务端等待迁移旧数据，请按 [o] 打开升级页')
-        return
-      }
       if (state.server.problem) {
         setToast('warn', state.server.problem)
         return
@@ -2086,8 +1995,7 @@ export async function runTui({
         return
       }
       if (row.connection === 'invalid') {
-        if (row.legacyKey) await migrateLegacyInternal([row.id])
-        else await connectIds([row.id], { reauth: true })
+        await connectIds([row.id], { reauth: true })
         return
       }
       if (row.connection === 'ok' && !row.otherServer) {
@@ -2236,7 +2144,7 @@ export async function runTui({
         if ((!config || (state.url && config.url !== state.url)) && state.url) {
           const secret = await openTextModal({
             title: `填写 ${row.name} 访问密钥`,
-            prompt: `${row.name} 所属客户端的访问密钥（记忆将写入其主圈）`,
+            prompt: `${row.name} 用的访问密钥`,
             secret: true,
             validate: (text) => keyFormatError((text ?? '').trim()) ?? undefined,
           })
@@ -2598,7 +2506,7 @@ export async function runTui({
           if (prepared.env.written) {
             const masterKeyLines = [
               `! 主密钥保存在 ${prepared.env.file} 的 KIOKU_MASTER_KEY`,
-              '  请另外备份该密钥，并与数据库备份分开放；丢失将无法解开机密记忆与托管凭据。',
+              '  请另外备份该密钥，并与数据库备份分开放；丢失将无法解开托管凭据与模型接口密钥。',
             ]
             const selected = selectedRowOf(state)
             if (selected) {
@@ -2814,14 +2722,9 @@ export async function runTui({
       else {
         const row = selectedRowOf(state)
         const target =
-          state.server?.mismatch === 'legacy'
-            ? upgradePageOf(state.url)
-            : row?.connection === 'ok' &&
-                !row.otherServer &&
-                row.who?.primaryCircle?.id &&
-                row.who?.client?.id
-              ? `${shownUrl(state.url)}/circles/${encodeURIComponent(row.who.primaryCircle.id)}/clients/${encodeURIComponent(row.who.client.id)}`
-              : shownUrl(state.url)
+          row?.connection === 'ok' && !row.otherServer && row.who?.key?.id
+            ? `${shownUrl(state.url)}/settings/keys`
+            : shownUrl(state.url)
         deps.open(target)
         setToast('ok', `已在浏览器打开 ${target}`)
       }

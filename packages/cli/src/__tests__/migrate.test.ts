@@ -9,11 +9,11 @@ import { postEvent } from '../../../core/lib/lifecycle.mjs'
 import { mcpCall } from '../../../core/lib/mcp.mjs'
 import { assertServerSupported, probeServer, ServerMismatch, whoami } from '../api.ts'
 import { searchCommand } from '../commands/memory.ts'
-import { migrateCommand } from '../commands/migrate.ts'
+import { migrateCommand, planMigration } from '../commands/migrate.ts'
 import {
+  DatabaseUnavailable,
+  INVALID_KEY_TEXT,
   KeyRejected,
-  LEGACY_KEY_TEXT,
-  LegacyDatabase,
   readProfile,
   readToolCacheSync,
   toolCacheFile,
@@ -29,7 +29,7 @@ import type { Env } from '../types.ts'
 const OLD_KEY = 'kioku_old_1'
 const NEW_KEY = 'kioku_new_1'
 
-let mode: 'current' | 'older' | 'legacy' | 'unavailable' = 'current'
+let mode: 'current' | 'older' | 'older_v2' | 'unavailable' = 'current'
 let server: Server
 let base: string
 
@@ -46,28 +46,20 @@ beforeAll(async () => {
 
       if (req.url === '/v1/health') {
         if (mode === 'older') return json(200, { status: 'ok', version: '0.5.0' })
-        if (mode === 'legacy') {
-          return json(503, {
-            status: 'unavailable',
-            version: '0.6.0',
-            api: 2,
-            database: 'legacy',
-            code: 'legacy_database',
-          })
-        }
+        if (mode === 'older_v2') return json(200, { status: 'ok', version: '0.6.0', api: 2 })
         if (mode === 'unavailable') {
           return json(503, {
             status: 'unavailable',
-            version: '0.6.0',
-            api: 2,
+            version: '0.7.0',
+            api: 3,
             database: 'unavailable',
           })
         }
-        return json(200, { status: 'ok', version: '0.6.0', api: 2 })
+        return json(200, { status: 'ok', version: '0.7.0', api: 3 })
       }
 
-      if (mode === 'legacy') {
-        return json(503, { error: '数据库等待管理员迁移', code: 'legacy_database' })
+      if (mode === 'unavailable') {
+        return json(503, { error: '数据库暂时无法连接', code: 'database_unavailable' })
       }
 
       if (req.url === '/v1/device/authorize') {
@@ -108,11 +100,10 @@ beforeAll(async () => {
 
       const auth = req.headers.authorization ?? ''
       if (auth === `Bearer ${OLD_KEY}`) {
-        if (mode === 'older' && req.url === '/v1/whoami') {
-          // 旧版服务端返回的旧格式，不带 primaryCircle / client
+        if ((mode === 'older' || mode === 'older_v2') && req.url === '/v1/whoami') {
           return json(200, { app: { slug: 'agy' }, space: { name: '家' } })
         }
-        return json(401, { error: LEGACY_KEY_TEXT, code: 'legacy_key' })
+        return json(401, { error: '未登录或凭据无效' })
       }
       if (auth !== `Bearer ${NEW_KEY}`) {
         return json(401, { error: '未登录或凭据无效' })
@@ -120,19 +111,21 @@ beforeAll(async () => {
 
       if (req.url === '/v1/whoami') {
         return json(200, {
-          primaryCircle: { id: 'c1', slug: 'me-alice', name: 'Alice 的个人圈', kind: 'personal' },
-          linkedCircles: [],
+          accountName: 'alice',
+          key: {
+            id: 'key-1',
+            name: 'Antigravity',
+            prefix: 'kioku_agy',
+            runtimeFamily: 'agy',
+            envs: [],
+            allowedRealms: null,
+            canWrite: true,
+            canResolveCredentials: false,
+          },
           client: {
-            id: 'cl-1',
             slug: 'agy',
             name: 'Antigravity',
             runtimeFamily: 'agy',
-          },
-          scopes: {
-            readKinds: ['entry'],
-            writeKinds: ['entry'],
-            maxSensitivity: 'private',
-            credentials: 'none',
           },
         })
       }
@@ -143,7 +136,20 @@ beforeAll(async () => {
           return json(200, {
             jsonrpc: '2.0',
             id: rpc.id ?? 1,
-            result: { tools: [{ name: 'kioku_recall' }, { name: 'kioku_browse' }] },
+            result: {
+              tools: [
+                {
+                  name: 'kioku_search',
+                  description: '搜索',
+                  inputSchema: { type: 'object', properties: {} },
+                },
+                {
+                  name: 'kioku_browse',
+                  description: '浏览',
+                  inputSchema: { type: 'object', properties: {} },
+                },
+              ],
+            },
           })
         }
         return json(200, { jsonrpc: '2.0', id: rpc.id ?? 1, result: { ok: true } })
@@ -184,24 +190,24 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-describe('服务端代际探测与 legacy_key / legacy_database 识别', () => {
-  it('probeServer 区分二代正常、一代无 api 字段、待迁移 legacy 与数据库不可用', async () => {
+describe('服务端代际探测与 database_unavailable 识别', () => {
+  it('probeServer 区分三代正常、旧代服务端与数据库不可用', async () => {
     mode = 'current'
-    expect(await probeServer(base)).toEqual({ generation: 2, state: 'ok', version: '0.6.0' })
+    expect(await probeServer(base)).toEqual({ generation: 3, state: 'ok', version: '0.7.0' })
 
     mode = 'older'
     expect(await probeServer(base)).toEqual({ generation: 1, state: 'ok', version: '0.5.0' })
-    await expect(assertServerSupported(base)).rejects.toThrow(/记忆圈重构之前的版本（0\.5\.0）/)
+    await expect(assertServerSupported(base)).rejects.toThrow(/服务端版本过旧（0\.5\.0）/)
 
-    mode = 'legacy'
-    expect(await probeServer(base)).toEqual({ generation: 2, state: 'legacy', version: '0.6.0' })
-    await expect(assertServerSupported(base)).rejects.toThrow(`${base}/legacy-upgrade`)
+    mode = 'older_v2'
+    expect(await probeServer(base)).toEqual({ generation: 2, state: 'ok', version: '0.6.0' })
+    await expect(assertServerSupported(base)).rejects.toThrow(/服务端版本过旧（0\.6\.0）/)
 
     mode = 'unavailable'
     expect(await probeServer(base)).toEqual({
-      generation: 2,
+      generation: 3,
       state: 'unavailable',
-      version: '0.6.0',
+      version: '0.7.0',
     })
     await expect(assertServerSupported(base)).rejects.toThrow(/数据库暂时无法连接/)
 
@@ -210,39 +216,33 @@ describe('服务端代际探测与 legacy_key / legacy_database 识别', () => {
     expect(unreachable.generation).toBeNull()
   })
 
-  it('whoami / mcpCall / postEvent / searchCommand 准确识别 legacy_key、普通 401、legacy_database 与一代响应', async () => {
+  it('whoami / mcpCall / postEvent / searchCommand 准确识别 401、503 database_unavailable 与旧代响应', async () => {
     mode = 'current'
-    await expect(whoami({ url: base, key: OLD_KEY })).rejects.toMatchObject({
-      legacy: true,
-      message: LEGACY_KEY_TEXT,
-    })
-    await expect(whoami({ url: base, key: 'kioku_other_bad' })).rejects.toBeInstanceOf(KeyRejected)
-    await expect(whoami({ url: base, key: 'kioku_other_bad' })).rejects.toMatchObject({
-      legacy: false,
-    })
+    await expect(whoami({ url: base, key: OLD_KEY })).rejects.toBeInstanceOf(KeyRejected)
+    await expect(whoami({ url: base, key: OLD_KEY })).rejects.toThrow(INVALID_KEY_TEXT)
     await expect(mcpCall({ url: base, key: OLD_KEY }, 'tools/list', {}, 3000)).rejects.toThrow(
-      LEGACY_KEY_TEXT,
+      INVALID_KEY_TEXT,
     )
-    await expect(postEvent(base, OLD_KEY, { event: 'session.start' }, 3000)).rejects.toMatchObject({
-      kind: 'legacy',
-    })
+    await expect(postEvent(base, OLD_KEY, { event: 'session.start' }, 3000)).rejects.toBeInstanceOf(
+      KeyRejected,
+    )
 
     await expect(
       searchCommand(['测试'], {
         env: { ...env, KIOKU_SERVER_URL: base, KIOKU_API_KEY: OLD_KEY },
         out: { write: () => true },
       }),
-    ).rejects.toThrow(LEGACY_KEY_TEXT)
+    ).rejects.toThrow(INVALID_KEY_TEXT)
 
-    mode = 'legacy'
-    await expect(whoami({ url: base, key: NEW_KEY })).rejects.toBeInstanceOf(LegacyDatabase)
-    await expect(mcpCall({ url: base, key: NEW_KEY }, 'tools/list', {}, 3000)).rejects.toThrow(
-      `${base}/legacy-upgrade`,
-    )
+    mode = 'unavailable'
+    await expect(whoami({ url: base, key: NEW_KEY })).rejects.toBeInstanceOf(ServerMismatch)
+    await expect(
+      mcpCall({ url: base, key: NEW_KEY }, 'tools/list', {}, 3000),
+    ).rejects.toBeInstanceOf(DatabaseUnavailable)
 
     mode = 'older'
     await expect(whoami({ url: base, key: OLD_KEY })).rejects.toBeInstanceOf(ServerMismatch)
-    await expect(whoami({ url: base, key: OLD_KEY })).rejects.toThrow(/记忆圈重构之前的版本/)
+    await expect(whoami({ url: base, key: OLD_KEY })).rejects.toThrow(/服务端版本过旧/)
   })
 })
 
@@ -280,7 +280,13 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
 
     await writeToolCache(
       'openclaw',
-      { url: base, tools: [{ name: 'kioku_read' }, { name: 'kioku_write' }] },
+      {
+        url: base,
+        tools: [
+          { name: 'kioku_recall', description: '旧召回', inputSchema: { type: 'object' } },
+          { name: 'kioku_transfer', description: '旧迁移', inputSchema: { type: 'object' } },
+        ],
+      },
       env,
     )
     const clawFound = await detectLegacyPlugin('openclaw', { env, cwd: dir })
@@ -288,7 +294,7 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     expect(clawFound.staleToolCache).toBe(true)
   })
 
-  it('migrateCommand 对一代与待迁移服务端直接给出指引，全最新时输出无需迁移', async () => {
+  it('migrateCommand 对旧代服务端与数据库不可用给出指引，全最新时输出无需迁移', async () => {
     mode = 'older'
     let out1 = ''
     expect(
@@ -298,9 +304,9 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
         out: { write: (s) => ((out1 += s), true) },
       }),
     ).toBe(1)
-    expect(out1).toContain('npx @kioku-memory/cli@0.5')
+    expect(out1).toContain('服务端版本过旧')
 
-    mode = 'legacy'
+    mode = 'unavailable'
     let out2 = ''
     expect(
       await migrateCommand(['--server-url', base], {
@@ -309,7 +315,7 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
         out: { write: (s) => ((out2 += s), true) },
       }),
     ).toBe(1)
-    expect(out2).toContain(`${base}/legacy-upgrade`)
+    expect(out2).toContain('数据库暂时无法连接')
 
     mode = 'current'
     let out3 = ''
@@ -335,7 +341,14 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
       join(dir, '.gemini', 'config', 'plugins', 'kioku', 'lib', 'lifecycle.mjs'),
       'export const TIMEOUTS = {}\n',
     )
-    await writeToolCache('agy', { url: base, tools: [{ name: 'kioku_read' }] }, env)
+    await writeToolCache(
+      'agy',
+      {
+        url: base,
+        tools: [{ name: 'kioku_read', description: '旧读取', inputSchema: { type: 'object' } }],
+      },
+      env,
+    )
 
     mkdirSync(join(dir, 'opencode'), { recursive: true })
     writeFileSync(
@@ -343,9 +356,9 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
       JSON.stringify({ plugin: ['@kioku-memory/plugin-opencode@0.5.0'] }, null, 2),
     )
 
-    // 面板能识别待迁移项与旧密钥状态
+    // 面板能识别待迁移项与失效密钥状态
     const state = await scan({ env, cwd: dir, url: base })
-    expect(state.platforms.find((p) => p.id === 'agy')?.legacyKey).toBe(true)
+    expect(state.platforms.find((p) => p.id === 'agy')?.connection).toBe('invalid')
     expect(actionsFor(state).map((a) => a.value)).toContain('migrate')
 
     let dryOut = ''
@@ -403,7 +416,7 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     expect(readToolCacheSync('openclaw', env)).toBeNull()
   })
 
-  it('doctor --json 分开报告服务端代际不匹配、待迁移、旧访问密钥、旧插件来源与过旧插件', async () => {
+  it('doctor --json 分开报告服务端代际不匹配、数据库不可用、旧插件来源与过旧插件', async () => {
     await writeProfile('claude-code', { url: base, key: OLD_KEY }, env)
     mkdirSync(join(dir, 'claude', 'plugins'), { recursive: true })
     writeFileSync(
@@ -417,7 +430,7 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     )
     await writeProfile('agy', { url: base, key: NEW_KEY }, env)
 
-    // 1. 一代服务端
+    // 1. 旧代服务端
     mode = 'older'
     let v1Json = ''
     expect(
@@ -433,32 +446,23 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
     expect(v1Report.targets[0]!.checks.some((c) => c.category === 'server_generation')).toBe(true)
     expect(v1Report.targets[0]!.checks.some((c) => c.category === 'legacy_source')).toBe(true)
 
-    // 2. 待迁移数据库
-    mode = 'legacy'
-    let legJson = ''
+    // 2. 数据库不可用
+    mode = 'unavailable'
+    let unavailJson = ''
     await doctor(['claude-code', '--json'], {
       env,
       cwd: dir,
-      out: { write: (s) => ((legJson += s), true) },
+      out: { write: (s) => ((unavailJson += s), true) },
     })
-    const legReport = JSON.parse(legJson) as {
+    const unavailReport = JSON.parse(unavailJson) as {
       targets: Array<{ checks: Array<{ category?: string }> }>
     }
-    expect(legReport.targets[0]!.checks.some((c) => c.category === 'legacy_database')).toBe(true)
+    expect(
+      unavailReport.targets[0]!.checks.some((c) => c.category === 'database_unavailable'),
+    ).toBe(true)
 
-    // 3. 二代正常服务端：旧访问密钥 + 过旧插件
+    // 3. 过旧插件
     mode = 'current'
-    let keyJson = ''
-    await doctor(['claude-code', '--json'], {
-      env,
-      cwd: dir,
-      out: { write: (s) => ((keyJson += s), true) },
-    })
-    const keyReport = JSON.parse(keyJson) as {
-      targets: Array<{ checks: Array<{ category?: string }> }>
-    }
-    expect(keyReport.targets[0]!.checks.some((c) => c.category === 'legacy_key')).toBe(true)
-
     let agyJson = ''
     await doctor(['agy', '--json'], {
       env,
@@ -542,5 +546,42 @@ describe('旧版插件、市场来源与缓存识别及 kioku migrate 流程', (
       }),
     )
     expect((await detectLegacyPlugin('opencode', { env, cwd: dir })).legacySource).toBeNull()
+  })
+
+  it('无参 migrate 对已切到新版插件但访问密钥返回 401 的平台仍安排重新授权，并跳过其他服务器', async () => {
+    // OpenCode 已使用无版本钉死的新插件源（无旧残留），但访问密钥在服务端升级后已失效（401）
+    await writeProfile('opencode', { url: base, key: OLD_KEY }, env)
+    mkdirSync(join(dir, 'opencode'), { recursive: true })
+    writeFileSync(
+      join(dir, 'opencode', 'opencode.json'),
+      JSON.stringify({ plugin: ['@kioku-memory/plugin-opencode'] }),
+    )
+    // 另一个平台指向不同服务器，无参 migrate 不应动它
+    await writeProfile('agy', { url: 'http://127.0.0.1:1', key: OLD_KEY }, env)
+
+    const findings = await detectLegacyPlugin('opencode', { env, cwd: dir })
+    expect(findings.legacySource).toBeNull()
+    expect(findings.outdatedPlugin).toBeNull()
+    expect(findings.staleToolCache).toBe(false)
+
+    const plan = await planMigration(base, { env, cwd: dir })
+    expect(plan.items.map((item) => item.id)).toEqual(['opencode'])
+    expect(plan.items[0]?.reauth).toBe(true)
+    expect(plan.items[0]?.reasons).toContain('访问密钥已失效')
+
+    let execOut = ''
+    const code = await migrateCommand(['--server-url', base, '-y', '--no-browser'], {
+      env,
+      cwd: dir,
+      out: { write: (s) => ((execOut += s), true) },
+      open: () => {},
+      sleep: async () => {},
+      now: () => 0,
+      installFn: async (id) => ({ id, status: 'upgraded', message: 'ok' }),
+    })
+    expect(code).toBe(0)
+    expect(execOut).toContain('✓ 已签发新访问密钥')
+    expect((await readProfile('opencode', env))?.key).toBe(NEW_KEY)
+    expect((await readProfile('agy', env))?.key).toBe(OLD_KEY)
   })
 })

@@ -40,7 +40,7 @@
 
 扩展类型 🌐 i18n、🎨 design 默认关闭，启用时改 `.githooks/commit.conf` 的 `EXTRA_TYPES`。本仓启用：无
 
-常用 scope：`claude-code`、`astrbot`、`docs`、`ci`
+常用 scope：`claude-code`、`codex`、`cli`、`docs`、`ci`
 
 钩子是本地第一道检查，CI 会用同一份规则复核 PR 标题和合并进 main 的提交。
 
@@ -58,7 +58,7 @@
 
 发版由维护者发起并决定版本号；发起后 agent 可以运行改号脚本、提交发布 PR、推送版本 tag，时机按本节的流程，不做维护者没发起的发版，不删除、不移动 tag。CHANGELOG 定稿放在发布 PR（`🔖 release: vX.Y.Z`）里。
 
-发布的是 `packages/` 与 `plugins/` 下公开的 npm 包（现在是 `@kioku-memory/cli`、`@kioku-memory/openclaw`），它们用同一个版本号，等于 tag。Claude Code 这类按仓库安装的插件不经过发版，合并进 main 就是更新。
+发布的是 `packages/` 与 `plugins/` 下公开的 npm 包（现在是 `@kioku-memory/cli`、`@kioku-memory/openclaw`、`@kioku-memory/plugin-opencode`），它们用同一个版本号，等于 tag。Claude Code 这类按仓库安装的插件不经过发版，合并进 main 就是更新。
 
 1. 维护者说要发的版本号。
 2. 从 main 开分支，`scripts/bump-version.sh X.Y.Z` 改版本号，`git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md` 起草更新日志并改写成使用者的语言，提交 `🔖 release: vX.Y.Z`，`scripts/pr.sh --release` 开发布 PR。
