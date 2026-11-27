@@ -95,7 +95,7 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 
 ## 从旧版升级
 
-- 新版 Kioku 采用单人扁平模型（接口代际 `api: 3`）与 8 个 MCP 工具（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`）。已有旧库数据或 Lore 备份可在管理界面「设置 → 账号与数据」按两步引导导入。
+- 新版 Kioku 采用单人扁平模型（接口代际 `api: 3`）与 9 个 MCP 工具（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_history`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`）。已有旧库数据或 Lore 备份可在管理界面「设置 → 账号与数据」按两步引导导入。
 - 服务端升级完成后，在终端运行 `npx @kioku-memory/cli migrate`（或在交互控制台按 `M`）：自动清理旧插件市场来源与包含已移除工具的旧工具清单缓存、更新插件、在浏览器内批量重新授权并用 `kioku doctor` 验证。
 - 若服务端接口代际旧于当前命令行，新版命令行会明确提示先升级服务端。
 

@@ -164,7 +164,29 @@ export interface BootEntryData {
   shortId: string
   title: string
   kind: string
+  bootMode?: 'none' | 'index' | 'full'
   content: string
+  summary?: string | null
+  envs?: string[]
+  realms?: string[]
+  projects?: string[]
+  runtimes?: string[]
+  updatedAt?: string
+  lastChangeSummary?: string | null
+}
+
+export interface BootOmittedItemData {
+  shortId: string
+  title: string
+  bootMode?: 'none' | 'index' | 'full'
+  reason?: 'index' | 'oversized' | 'budget'
+  summary?: string | null
+  disclosure?: string | null
+  envs?: string[]
+  realms?: string[]
+  projects?: string[]
+  runtimes?: string[]
+  charCount?: number
 }
 
 export interface BootEpisodeData {
@@ -178,6 +200,7 @@ export interface BootResponseData {
   entries: BootEntryData[]
   episodes?: BootEpisodeData[]
   omitted: string[]
+  omittedItems?: BootOmittedItemData[]
 }
 
 export interface McpToolOutcome<T = Record<string, unknown>> {
@@ -1012,7 +1035,7 @@ export const ADD_USAGE = `用法：kioku add [标题] [--title <标题>] [--cont
   [标题]               记忆标题（也可改用 --title；省略时取正文首个一级标题或短 ID）
   --content <正文>     记忆正文；省略时读取管道标准输入或打开编辑器
   --topic <标签>       主题标签（可重复传入或逗号分隔）
-  --env <环境>         适用环境标签，例如 mac、linux、win（可重复或逗号分隔）
+  --env <环境>         适用环境或自定义主机标识，如 mac、linux、win、home-24（可重复或逗号分隔；多标签任一命中，单机隔离仅标主机标识）
   --realm <场域>       适用场域标签，例如 work、personal（可重复或逗号分隔）
   --project <项目>     适用项目标识（可重复或逗号分隔）
   --runtime <客户端>   适用客户端标识（可重复或逗号分隔）
@@ -1286,7 +1309,7 @@ export const EDIT_USAGE = `用法：kioku edit <短ID或标题> [--title <标题
   --content <正文>        更新记忆正文
   --stdin                 从管道标准输入读取新正文
   --topic <标签>          覆盖主题标签列表（可重复或逗号分隔，传 clear 清空）
-  --env <环境>            覆盖环境标签列表（可重复或逗号分隔，传 clear 清空）
+  --env <环境>            覆盖环境或自定义主机标识列表（如 mac、home-24；可重复或逗号分隔，传 clear 清空）
   --realm <场域>          覆盖场域标签列表（可重复或逗号分隔，传 clear 清空）
   --project <项目>        覆盖项目标签列表（可重复或逗号分隔，传 clear 清空）
   --runtime <客户端>      覆盖客户端标签列表（可重复或逗号分隔，传 clear 清空）
@@ -1684,10 +1707,17 @@ export async function bootCommand(
   const entries = Array.isArray(boot.entries) ? boot.entries : []
   const episodes = Array.isArray(boot.episodes) ? boot.episodes : []
   const omitted = Array.isArray(boot.omitted) ? boot.omitted : []
+  const omittedItems = Array.isArray(boot.omittedItems) ? boot.omittedItems : []
+  const isCatalogItem = (item: BootOmittedItemData) =>
+    item.reason === 'index' || (!item.reason && item.bootMode === 'index')
+  const catalogItems = omittedItems.filter(isCatalogItem)
+  const overflowItems = omittedItems.filter((item) => !isCatalogItem(item))
+  const overflowCount = overflowItems.length || (!omittedItems.length ? omitted.length : 0)
   const theme = createTheme({ stream: out, env })
   const width = boxWidthFor(out)
+  const indentWrapWidth = Math.max(20, width - 6)
 
-  if (!entries.length && !episodes.length) {
+  if (!entries.length && !episodes.length && !omittedItems.length && !omitted.length) {
     const emptyBox = renderBox({
       title: '启动加载',
       width,
@@ -1707,9 +1737,33 @@ export async function bootCommand(
       entryLines.push(
         `${theme.bold(plain(entry.title))}  ${theme.muted(`${kindLabel(entry.kind)} · ${plain(entry.shortId)}`)}`,
       )
+      const scene = formatSceneInline(entry)
+      if (scene) {
+        entryLines.push(
+          ...wrapWidth(`场景：${scene}`, indentWrapWidth).map((l) => `  ${theme.muted(l)}`),
+        )
+      }
       entryLines.push(...wrapWidth(sanitizeBody(entry.content), width - 4))
     })
     sections.push({ title: `常驻记忆（${entries.length}）`, lines: entryLines })
+  }
+
+  if (catalogItems.length) {
+    const catalogLines: string[] = []
+    catalogItems.forEach((item) => {
+      catalogLines.push(`${theme.bold(plain(item.title))}  ${theme.muted(plain(item.shortId))}`)
+      const scene = formatSceneInline(item)
+      if (scene) {
+        catalogLines.push(
+          ...wrapWidth(`场景：${scene}`, indentWrapWidth).map((l) => `  ${theme.muted(l)}`),
+        )
+      }
+      const note = plain(stripAnsi(item.summary ?? '')) || plain(stripAnsi(item.disclosure ?? ''))
+      if (note) {
+        catalogLines.push(...wrapWidth(note, indentWrapWidth).map((l) => `  ${theme.muted(l)}`))
+      }
+    })
+    sections.push({ title: `常驻目录（${catalogItems.length}）`, lines: catalogLines })
   }
 
   if (episodes.length) {
@@ -1725,7 +1779,22 @@ export async function bootCommand(
     sections.push({ title: `近期会话摘要（${episodes.length}）`, lines: episodeLines })
   }
 
-  if (omitted.length) {
+  if (overflowItems.length) {
+    const overflowLines: string[] = []
+    overflowItems.forEach((item) => {
+      const reasonText = item.reason === 'oversized' ? '单条超限' : '预算外'
+      overflowLines.push(
+        `${plain(item.title)}  ${theme.muted(`${plain(item.shortId)} · ${reasonText}`)}`,
+      )
+      const scene = formatSceneInline(item)
+      if (scene) {
+        overflowLines.push(
+          ...wrapWidth(`场景：${scene}`, indentWrapWidth).map((l) => `  ${theme.muted(l)}`),
+        )
+      }
+    })
+    sections.push({ title: `字数预算外（${overflowItems.length}）`, lines: overflowLines })
+  } else if (!omittedItems.length && omitted.length) {
     sections.push({
       title: `字数预算外（${omitted.length}）`,
       lines: [theme.muted(omitted.map((id) => plain(id)).join('、'))],
@@ -1734,7 +1803,13 @@ export async function bootCommand(
 
   const boxTitle = entries.length
     ? `启动加载预览 · 常驻记忆（${entries.length}）`
-    : `启动加载预览 · 近期会话摘要（${episodes.length}）`
+    : catalogItems.length
+      ? `启动加载预览 · 常驻目录（${catalogItems.length}）`
+      : episodes.length
+        ? `启动加载预览 · 近期会话摘要（${episodes.length}）`
+        : overflowCount
+          ? `启动加载预览 · 字数预算外（${overflowCount}）`
+          : '启动加载预览'
 
   const box = renderBox({
     title: boxTitle,

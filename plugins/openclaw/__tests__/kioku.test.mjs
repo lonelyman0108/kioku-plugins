@@ -206,6 +206,7 @@ describe('OpenClaw 插件：注入与上报', () => {
       'kioku_boot',
       'kioku_search',
       'kioku_get',
+      'kioku_history',
       'kioku_browse',
       'kioku_create',
       'kioku_update',

@@ -370,7 +370,7 @@ async function main(platform) {
     if (spec.tools === 'search') {
       check(
         saw('found'),
-        '模型搜工具的结果里有 Kioku 的工具（含 kioku_get 与 kioku_list_credentials）',
+        '模型搜工具的结果里有 Kioku 的工具（含 kioku_get、kioku_history 与 kioku_list_credentials）',
       )
       check(!saw('legacyFound'), '模型搜工具的结果里不含已移除的旧工具（kioku_transfer）')
     } else if (spec.tools === 'mcp') {
@@ -378,7 +378,7 @@ async function main(platform) {
     } else {
       check(
         saw('tools'),
-        '模型的请求的工具清单里有 Kioku 的工具（含 kioku_get 与 kioku_list_credentials）',
+        '模型的请求的工具清单里有 Kioku 的工具（含 kioku_get、kioku_history 与 kioku_list_credentials）',
       )
       check(!saw('legacyTools'), '模型的请求的工具清单里不含已移除的旧工具（kioku_transfer）')
     }
