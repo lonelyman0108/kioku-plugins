@@ -23,7 +23,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 底栏按当前选中客户端状态提供单键快捷操作（`Enter` 接入或重授权、`a` 批量接入、`p` 安装/更新插件、`d` 诊断、`i` 迁移本地记忆、`x` 清理冲突工具、`u` 断开并恢复自带记忆、`y` 复制安装命令、`?` 查看全部快捷键）。执行修改类动作前先弹出确认框，浏览器授权确认框与进度等待同样在工作台弹出层内完成：
 
 - **多平台联合授权**：一次申请勾选的几个平台（最多 8 个），终端弹出宽松确认码框并自动尝试复制确认码，附带 `[o]` 打开浏览器 / `[c]` 复制链接 / `[Esc]` 取消快捷键与 10 分钟实时倒计时。浏览器确认页只输入一次确认码即可完成全部选定平台的配置写入、自带记忆停用，并自动尝试安装对应插件与执行 `whoami` + MCP `tools/list` 连通性握手测试。
-- **插件自动安装与托管更新**：支持调用 Claude Code、Codex、Gemini CLI、pi、Hermes、OpenClaw 的官方安装/更新命令，或同步内置 Antigravity / Gemini 扩展（Antigravity 目录带 `.kioku-managed.json` 托管标记，更新或 `kioku disconnect` 清理时绝不误删用户自己放置的目录）；未检测到客户端 CLI 时自动降级为可复制的手动命令。
+- **插件自动安装与托管更新**：支持调用 Claude Code、Codex、Gemini CLI、ZCode、pi、Hermes、OpenClaw 的官方安装/更新命令，或同步内置 Antigravity / Gemini / ZCode 插件（托管目录带 `.kioku-managed.json` 标记，更新或 `kioku disconnect` 清理时绝不误删用户自己放置的目录）；未检测到客户端 CLI 时自动降级为可复制的手动命令。
 - **Claude Code 统一鉴权**：`kioku connect claude-code` 与 `kioku login claude-code` 直接走浏览器授权写入 `~/.config/kioku/claude-code.json` 并配好 `autoMemoryEnabled: false`；在 `/plugin` 里填入的配置优先，`/plugin` 留空时插件钩子与 `mcp-stdio.mjs` 自动回退读取 `~/.config/kioku/claude-code.json`。
 - **迁移本地记忆**：控制台仅统计本地条数；选定迁移后与服务端逐条比对并列出计划，支持 `--select` 勾选子集写入。
 - **在本机启动 Kioku**：没有服务器时可在 `~/kioku` 生成 `compose.yaml` 与仅本人可读写的随机密钥 `.env`，`docker compose up -d` 等健康检查通过后展示初始化码并在浏览器打开管理界面。
@@ -54,7 +54,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 | `kioku install --platforms <平台,…>` | 多个平台批量接入，访问密钥从环境变量读（给脚本用） |
 | `kioku run -e 变量=<标识>[#<字段>] -- <命令>` | 向 Kioku 取凭据的值，放进环境变量交给命令 |
 
-每个子命令的完整说明：`kioku <子命令> --help`，查看版本号：`kioku --version`（或 `-v`）。支持的平台：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
+每个子命令的完整说明：`kioku <子命令> --help`，查看版本号：`kioku --version`（或 `-v`）。支持的平台：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`、`zcode`。
 
 ## 从旧版迁移
 
@@ -70,7 +70,7 @@ Claude Code、Codex 等插件目录内部保留精简的 `packages/core` 运行�
 kioku login codex --server-url https://kioku.example.com
 ```
 
-终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选好场域、环境与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。
+终端显示确认码框并打开 Kioku 管理界面的确认页（`--no-browser` 时只显示地址）。登录后在页面上输入确认码，选好场域、环境与权限范围，点确认；命令行取到访问密钥后接着做 `kioku setup` 的事：核对、写下配置。访问密钥全程不显示。支持全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`、`zcode`。
 
 - 确认码不在打开的地址里，要照着终端输入：只在自己刚运行了这条命令时确认。别人发来确认码请求代为确认时切勿通过，那样对方的机器会拿到能读写本人记忆的访问密钥。
 - 申请 10 分钟内有效。被拒绝或过期时，重新运行即可。
@@ -88,7 +88,7 @@ export KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=…
 kioku install --platforms codex,pi --server-url https://kioku.example.com -y
 ```
 
-每个平台的访问密钥放在 `KIOKU_API_KEY_<平台>` 里（平台名大写、连字符换成下划线：`KIOKU_API_KEY_CLAUDE_CODE`、`KIOKU_API_KEY_CODEX`、`KIOKU_API_KEY_GEMINI`、`KIOKU_API_KEY_AGY`、`KIOKU_API_KEY_OPENCODE`、`KIOKU_API_KEY_PI`、`KIOKU_API_KEY_HERMES`、`KIOKU_API_KEY_OPENCLAW`、`KIOKU_API_KEY_DSH`），没给的平台跳过并在结果里列出。各平台照 `kioku setup` 核对、写下本机配置并停用自带长期记忆。
+每个平台的访问密钥放在 `KIOKU_API_KEY_<平台>` 里（平台名大写、连字符换成下划线：`KIOKU_API_KEY_CLAUDE_CODE`、`KIOKU_API_KEY_CODEX`、`KIOKU_API_KEY_GEMINI`、`KIOKU_API_KEY_AGY`、`KIOKU_API_KEY_OPENCODE`、`KIOKU_API_KEY_PI`、`KIOKU_API_KEY_HERMES`、`KIOKU_API_KEY_OPENCLAW`、`KIOKU_API_KEY_DSH`、`KIOKU_API_KEY_ZCODE`），没给的平台跳过并在结果里列出。各平台照 `kioku setup` 核对、写下本机配置并停用自带长期记忆。
 
 - 在终端里运行、没带 `-y` 时先列计划再确认；`--dry-run` 只列计划。
 - 最后列出要自己运行的插件安装命令。有平台失败时退出码为 1。
@@ -172,6 +172,14 @@ kioku setup opencode --server-url https://kioku.example.com
 
 核对后写下 `~/.config/kioku/opencode.json`，并在 `~/.config/opencode/opencode.json` 的 `plugin` 列表里加上 `@kioku-memory/plugin-opencode`（原文件备份成 `opencode.json.kioku-backup`；OpenCode 没有自带的长期记忆，MCP 由插件在 `config` 钩子里注册）。
 
+### ZCode
+
+```bash
+kioku setup zcode --server-url https://kioku.example.com
+```
+
+核对后写下 `~/.config/kioku/zcode.json`（插件自带生命周期钩子与 stdio MCP 桥接，均从该文件读取地址与访问密钥）。使用 `kioku connect zcode` 可自动把内置插件目录注册到 ZCode 插件市场并启用 `kioku@kioku`，也可手动执行 `zcode plugins marketplace add`、`zcode plugins install kioku@kioku`、`zcode plugins enable kioku@kioku`。
+
 ## 日常记忆读写（search / get / ls / add / edit / delete / boot）
 
 这些日常记忆命令共用零配置身份解析链：优先读 `--platform <平台>`，其次读 `KIOKU_SERVER_URL` + `KIOKU_API_KEY`（或 `KIOKU_API_KEY_FILE`），再读 `~/.config/kioku/cli.json` 记住的默认身份；本机若仅配置了一个客户端则直接选用，存在多个客户端时在交互式终端交互选择并记住默认项（非终端环境下提示传入 `--platform`）。
@@ -247,7 +255,7 @@ kioku import --from claude-code -y          # 免确认直接写入
 - 只读普通的文本文件：符号链接不跟（它可以指到记忆目录之外的文件），太大的、不是文本的不读。
 - 写到一半连不上时停下来，说明写了多少、还剩多少；重新运行会接着写。
 - 不在终端里运行时要带 `--yes` 才写。`--path` 指明不在默认位置的目录。
-- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw` 或 `--platform dsh` 改用 `kioku setup` 给那个平台写下的。
+- 地址与访问密钥读环境变量（Claude Code 的会话里已经配好）；`--platform codex`、`--platform gemini`、`--platform agy`、`--platform opencode`、`--platform pi`、`--platform hermes`、`--platform openclaw`、`--platform dsh` 或 `--platform zcode` 改用 `kioku setup` 给那个平台写下的。
 - 指令文件（`AGENTS.md`、`CLAUDE.md`）不是记忆，不迁。Codex 自带的 Memories 存在它自己的数据库里、格式没有公开，迁不了。
 
 迁完之后用 `kioku setup <平台>` 停用平台自带的记忆，免得两边接着各记一份。
@@ -262,7 +270,7 @@ macOS 与 Linux 上各平台都用真实的模型实测过。Windows 上跑过�
 
 ## 地址与访问密钥
 
-`kioku doctor claude-code`、`kioku doctor codex`、`kioku doctor gemini`、`kioku doctor agy`、`kioku doctor opencode`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
+`kioku doctor claude-code`、`kioku doctor codex`、`kioku doctor gemini`、`kioku doctor agy`、`kioku doctor opencode`、`kioku doctor pi`、`kioku doctor hermes`、`kioku doctor openclaw`、`kioku doctor dsh`、`kioku doctor zcode` 读 `kioku setup` 写下的配置。别的情况下 `doctor` 与 `run` 从环境变量读：
 
 - `KIOKU_SERVER_URL`：例如 `https://kioku.example.com`，不带 `/v1`
 - `KIOKU_API_KEY`：在 Kioku 管理界面的「设置 → 连接与终端」签发的访问密钥；或者用 `KIOKU_API_KEY_FILE` 指向只含访问密钥的文件

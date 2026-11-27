@@ -1,0 +1,12 @@
+{
+  "name": "kioku",
+  "version": "0.6.1",
+  "description": "Kioku 长期记忆：会话开始注入启动加载，每轮注入召回候选，每轮回复后写会话摘要，并通过内置 MCP 桥接提供记忆工具",
+  "author": {
+    "name": "Kioku"
+  },
+  "homepage": "https://github.com/lonelyman0108/kioku",
+  "repository": "https://github.com/lonelyman0108/kioku-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "zcode", "hooks", "mcp"]
+}

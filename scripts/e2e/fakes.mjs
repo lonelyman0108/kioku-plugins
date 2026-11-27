@@ -231,7 +231,7 @@ export async function startFakeKioku(
           }
         : { mode: 'stdout_text', value: context }
     }
-    if (runtimeFamily === 'codex') {
+    if (runtimeFamily === 'codex' || runtimeFamily === 'zcode') {
       return {
         mode: 'stdout_json',
         value: { hookSpecificOutput: { hookEventName, additionalContext: context } },

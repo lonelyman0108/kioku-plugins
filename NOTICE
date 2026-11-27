@@ -8,3 +8,7 @@ packages/core/lib/command.mjs 里给 cmd.exe 转义参数的规则改写自 cros
 
 plugins/opencode/index.js 里的对话事件映射与系统提示标记做法参考自 Lore
 （opencode-plugin），MIT License，Copyright (c) Lore contributors。
+
+plugins/zcode 与 packages/cli/src/zcode.ts 里的 ZCode 插件目录布局（.zcode-plugin/plugin.json、
+marketplace.json、process 钩子格式）与插件市场注册命令参考自 Lore（https://github.com/FFatTiger/lore），
+MIT License，Copyright (c) 2025 Salem / Lore contributors。

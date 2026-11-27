@@ -29,7 +29,7 @@ npx @kioku-memory/cli login codex --server-url https://kioku.example.com
 KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --platforms codex,pi --server-url https://kioku.example.com -y
 ```
 
-`connect` 与 `login` 覆盖全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`。其中 Claude Code 支持在终端通过 `kioku connect claude-code` 自动写入 `~/.config/kioku/claude-code.json`，也可直接在 `/plugin` 选项中填写（`/plugin` 选项优先，留空时钩子与 `mcp-stdio.mjs` 自动回退读取本机配置文件）。
+`connect` 与 `login` 覆盖全部客户端：`claude-code`、`codex`、`gemini`、`agy`、`opencode`、`pi`、`hermes`、`openclaw`、`dsh`、`zcode`。其中 Claude Code 支持在终端通过 `kioku connect claude-code` 自动写入 `~/.config/kioku/claude-code.json`，也可直接在 `/plugin` 选项中填写（`/plugin` 选项优先，留空时钩子与 `mcp-stdio.mjs` 自动回退读取本机配置文件）。
 
 ## 平台
 
@@ -44,6 +44,7 @@ KIOKU_API_KEY_CODEX=… KIOKU_API_KEY_PI=… npx @kioku-memory/cli install --pla
 | [Hermes](plugins/hermes/README.md) | 记忆提供方 | ● | ● | ● | ● |
 | [OpenClaw](plugins/openclaw/README.md) | 记忆槽位 | ● | ● | ● | ● |
 | [DeepSeek Harness](plugins/dsh/README.md) | 生命周期插件 | ● | ● | ● | MCP |
+| [ZCode](plugins/zcode/README.md) | 插件市场 | ● | ● | ● | MCP |
 
 Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见各自的 README。
 
@@ -59,6 +60,7 @@ Hermes 与 OpenClaw 只在本机入口的会话里生效。各插件的配置见
 - **Hermes**：`kioku login hermes` → `hermes plugins install lonelyman0108/kioku-plugins/plugins/hermes --enable`。
 - **OpenClaw**：`kioku login openclaw` → `openclaw plugins install npm:@kioku-memory/openclaw` → 重启网关。
 - **DeepSeek Harness**：`kioku login dsh` → `dsh plugin --profile <profile> add github:lonelyman0108/kioku-plugins` → 重启 dsh。
+- **ZCode**：`kioku connect zcode`（或手动 `kioku login zcode` → `zcode plugins marketplace add <插件目录>` → `zcode plugins install kioku@kioku` → `zcode plugins enable kioku@kioku`）。
 
 `kioku` 即 `npx @kioku-memory/cli`，也可以 `npm install -g @kioku-memory/cli`。不想走浏览器授权时用 `kioku setup <平台>` 手动填访问密钥。
 

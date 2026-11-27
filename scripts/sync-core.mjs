@@ -27,6 +27,7 @@ export const TARGETS = [
   'plugins/opencode',
   'plugins/gemini',
   'plugins/agy',
+  'plugins/zcode',
 ]
 
 // 核心里要复制的文件（相对核心目录）：lib 下的实现与 kioku 命令的入口，不含测试

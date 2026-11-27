@@ -6,6 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { agyHome, agyMcpFile } from './agy.ts'
+import { zcodeConfigFile, zcodeHome } from './zcode.ts'
 import { bracketDelta, codexHome, headerOf } from './codex.ts'
 import { KiokuFailure, capture, hasCommand, plain } from './core.ts'
 import { dshHome } from './dsh.ts'
@@ -251,7 +252,11 @@ async function scanJsonMcp(
               if (Object.keys(nextContainer).length) next[containerKey] = nextContainer
               else delete next[containerKey]
               await safeWrite(file, serialize(next, latest.text), latest.text, {
-                backup: backupAllowed(file, hasJsonSecret(latest.settings), noBackupFiles),
+                backup: backupAllowed(
+                  file,
+                  hasJsonSecret(latest.settings) || hasInlineSecret(latest.text),
+                  noBackupFiles,
+                ),
               })
               return { changed: true, message: `已从 ${plain(file)} 移除 ${containerKey}.${name}` }
             },
@@ -1298,6 +1303,179 @@ async function scanHermesConflicts(items: ConflictItem[], { env }: { env: Env })
   }
 }
 
+// ── ZCode (zcode) ────────────────────────────────────────────────────────────
+
+const ZCODE_CONFLICT_PLUGINS = [
+  { prefix: 'lore@', tool: 'lore', toolName: 'Lore', marketplace: 'lore' },
+  { prefix: 'claude-mem@', tool: 'claude-mem', toolName: 'Claude-Mem', marketplace: null },
+]
+
+function resolveZcodeBin(env: Env): string | null {
+  if (hasCommand('zcode', env)) return 'zcode'
+  const localBin = join(env.HOME || env.USERPROFILE || homedir(), '.local', 'bin', 'zcode')
+  return hasCommand(localBin, env) ? localBin : null
+}
+
+function shouldRemoveZcodeMarketplace(pluginId: string, marketplace: string | null): boolean {
+  if (!marketplace) return false
+  const at = pluginId.lastIndexOf('@')
+  if (at < 0) return false
+  return pluginId.slice(at + 1).toLowerCase() === marketplace.toLowerCase()
+}
+
+async function scanZcodeConflicts(items: ConflictItem[], { env }: { env: Env; cwd: string }) {
+  const cfgFile = zcodeConfigFile(env)
+  await scanJsonMcp(items, { platform: 'zcode', file: cfgFile, containerKey: 'mcpServers' })
+
+  const seenPluginIds = new Set<string>()
+  const res = await readJsonSafe(cfgFile)
+  const nestedEnabled =
+    res.ok && res.text !== null
+      ? (res.settings?.plugins as { enabledPlugins?: unknown } | undefined)?.enabledPlugins
+      : undefined
+  const topEnabled = res.ok && res.text !== null ? res.settings?.enabledPlugins : undefined
+  const enabledMaps: Record<string, unknown>[] = []
+  if (nestedEnabled && typeof nestedEnabled === 'object' && !Array.isArray(nestedEnabled)) {
+    enabledMaps.push(nestedEnabled as Record<string, unknown>)
+  }
+  if (topEnabled && typeof topEnabled === 'object' && !Array.isArray(topEnabled)) {
+    enabledMaps.push(topEnabled as Record<string, unknown>)
+  }
+
+  for (const map of enabledMaps) {
+    for (const [pluginId, on] of Object.entries(map)) {
+      const normalizedId = pluginId.toLowerCase()
+      if (on !== true || seenPluginIds.has(normalizedId)) continue
+      const match = ZCODE_CONFLICT_PLUGINS.find((p) => normalizedId.startsWith(p.prefix))
+      if (!match) continue
+      seenPluginIds.add(normalizedId)
+      items.push({
+        id: `zcode:${match.tool}:plugin:${pluginId}`,
+        platform: 'zcode',
+        tool: match.tool,
+        toolName: match.toolName,
+        kind: 'plugin',
+        summary: `插件 ${plain(pluginId)}（${plain(cfgFile)}）`,
+        removable: true,
+        remove: async (
+          { noBackupFiles } = { env: process.env, cwd: process.cwd(), noBackupFiles: new Set() },
+        ) => {
+          const zcodeBin = resolveZcodeBin(env)
+          if (zcodeBin) {
+            await capture(zcodeBin, ['plugins', 'uninstall', pluginId], env, { timeout: 20_000 })
+            if (shouldRemoveZcodeMarketplace(pluginId, match.marketplace)) {
+              await capture(
+                zcodeBin,
+                ['plugins', 'marketplace', 'remove', match.marketplace!],
+                env,
+                { timeout: 20_000 },
+              )
+            }
+          }
+          const latest = await readSettings(cfgFile)
+          const next = { ...latest.settings }
+          let changed = false
+          const stripMatching = (obj: Record<string, unknown>): Record<string, unknown> => {
+            const copy = { ...obj }
+            for (const key of Object.keys(copy)) {
+              if (key.toLowerCase() === normalizedId) {
+                delete copy[key]
+                changed = true
+              }
+            }
+            return copy
+          }
+          if (next.plugins && typeof next.plugins === 'object' && !Array.isArray(next.plugins)) {
+            const pluginsObj = { ...(next.plugins as Record<string, unknown>) }
+            const cur = pluginsObj.enabledPlugins
+            if (cur && typeof cur === 'object' && !Array.isArray(cur)) {
+              const nextEnabled = stripMatching(cur as Record<string, unknown>)
+              if (Object.keys(nextEnabled).length) pluginsObj.enabledPlugins = nextEnabled
+              else delete pluginsObj.enabledPlugins
+              if (Object.keys(pluginsObj).length) next.plugins = pluginsObj
+              else delete next.plugins
+            }
+          }
+          if (
+            next.enabledPlugins &&
+            typeof next.enabledPlugins === 'object' &&
+            !Array.isArray(next.enabledPlugins)
+          ) {
+            const nextEnabled = stripMatching(next.enabledPlugins as Record<string, unknown>)
+            if (Object.keys(nextEnabled).length) next.enabledPlugins = nextEnabled
+            else delete next.enabledPlugins
+          }
+          if (changed) {
+            await safeWrite(cfgFile, serialize(next, latest.text), latest.text, {
+              backup: backupAllowed(
+                cfgFile,
+                hasJsonSecret(latest.settings) || hasInlineSecret(latest.text),
+                noBackupFiles,
+              ),
+            })
+          }
+          return { changed: true, message: `已卸载 ZCode 插件 ${plain(pluginId)}` }
+        },
+      })
+    }
+  }
+
+  const installedFile = join(zcodeHome(env), 'cli', 'plugins', 'installed_plugins.json')
+  const installedRes = await readJsonSafe(installedFile)
+  if (installedRes.ok && installedRes.text !== null) {
+    const rawPlugins =
+      installedRes.settings?.plugins &&
+      typeof installedRes.settings.plugins === 'object' &&
+      !Array.isArray(installedRes.settings.plugins)
+        ? (installedRes.settings.plugins as Record<string, unknown>)
+        : installedRes.settings
+    for (const pluginId of Object.keys(rawPlugins ?? {})) {
+      const normalizedId = pluginId.toLowerCase()
+      if (seenPluginIds.has(normalizedId)) continue
+      const match = ZCODE_CONFLICT_PLUGINS.find((p) => normalizedId.startsWith(p.prefix))
+      if (!match) continue
+      seenPluginIds.add(normalizedId)
+      const zcodeBin = resolveZcodeBin(env)
+      const hasZcode = zcodeBin !== null
+      items.push({
+        id: `zcode:${match.tool}:installed:${pluginId}`,
+        platform: 'zcode',
+        tool: match.tool,
+        toolName: match.toolName,
+        kind: hasZcode ? 'plugin' : 'warning',
+        summary: `已安装插件 ${plain(pluginId)}（${plain(installedFile)}）`,
+        removable: hasZcode,
+        ...(hasZcode
+          ? {
+              remove: async () => {
+                const resUninstall = await capture(
+                  zcodeBin,
+                  ['plugins', 'uninstall', pluginId],
+                  env,
+                  { timeout: 20_000 },
+                )
+                if (!resUninstall.ok) {
+                  throw new KiokuFailure(`卸载 ZCode 插件 ${plain(pluginId)} 没有成功`)
+                }
+                if (shouldRemoveZcodeMarketplace(pluginId, match.marketplace)) {
+                  await capture(
+                    zcodeBin,
+                    ['plugins', 'marketplace', 'remove', match.marketplace!],
+                    env,
+                    { timeout: 20_000 },
+                  )
+                }
+                return { changed: true, message: `已卸载 ZCode 插件 ${plain(pluginId)}` }
+              },
+            }
+          : {
+              hint: `缺少 zcode 命令，手动运行 zcode plugins uninstall ${plain(pluginId)}`,
+            }),
+      })
+    }
+  }
+}
+
 const SCANNERS: Record<
   string,
   (items: ConflictItem[], ctx: { env: Env; cwd: string }) => Promise<void>
@@ -1311,6 +1489,7 @@ const SCANNERS: Record<
   pi: scanPiConflicts,
   dsh: scanDshConflicts,
   hermes: scanHermesConflicts,
+  zcode: scanZcodeConflicts,
 }
 
 // 只读扫描单个平台的冲突记忆工具，返回冲突项数组

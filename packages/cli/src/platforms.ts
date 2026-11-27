@@ -33,6 +33,7 @@ import {
 } from './opencode.ts'
 import { inspectPi, piHome, setupPi, statusPi } from './pi.ts'
 import type { Env, PlatformDescriptor } from './types.ts'
+import { inspectZcode, setupZcode, statusZcode, zcodeHome } from './zcode.ts'
 
 const claudeCode: PlatformDescriptor = {
   name: 'Claude Code',
@@ -205,6 +206,27 @@ const agy: PlatformDescriptor = {
   inspect: inspectAgy,
 }
 
+const zcode: PlatformDescriptor = {
+  name: 'ZCode',
+  runtimeFamily: 'zcode',
+  command: () => 'zcode',
+  home: zcodeHome,
+  status: statusZcode,
+  install: {
+    commands: [
+      'git clone https://github.com/lonelyman0108/kioku-plugins',
+      'zcode plugins marketplace add ./kioku-plugins/plugins/zcode',
+      'zcode plugins install kioku@kioku',
+      'zcode plugins enable kioku@kioku',
+    ],
+    after: '重启 ZCode 或新开会话生效（MCP 桥接已随插件内置，地址与访问密钥保存在本机配置）',
+  },
+  detect: (env: Env) => Boolean(env.ZCODE_SESSION_ID || env.ZCODE_PLUGIN_ROOT),
+  readConfig: (env: Env) => readProfile('zcode', env),
+  setup: setupZcode,
+  inspect: inspectZcode,
+}
+
 export const PLATFORMS: Record<string, PlatformDescriptor> = {
   'claude-code': claudeCode,
   codex,
@@ -215,6 +237,7 @@ export const PLATFORMS: Record<string, PlatformDescriptor> = {
   opencode,
   gemini,
   agy,
+  zcode,
 }
 
 export function platformNames(): string {

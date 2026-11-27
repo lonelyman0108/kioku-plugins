@@ -1,0 +1,7 @@
+{
+  "name": "@kioku-memory/plugin-zcode",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  }
+}

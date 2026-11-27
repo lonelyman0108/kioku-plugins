@@ -1,5 +1,5 @@
 // 构建 @kioku-memory/cli：把 TypeScript 源码与 core 运行时打进 dist/index.mjs，
-// 并把内置的 agy / gemini 插件静态复制到 assets/plugins/，保证单包发布后无外部依赖即可运行。
+// 并把内置的 agy / gemini / zcode 插件静态复制到 assets/plugins/，保证单包发布后无外部依赖即可运行。
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -33,7 +33,7 @@ const assetsPluginsDir = join(cliRoot, 'assets', 'plugins')
 rmSync(assetsPluginsDir, { recursive: true, force: true })
 mkdirSync(assetsPluginsDir, { recursive: true })
 
-for (const name of ['agy', 'gemini']) {
+for (const name of ['agy', 'gemini', 'zcode']) {
   const srcDir = join(repoRoot, 'plugins', name)
   if (!existsSync(srcDir)) {
     throw new Error(`找不到内置插件目录：${srcDir}`)

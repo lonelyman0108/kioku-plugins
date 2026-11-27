@@ -117,6 +117,8 @@ beforeEach(() => {
     PI_CODING_AGENT_DIR: join(dir, 'pi'),
     DSH_HOME: join(dir, 'dsh'),
     OPENCODE_CONFIG_DIR: join(dir, 'opencode'),
+    ZCODE_HOME: join(dir, 'zcode'),
+    ZCODE_DATA_BASE_DIR: join(dir, 'zcode'),
     [pathKey]: pathParts.join(delimiter),
   }
   if (pathKey !== 'PATH') delete env.PATH

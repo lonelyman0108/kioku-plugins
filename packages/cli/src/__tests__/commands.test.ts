@@ -17,6 +17,7 @@ import { readProfile, readToolCacheSync, writeProfile } from '../core.ts'
 import { doctor } from '../doctor.ts'
 import { main } from '../index.ts'
 import { installPlugin } from '../installer.ts'
+import { PLATFORMS } from '../platforms.ts'
 
 const KEY = 'kioku_cmd_test_key'
 
@@ -140,6 +141,7 @@ beforeEach(() => {
     PI_CODING_AGENT_DIR: join(dir, 'pi'),
     DSH_HOME: join(dir, 'dsh'),
     OPENCODE_CONFIG_DIR: join(dir, 'opencode'),
+    ZCODE_HOME: join(dir, 'zcode'),
     PATH: '',
   }
 })
@@ -252,7 +254,8 @@ describe('新管理子命令集', () => {
     expect(code).toBe(1) // 未配置的其余平台会报告未配过
     const report = JSON.parse(jsonOut) as { ok: boolean; targets: Array<{ id: string }> }
     expect(report.ok).toBe(false)
-    expect(report.targets).toHaveLength(9)
+    expect(report.targets).toHaveLength(Object.keys(PLATFORMS).length)
+    expect(report.targets.some((t) => t.id === 'zcode')).toBe(true)
     expect(jsonOut).not.toContain(KEY)
   })
 
