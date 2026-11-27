@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { agyHome } from './agy.ts'
 import { claudeHome } from './claudeCode.ts'
 import { codexHome } from './codex.ts'
-import { capture, hasCommand, plain, removeToolCache, toolCacheFile } from './core.ts'
+import { capture, hasCommand, plain, profileDir, removeToolCache, toolCacheFile } from './core.ts'
 import { dshHome } from './dsh.ts'
 import { readSettings, writeSettings } from './files.ts'
 import { geminiHome } from './gemini.ts'
@@ -18,6 +18,7 @@ import { resolvePlatformCommand } from './panel.ts'
 import { OPENCODE_PLUGIN, opencodeHome } from './opencode.ts'
 import { piHome } from './pi.ts'
 import type { Env } from './types.ts'
+import { zcodePluginActive } from './zcode.ts'
 
 const CLI_VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -332,6 +333,21 @@ export async function detectLegacyPlugin(
     const clawExt = join(env.OPENCLAW_HOME || homedir(), '.openclaw', 'extensions', 'kioku')
     if (await isLegacyNpmPluginDir(clawExt)) {
       outdatedPlugin = '旧版本 OpenClaw 插件'
+    }
+  } else if (id === 'zcode') {
+    if (await zcodePluginActive(env)) {
+      const targetDir = join(profileDir(env), 'plugins', 'zcode')
+      const marker = (await readJsonOrNull(join(targetDir, '.kioku-managed.json'))) as {
+        managedBy?: unknown
+        version?: unknown
+      } | null
+      if (
+        marker?.managedBy === '@kioku-memory/cli' &&
+        typeof marker.version === 'string' &&
+        compareSemver(marker.version, CLI_VERSION) < 0
+      ) {
+        outdatedPlugin = `旧版本 ZCode 插件（${plain(marker.version)}）`
+      }
     }
   }
 

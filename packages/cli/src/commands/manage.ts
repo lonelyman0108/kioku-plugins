@@ -321,7 +321,7 @@ export async function disconnectCommand(
 
 export const UPGRADE_USAGE = `用法：kioku upgrade [平台…]
 
-更新已接入平台的 Kioku 插件（如同步内置 Antigravity / Gemini 插件、调用客户端插件更新命令），
+更新已接入平台的 Kioku 插件（如同步内置 Antigravity / Gemini / ZCode 插件、调用客户端插件更新命令），
 并刷新本机 MCP 工具清单缓存。
 
   [平台…]  ${platformNames()}；不写时检查并更新所有已接入或已安装插件的平台

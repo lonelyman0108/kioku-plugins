@@ -21,6 +21,8 @@ import { OPENCODE_PLUGIN, opencodeHome } from './opencode.ts'
 import { resolvePlatformCommand } from './panel.ts'
 import { PLATFORMS } from './platforms.ts'
 import type { Env, TargetConfig, WhoamiResponse } from './types.ts'
+import { stripAnsi } from './ui/width.ts'
+import { bundledZcodeDir } from './zcode.ts'
 
 export const CLI_VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -125,6 +127,18 @@ export async function persistentGeminiDir(env: Env): Promise<string> {
     targetDir,
     label: ' Gemini CLI 扩展',
     id: 'gemini',
+    upgrade: true,
+  })
+  return targetDir
+}
+
+export async function persistentZcodeDir(env: Env): Promise<string> {
+  const targetDir = join(profileDir(env), 'plugins', 'zcode')
+  await copyManagedBundle({
+    srcDir: bundledZcodeDir(),
+    targetDir,
+    label: ' ZCode 插件',
+    id: 'zcode',
     upgrade: true,
   })
   return targetDir
@@ -378,6 +392,77 @@ export async function installPlugin(
         ? '未能自动安装 OpenClaw 插件，手动运行'
         : '未找到 openclaw 命令，手动运行',
       commands: platform.install.commands,
+      after: platform.install.after,
+    }
+  }
+
+  if (id === 'zcode') {
+    const bin = resolvePlatformCommand(id, env) ?? platform.command(env)
+    const targetDir = await persistentZcodeDir(env)
+    const safeTarget = plain(targetDir)
+    const quotedTarget = /\s/.test(safeTarget) ? `"${safeTarget}"` : safeTarget
+    const manualCommands = [
+      `zcode plugins marketplace add ${quotedTarget}`,
+      'zcode plugins install kioku@kioku',
+      'zcode plugins enable kioku@kioku',
+    ]
+    if (!hasCommand(bin, env)) {
+      return {
+        id,
+        status: 'manual',
+        message: '未找到 zcode 命令，手动运行',
+        commands: manualCommands,
+        after: platform.install.after,
+      }
+    }
+    await capture(bin, ['plugins', 'marketplace', 'remove', 'kioku'], env, { timeout: 30_000 })
+    const added = await capture(bin, ['plugins', 'marketplace', 'add', targetDir], env, {
+      timeout: 60_000,
+    })
+    if (!added.ok) {
+      return {
+        id,
+        status: 'manual',
+        message: '未能自动注册 ZCode 插件市场，手动运行',
+        commands: manualCommands,
+        after: platform.install.after,
+      }
+    }
+    const listed = await capture(bin, ['plugins', 'list'], env, { timeout: 30_000 })
+    const alreadyListed = listed.ok && /\bkioku@kioku\b/.test(stripAnsi(listed.stdout))
+    let installedOk = true
+    if (alreadyListed) {
+      const updated = await capture(bin, ['plugins', 'update', 'kioku@kioku'], env, {
+        timeout: 60_000,
+      })
+      if (!updated.ok) {
+        await capture(bin, ['plugins', 'uninstall', 'kioku@kioku'], env, { timeout: 30_000 })
+        const reinstalled = await capture(bin, ['plugins', 'install', 'kioku@kioku'], env, {
+          timeout: 60_000,
+        })
+        installedOk = reinstalled.ok
+      }
+    } else {
+      const installed = await capture(bin, ['plugins', 'install', 'kioku@kioku'], env, {
+        timeout: 60_000,
+      })
+      installedOk = installed.ok
+    }
+    const enabled = installedOk
+      ? await capture(bin, ['plugins', 'enable', 'kioku@kioku'], env, { timeout: 30_000 })
+      : { ok: false }
+    if (installedOk && enabled.ok) {
+      return {
+        id,
+        status: upgrade ? 'upgraded' : 'installed',
+        message: `${upgrade ? '已更新并启用' : '已安装并启用'} ZCode 插件（${plain(targetDir)}）`,
+      }
+    }
+    return {
+      id,
+      status: 'manual',
+      message: '未能自动安装或启用 ZCode 插件，手动运行',
+      commands: manualCommands,
       after: platform.install.after,
     }
   }

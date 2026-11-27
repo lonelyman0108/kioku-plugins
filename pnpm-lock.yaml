@@ -72,6 +72,8 @@ importers:
 
   plugins/pi: {}
 
+  plugins/zcode: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':

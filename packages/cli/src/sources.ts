@@ -515,6 +515,7 @@ export const UNSUPPORTED_SOURCES: Record<string, string> = {
   opencode: 'OpenCode 没有自带的长期记忆文件',
   gemini: 'Gemini CLI 没有自带的独立长期记忆目录',
   agy: 'Antigravity 没有自带的长期记忆文件',
+  zcode: 'ZCode 没有自带的可迁移长期记忆文件',
 }
 
 export function sourceNames(): string {
