@@ -48,6 +48,20 @@ const TOOLS = [
     },
   },
   {
+    name: 'kioku_history',
+    description:
+      '读取单条记忆的语义化变更时间线，或按 version 查阅特定历史版本快照（默认不返回大快照，节省上下文）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '记忆短 ID（如 m-234abc）或精确标题' },
+        limit: { type: 'integer', description: '返回最近条数，默认 10' },
+        version: { type: 'integer', description: '指定版本号时返回该版本的完整快照正文' },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'kioku_list_credentials',
     description: '列出当前访问密钥允许使用的凭据标识与说明（仅元数据，绝不返回明文值）',
     inputSchema: { type: 'object', properties: {} },
@@ -364,7 +378,7 @@ export async function startFakeKioku(
             ? body.params.arguments
             : {}
         const structuredContent =
-          name === 'kioku_list_credentials'
+          name === 'kioku_list_credentials' || name === 'kioku_history'
             ? { items: [] }
             : name === 'kioku_delete'
               ? { deleted: true, id: String(args.id ?? 'm-222222') }
@@ -435,14 +449,20 @@ function seen(raw, body) {
   return {
     boot: raw.includes(BOOT_MARK),
     recall: raw.includes(RECALL_MARK),
-    tools: toolsJson.includes('kioku_get') && toolsJson.includes('kioku_list_credentials'),
+    tools:
+      toolsJson.includes('kioku_get') &&
+      toolsJson.includes('kioku_history') &&
+      toolsJson.includes('kioku_list_credentials'),
     legacyTools: toolsJson.includes('kioku_transfer'),
     // 工具的名字，出问题时看得到模型手上到底有什么
     toolNames: (Array.isArray(body?.tools) ? body.tools : [])
       .map((tool) => tool?.function?.name ?? tool?.name ?? tool?.type)
       .slice(0, 60),
     // 对话里（工具的结果）有没有出现 Kioku 的工具：按需搜索工具的平台靠它核对
-    found: convoJson.includes('kioku_get') && convoJson.includes('kioku_list_credentials'),
+    found:
+      convoJson.includes('kioku_get') &&
+      convoJson.includes('kioku_history') &&
+      convoJson.includes('kioku_list_credentials'),
     legacyFound: convoJson.includes('kioku_transfer'),
   }
 }

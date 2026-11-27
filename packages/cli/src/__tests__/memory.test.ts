@@ -135,6 +135,89 @@ beforeAll(async () => {
       }
 
       if (req.method === 'GET' && url.pathname === '/v1/boot') {
+        const project = url.searchParams.get('project')
+        if (project === 'structured') {
+          return send(200, {
+            entries: [
+              {
+                shortId: 'm-234567',
+                title: '单机配置规范',
+                kind: 'entry',
+                bootMode: 'full',
+                envs: ['home-24'],
+                projects: ['structured'],
+                content: '仅适用于 home-24 主机',
+              },
+            ],
+            episodes: [],
+            omitted: ['m-idx001', 'm-big002'],
+            omittedItems: [
+              {
+                shortId: 'm-idx001',
+                title: '家庭网络架构',
+                bootMode: 'index',
+                reason: 'index',
+                summary: '核心路由与 VLAN 拓扑说明',
+                envs: ['mac'],
+                realms: ['personal'],
+              },
+              {
+                shortId: 'm-big002',
+                title: '超长运维手册',
+                bootMode: 'full',
+                reason: 'oversized',
+                projects: ['structured'],
+              },
+            ],
+          })
+        }
+        if (project === 'indexonly') {
+          return send(200, {
+            entries: [],
+            episodes: [],
+            omitted: ['m-idx009'],
+            omittedItems: [
+              {
+                shortId: 'm-idx009',
+                title: '长篇手册索引',
+                bootMode: 'index',
+                summary: '\u200b\x1b[31m',
+                disclosure: '需要排障时按需查阅：' + '宽字符说明'.repeat(18),
+              },
+            ],
+          })
+        }
+        if (project === 'overflowonly') {
+          return send(200, {
+            entries: [],
+            episodes: [],
+            omitted: ['m-bud001'],
+            omittedItems: [
+              {
+                shortId: 'm-bud001',
+                title: '长标题用于测试预算外标题与场景独立行显示',
+                bootMode: 'full',
+                reason: 'budget',
+                envs: ['home-24'],
+                realms: ['personal'],
+              },
+            ],
+          })
+        }
+        if (project === 'legacyomitted') {
+          return send(200, {
+            entries: [],
+            episodes: [],
+            omitted: ['m-old001'],
+          })
+        }
+        if (project === 'emptyboot') {
+          return send(200, {
+            entries: [],
+            episodes: [],
+            omitted: [],
+          })
+        }
         return send(200, {
           entries: [
             {
@@ -662,6 +745,53 @@ describe('日常记忆读写命令（search / get / ls / add / edit / delete / b
     expect(bootText).toContain('字数预算外（1）')
     expect(bootText).toContain('m-888888')
     expect(lastRequests.at(-1)?.url).toBe('/v1/boot?project=kioku')
+
+    const structuredBootOut = captureOut()
+    expect(
+      await bootCommand(['--project', 'structured'], { env, out: structuredBootOut.stream }),
+    ).toBe(0)
+    const structuredBootText = structuredBootOut.read()
+    expect(structuredBootText).toContain('单机配置规范')
+    expect(structuredBootText).toContain('环境 home-24')
+    expect(structuredBootText).toContain('项目 structured')
+    expect(structuredBootText).toContain('常驻目录（1）')
+    expect(structuredBootText).toContain('家庭网络架构')
+    expect(structuredBootText).toContain('核心路由与 VLAN 拓扑说明')
+    expect(structuredBootText).toContain('场域 personal')
+    expect(structuredBootText).toContain('字数预算外（1）')
+    expect(structuredBootText).toContain('超长运维手册')
+    expect(structuredBootText).toContain('单条超限')
+
+    const indexOnlyBootOut = captureOut()
+    expect(
+      await bootCommand(['--project', 'indexonly'], { env, out: indexOnlyBootOut.stream }),
+    ).toBe(0)
+    const indexOnlyBootText = indexOnlyBootOut.read()
+    expect(indexOnlyBootText).toContain('启动加载预览 · 常驻目录（1）')
+    expect(indexOnlyBootText).toContain('长篇手册索引')
+    expect(indexOnlyBootText).toContain('需要排障时按需查阅')
+    expect(indexOnlyBootText).not.toContain('\x1b[31m')
+
+    const overflowOnlyBootOut = captureOut()
+    expect(
+      await bootCommand(['--project', 'overflowonly'], { env, out: overflowOnlyBootOut.stream }),
+    ).toBe(0)
+    const overflowOnlyBootText = overflowOnlyBootOut.read()
+    expect(overflowOnlyBootText).toContain('启动加载预览 · 字数预算外（1）')
+    expect(overflowOnlyBootText).toContain('预算外')
+    expect(overflowOnlyBootText).toContain('场景：环境 home-24 · 场域 personal')
+
+    const legacyOmittedBootOut = captureOut()
+    expect(
+      await bootCommand(['--project', 'legacyomitted'], { env, out: legacyOmittedBootOut.stream }),
+    ).toBe(0)
+    const legacyOmittedBootText = legacyOmittedBootOut.read()
+    expect(legacyOmittedBootText).toContain('启动加载预览 · 字数预算外（1）')
+    expect(legacyOmittedBootText).toContain('m-old001')
+
+    const emptyBootOut = captureOut()
+    expect(await bootCommand(['--project', 'emptyboot'], { env, out: emptyBootOut.stream })).toBe(0)
+    expect(emptyBootOut.read()).toContain('暂无启动加载内容')
 
     expect(parseEditorCommand('"/Applications/VS Code.app/code" --wait')).toEqual([
       '/Applications/VS Code.app/code',

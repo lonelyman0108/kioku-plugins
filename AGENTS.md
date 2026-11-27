@@ -96,7 +96,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - **工具上下文里没有触发方式**，心跳在主会话上跑时通道、会话键和本机的一轮一样：给不给工具按通道定，调得动调不动另看这个会话现在跑的是不是过了 `localRun` 的一轮（`approved`，输入钩子里记、一轮结束或接着跑别的运行时收回）。新加的工具路径也要过它。
   - **配置每分钟重读一次**（`ready`），换了地址或访问密钥时清掉按会话记着的启动加载与退避；服务地址返回跳转只当一次失败，不把插件停到重启为止。上报（`turn.end`）失败不设退避：它拦的是输入前的召回。
   - 工具清单取回来是空的不当真（手上的接着用、不写回本机），`kioku setup openclaw` 也不留空的。
-  - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份 8 个工具的名单（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`），用例核对；Kioku 增减工具时两处与 `scripts/e2e/fakes.mjs` 一起改，否则 OpenClaw 不认。
+  - **工具名要和清单文件一致**：`TOOL_NAMES` 与 `openclaw.plugin.json` 的 `contracts.tools` 是同一份 9 个工具的名单（`kioku_boot`、`kioku_search`、`kioku_get`、`kioku_history`、`kioku_browse`、`kioku_create`、`kioku_update`、`kioku_delete`、`kioku_list_credentials`），用例核对；Kioku 增减工具时两处与 `scripts/e2e/fakes.mjs` 一起改，否则 OpenClaw 不认。
   - **启动加载每一轮都要给**：`prependSystemContext` 不存进会话，系统提示每轮重建。按会话 id 记着取到的文本，隔一小时重新取；`session.start` 不是每轮都发。
   - **一次性的运行里上报要等发完**：`openclaw agent --local` 跑完进程就退出，`agent_end` 里不等的话 `turn.end` 发不出去。
   - `kioku setup openclaw` 不自己改 OpenClaw 的配置文件，经 `openclaw config set`（用例里用 `KIOKU_OPENCLAW_BIN` 换成假的），改完读回来核对。记忆槽位只在插件装上之后才选得了（选没装的插件校验不过），装的时候 OpenClaw 自己会选上、卸载时自己改回去；访问密钥写下之后的步骤失败了不抛错，列出要自己运行的命令。`openclaw plugins inspect` 失败、输出读不懂是「没查出来」（`pluginState` 返回 undefined），和「没装」（它明说 Plugin not found）分开：当成没装的话 `--undo` 会删了配置却留着槽位。
@@ -113,7 +113,7 @@ Kioku 的客户端插件：Claude Code 与 Codex 的插件（Node 的钩子脚�
   - 插件行用补丁旁边的相对路径（`./index.js`），根 `package.json` 不用加 `exports`。
   - 本地实测：`HOME` 与 `DSH_HOME` 都换掉（维护者的机器上有真实的 `~/.dsh`）；`dsh plugin` 要 PATH 里有能用的 pnpm（fnm 带的 corepack 太旧，取到的 pnpm 12 跑不起来）；自定义的模型端点配在 profile 的 `cordis.patch.yml` 里（`llm-pi-ai` 加一个 `openai-completions` 的服务商，`agent-default-model` 指过去），密钥放环境变量、用 `apiKeyEnv` 引用；一次性的运行用 `dsh headless "<任务>"`。
 - 端到端实测（`scripts/e2e/`，workflow `E2E`）：`node scripts/e2e/run.mjs <平台>` 在这台机器上装真实的平台，照安装说明走一遍（`kioku setup` → 装插件 → `kioku doctor` → 跑一轮），模型与 Kioku 都是假的（`fakes.mjs`），不用密钥。CI 在 Linux 与 Windows 上各跑五个平台，不是必需检查，每周一也跑一次：平台自己发新版本会让它变红，红了先看是平台变了还是这边坏了。要守住的几条：
-  - 假的 Kioku 照服务端的扁平接口格式回答（`/v1/health` 带 `api: 3`、`/v1/whoami` 带 `accountName`/`key`/`client`、`hostOutput` 按运行时分、MCP 握手与 8 个工具清单及 `structuredContent`），服务端的接口变了要跟着改，否则它测的是旧格式。
+  - 假的 Kioku 照服务端的扁平接口格式回答（`/v1/health` 带 `api: 3`、`/v1/whoami` 带 `accountName`/`key`/`client`、`hostOutput` 按运行时分、MCP 握手与 9 个工具清单及 `structuredContent`），服务端的接口变了要跟着改，否则它测的是旧格式。
   - 假的模型不生成内容，只把「请求里有没有注入的两个标记、有没有 Kioku 的工具」写成一句回答；上报里带着这句回答，就同时说明注入到了模型手上、回复被上报了。
   - **断言要在该失败的时候失败**（第一版太松，审查指出来的）：只算这一轮开始之后的请求（`kioku setup`、`kioku doctor` 自己也会取工具清单）；假的 Kioku 照契约校验事件，不合格的回 400；三个事件各要正好一次；`kioku doctor` 有提醒（`!`）也算没过；访问密钥只在 `kioku setup` 时给，平台只能从 setup 写下的地方读到。改断言之后故意改坏插件跑一次，确认抓得到。
   - 工具怎么核对按平台分（`tools`）：Codex、dsh、Hermes 直接把工具放进模型的请求；pi 按需才给，看它这一轮向 Kioku 取过清单；新一些的 OpenClaw（2026.11.3）把插件的工具放在 `tool_search` 后面，假的模型会搜一次 kioku，看搜索结果。`openclaw plugins inspect` 不装载插件，看不出运行时登记了什么，不能拿它核对。

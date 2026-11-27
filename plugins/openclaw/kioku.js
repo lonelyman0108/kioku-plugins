@@ -31,6 +31,7 @@ export const TOOL_NAMES = [
   'kioku_boot',
   'kioku_search',
   'kioku_get',
+  'kioku_history',
   'kioku_browse',
   'kioku_create',
   'kioku_update',
