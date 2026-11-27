@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { killTree, launch } from '../../packages/core/lib/command.mjs'
+import { capture, killTree, launch } from '../../packages/core/lib/command.mjs'
 import {
   BOOT_MARK,
   KEY,
@@ -39,7 +39,7 @@ const log = (text) => process.stdout.write(`${text}\n`)
 function run(name, args, { env, cwd, timeout = 180_000, quiet = false } = {}) {
   return new Promise((resolve) => {
     const how = launch(name, args, env)
-    if (!how) return resolve({ code: 127, stdout: '', stderr: `找不到命令 ${name}` })
+    if (!how) return resolve({ code: 127, stdout: '', stderr: `找不到命令 ${name}`, quiet })
     log(`$ ${name} ${args.join(' ')}`)
     const child = spawn(how.file, how.args, {
       env,
@@ -62,20 +62,22 @@ function run(name, args, { env, cwd, timeout = 180_000, quiet = false } = {}) {
       show(chunk)
     })
     let done = false
+    let timedOut = false
     const finish = (result) => {
       if (done) return
       done = true
       clearTimeout(timer)
-      resolve(result)
+      resolve({ ...result, quiet })
     }
     const timer = setTimeout(() => {
+      timedOut = true
       stderr += '\n超时'
       killTree(child, 'SIGKILL', { shell: how.shell })
       // 它下面的进程可能还占着输出的管道，close 等不到：结束之后稍等一下就算完
       setTimeout(() => finish({ code: 124, stdout, stderr }), 3000).unref()
     }, timeout)
     child.on('error', (err) => finish({ code: 126, stdout, stderr: `${stderr}\n${err.message}` }))
-    child.on('close', (code) => finish({ code: code ?? 1, stdout, stderr }))
+    child.on('close', (code) => finish({ code: timedOut ? 124 : (code ?? 1), stdout, stderr }))
   })
 }
 
@@ -86,8 +88,23 @@ function check(ok, what) {
 }
 async function must(result, what) {
   const done = await result
+  if (done.code !== 0 && done.quiet) {
+    const tail = [done.stdout, done.stderr].filter(Boolean).join('\n').trim().slice(-4000)
+    if (tail) process.stdout.write(`${tail.replace(/^(?=.)/gm, '    ')}\n`)
+  }
   check(done.code === 0, `${what}（退出码 ${done.code}）`)
   return done
+}
+
+// 优先用 pnpm 装第三方平台包（并行下载加硬链接，Windows 上远快于 npm）；版本过旧或不可用时回退 npm
+async function canUsePnpm(env) {
+  const res = await capture('pnpm', ['--version'], env, { timeout: 5_000 })
+  if (!res.ok) return false
+  const match = /^\s*(\d+)\.(\d+)/.exec(res.stdout)
+  if (!match) return false
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  return major >= 11 || (major === 10 && minor >= 16)
 }
 
 // 各平台怎么装、怎么配模型、怎么装插件、怎么跑一轮。ctx：{ root, home, env, kioku, model, tool, sh }
@@ -326,19 +343,36 @@ async function main(platform) {
   const cli = (args, extra = {}) =>
     run(process.execPath, [kiokuBin, ...args], { env: { ...env, ...extra }, cwd: root })
   const npm = (args, options = {}) => run('npm', args, { env: npmEnv, cwd: root, ...options })
+  const pnpm = (args, options = {}) => run('pnpm', args, { env: npmEnv, cwd: root, ...options })
   const ctx = { root, home, work, env, kioku, model, sh, cli, npm }
   try {
     log(`== ${platform}，${process.platform} ${process.arch}，Node ${process.version}`)
     writeFileSync(join(tools, 'package.json'), '{"private":true}')
     if (spec.packages.length) {
-      await must(
-        npm(['install', '--no-audit', '--no-fund', ...spec.packages], {
-          cwd: tools,
-          timeout: 900_000,
-          quiet: true,
-        }),
-        `装上 ${spec.packages.join('、')}`,
-      )
+      if (await canUsePnpm(npmEnv)) {
+        // 保持与 npm 一致的扁平布局、放行平台自身安装脚本且不拦截新发版本
+        writeFileSync(
+          join(tools, 'pnpm-workspace.yaml'),
+          'nodeLinker: hoisted\ndangerouslyAllowAllBuilds: true\nminimumReleaseAge: 0\n',
+        )
+        await must(
+          pnpm(['add', '--reporter=append-only', ...spec.packages], {
+            cwd: tools,
+            timeout: 900_000,
+            quiet: true,
+          }),
+          `装上 ${spec.packages.join('、')}`,
+        )
+      } else {
+        await must(
+          npm(['install', '--no-audit', '--no-fund', ...spec.packages], {
+            cwd: tools,
+            timeout: 900_000,
+            quiet: true,
+          }),
+          `装上 ${spec.packages.join('、')}`,
+        )
+      }
     }
     await spec.prepare?.(ctx)
     await must(
