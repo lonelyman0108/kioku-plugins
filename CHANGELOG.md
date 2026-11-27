@@ -2,6 +2,20 @@
 
 ## [未发布]
 
+## [0.6.1] - 2026-11-27
+
+同步适配 Kioku `v0.7.0` 新增能力（保持 `api: 3` 兼容），`@kioku-memory/cli`、`@kioku-memory/openclaw` 与 `@kioku-memory/plugin-opencode` 一并发布至 `0.6.1`。
+
+### 新功能与同步
+
+- **OpenClaw 补齐 `kioku_history` 工具**：同步接入服务端变更历史查询工具，OpenClaw 插件工具清单扩展至 9 个（#49）
+- **`kioku boot` 启动预览适配三态目录与场景标签**：兼容服务端 `omittedItems` 分类展示「常驻目录」与「字数预算外 / 单条超限」，并在常驻记忆与目录项下方独立展示四维场景标签（#49）
+- **明确 `--env` 主机标识用法**：更新 `kioku add` 与 `kioku edit` 的 `--env` 帮助说明，明确支持系统名及自定义主机标识用于单机环境隔离（#49）
+
+### 工程与发布
+
+- **自动发布 npm `edge` 预览包与滚动预发布页**：`main` 通过 CI 后自动将公开包发布至 npm `edge` 标签，并同步更新 GitHub `edge` 滚动预发布页（#44、#47）
+
 ## [0.6.0] - 2026-11-25
 
 同步适配 Kioku `v0.6.0` 单人扁平架构（服务端接口第 3 代），`@kioku-memory/cli`、`@kioku-memory/openclaw` 与 `@kioku-memory/plugin-opencode` 一并发布至 `0.6.0`；其余按仓库安装的 7 个插件已随主干同步更新。
